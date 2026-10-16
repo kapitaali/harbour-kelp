@@ -23,6 +23,8 @@ class KelpTunnel;
  *
  * Sealing also publishes: the bundle starts being served on the LAN and its link
  * gains the address, so the result is a link that actually reaches the content.
+ * The Settings page can withhold the address, in which case the bundle is not
+ * served locally and only a relay can carry it.
  */
 class KelpBundles : public QObject
 {
@@ -37,8 +39,10 @@ public:
     Q_INVOKABLE void setRelays(const QStringList &relays);
     QStringList relays() const { return m_relays; }
 
-    // User preferences the publisher acts on. Optional: without one, nothing is
-    // written to the log unless the KELP_DEBUG_LINK override is set.
+    // User preferences the publisher acts on: whether a link names this device
+    // on the LAN, and whether the link is written to the log. Optional: without
+    // one, links carry the address and nothing is written to the log unless the
+    // KELP_DEBUG_LINK override is set.
     void setSettings(KelpSettings *settings) { m_settings = settings; }
 
     // Returns { ok, error, link, bundleId, secret, objectCount, fileCount,

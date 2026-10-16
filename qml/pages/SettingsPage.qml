@@ -22,6 +22,16 @@ Page {
             SectionHeader { text: qsTr("Sharing") }
 
             TextSwitch {
+                text: qsTr("Include my local address in the link")
+                description: qsTr("Put this device's LAN address (l=) in every link and serve the bundle there, for a recipient on the same network. Turn it off to share without disclosing that address — the bundle is then not served on the LAN and only a relay can carry it.")
+                checked: kelpSettings.includeLanAddress
+                onCheckedChanged: {
+                    if (checked !== kelpSettings.includeLanAddress)
+                        kelpSettings.includeLanAddress = checked
+                }
+            }
+
+            TextSwitch {
                 text: qsTr("Share in background")
                 description: qsTr("Keep seeding after the app is closed")
                 checked: settingsPage.store ? settingsPage.store.seedingEnabled : false

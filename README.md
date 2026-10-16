@@ -47,11 +47,14 @@ swarm wire format.
   fetched from), you pick the folder to save into, and the download reports
   progress and then where the files went.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
-  permission), relay address, *Include links in the log*, and a *Clear log*
-  action. The first four switches are the shape of the intended behaviour and
-  are deliberately not acted on yet — only the LAN path is wired up, and now in
-  both directions. *Include links in the log* is real and persisted: it decides
-  whether a share's `kelp://` link (and so its key) is written to the log.
+  permission), relay address, *Include my local address in the link*, *Include
+  links in the log*, and a *Clear log* action. The first three switches are the
+  shape of the intended behaviour and are deliberately not acted on yet — only
+  the LAN path is wired up, and now in both directions. Two switches are real and
+  persisted: *Include my local address in the link* decides whether a link names
+  this device (`l=`) and the bundle is served locally, and *Include links in the
+  log* decides whether a share's `kelp://` link (and so its key) is written to
+  the log.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
@@ -104,6 +107,12 @@ cost is that a sniffer on the same Wi-Fi learns the token — and so the sender'
 address and availability — but not the plaintext, because the content key and the
 swarm token are separate HKDF outputs of the same secret. The swarm transport,
 where peer addresses are handed around, keeps TLS. See wire spec §7.2.
+
+Because a link is handed to whoever it is sent to, the address in it is disclosed
+to all of them: normally a private `192.168.x.x`, but a cellular bearer is a real
+IP. *Settings → Include my local address in the link* turns the whole path off —
+nothing is served locally, `l=` is left out, and only a relay can carry the
+bundle.
 
 Sharing is remembered. Each row — name, size, object counts, the bundle id and the
 secret — is written to a small owner-only file (`shares.json`, mode `0600`) beside

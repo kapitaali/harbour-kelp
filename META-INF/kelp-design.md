@@ -188,6 +188,14 @@ and no plaintext-on-LAN. This path involves **no third party at all** — genuin
 > anywhere on Earth uses the relay path (§3.2); the app picks automatically (try LAN if
 > the advertised address is reachable on the current network, else relay).
 
+> **The address can be withheld.** `l=` is the publisher's *own* address, so it is
+> disclosed to everyone the link reaches — a private LAN address in the common case,
+> but a carrier-assigned one when the chosen interface is a cellular bearer (the LAN
+> host picker falls back to a point-to-point interface). *Settings → Include my local
+> address in the link* (on by default) drops the whole LAN publish, so the link carries
+> no `l=` and the relay path is all that remains. That is the answer for a share that
+> must not disclose where it is being served from.
+
 ### 3.2 The relay (the answer to NAT) — publisher dials *out*
 
 The phone cannot accept inbound connections through carrier NAT. The elegant fix is that

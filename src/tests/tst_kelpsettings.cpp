@@ -79,6 +79,9 @@ void testSettings()
     {
         KelpSettings settings;
         CHECK_EQ(settings.includeLinksInLog(), false);
+        // The local address is exposed unless the user opts out: it is what the
+        // same-network fast path needs.
+        CHECK_EQ(settings.includeLanAddress(), true);
         // Lives in the directory Sailjail provisions (beside the log), not in
         // the ~/.config location the sandbox hides.
         CHECK_EQ(KelpSettings::filePath(),
@@ -117,6 +120,32 @@ void testSettings()
     {
         KelpSettings settings;
         CHECK_EQ(settings.includeLinksInLog(), false);
+    }
+
+    section("local address");
+    {
+        // Still the default after the file exists but the key was never written.
+        KelpSettings settings;
+        CHECK_EQ(settings.includeLanAddress(), true);
+
+        int changes = 0;
+        QObject::connect(&settings, &KelpSettings::includeLanAddressChanged,
+                         [&changes]() { ++changes; });
+
+        settings.setIncludeLanAddress(false);
+        CHECK_EQ(changes, 1);
+        CHECK_EQ(settings.includeLanAddress(), false);
+        CHECK(readFile(path).contains("include_local_address=false"));
+
+        settings.setIncludeLanAddress(false);   // already false: no signal, no write
+        CHECK_EQ(changes, 1);
+    }
+    {
+        // Read back off disk, like the restart path above.
+        KelpSettings settings;
+        CHECK_EQ(settings.includeLanAddress(), false);
+        settings.setIncludeLanAddress(true);
+        CHECK_EQ(settings.includeLanAddress(), true);
     }
 
     section("download folder");

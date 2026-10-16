@@ -24,6 +24,15 @@ class KelpSettings : public QObject
 {
     Q_OBJECT
 
+    // Whether a share's link names this device on the LAN (as `l=host:port`) and
+    // the bundle is served there. On by default: that is the fast path for a
+    // recipient on the same network. Off is for a share that must not disclose a
+    // local address — the bundle is not served on the LAN and its link carries no
+    // address, so it can only be fetched through a relay. A link is handed to
+    // whoever the user sends it to, so this leaks the address to them.
+    Q_PROPERTY(bool includeLanAddress READ includeLanAddress
+                   WRITE setIncludeLanAddress NOTIFY includeLanAddressChanged)
+
     // Write each share's kelp:// link into kelp.log so a device with no usable
     // clipboard (the emulator, a headless box) can be handed one. Off by
     // default: a link carries the decryption key, and the log is a plain file.
@@ -43,6 +52,9 @@ public:
     // property of the app, not of any one instance.
     static QString filePath();
 
+    bool includeLanAddress() const;
+    void setIncludeLanAddress(bool on);
+
     bool includeLinksInLog() const;
     void setIncludeLinksInLog(bool on);
 
@@ -50,6 +62,7 @@ public:
     void setDownloadDirectory(const QString &path);
 
 signals:
+    void includeLanAddressChanged();
     void includeLinksInLogChanged();
     void downloadDirectoryChanged();
 

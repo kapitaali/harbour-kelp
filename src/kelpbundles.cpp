@@ -273,8 +273,12 @@ Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArr
 
     // Publish on the LAN before minting the link, so `l=` is in it. Failing to
     // listen is not fatal: the objects are sealed either way, the link simply
-    // has no address.
-    if (m_server) {
+    // has no address. The whole block is skipped when the user has turned off
+    // "Include my local address in the link": a link is handed to whoever the
+    // recipient forwards it to, so nothing served here should be discoverable
+    // from it, and the link then relies on a relay (Settings → Relay).
+    const bool exposeLan = !m_settings || m_settings->includeLanAddress();
+    if (m_server && exposeLan) {
         QString listenError;
         if (m_server->start(&listenError)) {
             m_server->share(rootId, Kelp::swarmToken(secret), objects, files, bytes);
@@ -283,6 +287,9 @@ Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArr
             qWarning() << "KelpBundles: cannot serve" << name << "on the LAN:"
                        << listenError;
         }
+    } else if (m_server) {
+        qInfo() << "KelpBundles: not serving" << name
+                << "on the LAN: the local address is excluded";
     }
 
     // Publish on the relay(s), if any are configured, and put their addresses in
