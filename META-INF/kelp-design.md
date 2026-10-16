@@ -611,10 +611,16 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
    always-on regardless — peers trade ciphertext, so swarm is a *distribution* choice, not a
    visibility one; there is no "public bundle".)* Still open: real BitTorrent-v2 interop, or just
    the internal swarm?
-7. **Store lifetime** — seals and fetches both write objects that nothing ever deletes, into
-   one store with one total. Does the store need a size the user can see, a per-bundle
-   *Remove* (which needs the object graph walked backwards), or an LRU? Nothing deletes
-   objects today, and C2b is the point where a store can grow from what other people sent.
+7. **Store lifetime** — *(resolved: Settings → **Storage** shows what the store holds and how
+   much of it the shares on this device need, and a **Remove unused objects** button deletes
+   exactly the rest. There is no per-bundle Remove and no LRU: the store is one deduplicated
+   pool, so "unused" can only be computed against the whole root set at once — every share's
+   object graph, walked in full. An object no share reaches is either what a fetch left behind
+   or what a share that is gone no longer needs; downloads themselves are kept as ordinary files
+   in Downloads, so deleting their cached objects costs a re-download, not the content. The walk
+   is strict: a share whose manifests cannot be read fails the whole operation, because "not in
+   the set" must mean "safe to delete" and an object that merely cannot be accounted for is not
+   junk. See §11 and `Kelp::bundleObjects`, `KelpBundles::storeUsage/pruneStore`.)*
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 

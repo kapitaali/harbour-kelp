@@ -95,6 +95,17 @@ bool missingObjects(ObjectStore *store, const QByteArray &key,
                     const QByteArray &rootId, QVector<QByteArray> *missing,
                     QString *error);
 
+// Every object the bundle rooted at `rootId` is made of: the root manifest, the
+// manifests below it, and the data objects they name — unique, in traversal order.
+//
+// Strict about manifests: each one must be in the store and must open with `key`,
+// because what lies under an unreadable manifest is unknown, and a caller using
+// this list to decide which objects are *not* referenced would otherwise throw
+// live objects away. Data objects are only named by their manifests, never read,
+// so a bundle whose data has holes still enumerates completely.
+bool bundleObjects(ObjectStore *store, const QByteArray &key,
+                   const QByteArray &rootId, QVector<QByteArray> *ids, QString *error);
+
 // The receiver's rule for everything that arrives over the network: the id is
 // the promise the sender made, so the bytes are stored only if they hash to the
 // id they were asked for. On a mismatch nothing is written and this is false —

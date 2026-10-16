@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QObject>
 #include <QStringList>
+#include <QVariantList>
 #include <QVariantMap>
 
 #include "kelp_bundle.h"
@@ -63,6 +64,20 @@ public:
 
     // Returns { ok, path, objects, bytes, serving } for the About page.
     Q_INVOKABLE QVariantMap storeInfo();
+
+    // Settings → Storage (design §12.7). `shares` is the list the Bundles page is
+    // showing — the rows this device actually serves — each with `bundleId` and
+    // `secret`. The objects those bundles reach are *in use*; everything else in
+    // the store is only a cache, left behind by a fetch or by a share that is gone.
+    // Returns { ok, error, objects, bytes, inUseObjects, inUseBytes, unusedObjects,
+    // unusedBytes }.
+    Q_INVOKABLE QVariantMap storeUsage(const QVariantList &shares);
+
+    // Deletes exactly what storeUsage() called unused, and nothing else. Refuses —
+    // deleting nothing — if any share cannot be walked, because an object that
+    // cannot be accounted for must never be mistaken for junk. Returns
+    // { ok, error, removed, freedBytes }.
+    Q_INVOKABLE QVariantMap pruneStore(const QVariantList &shares);
 
     // Breaks a kelp:// link into the parts the UI explains: the content address
     // and the hints saying where to fetch it. Returns

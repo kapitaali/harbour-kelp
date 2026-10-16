@@ -427,6 +427,125 @@ private:
     QString m_error;
 };
 
+/*
+ * The object-listing walk: every object the bundle rooted at rootId reaches,
+ * whether or not the store holds it. Same shape as Missing, two differences: it
+ * notes an id as it *visits* it rather than only when it is absent, and it refuses
+ * to continue past a manifest it cannot read — the entries under a manifest are
+ * unknown without it, and a caller using this list to decide what is unreferenced
+ * would otherwise throw away live objects.
+ */
+class Reach
+{
+public:
+    Reach(ObjectStore *store, const QByteArray &key)
+        : m_store(store), m_key(key) {}
+
+    bool ok() const { return m_error.isEmpty(); }
+    QString error() const { return m_error; }
+    QVector<QByteArray> ids() const { return m_ids; }
+
+    bool walk(const QByteArray &rootId) { return visitManifest(rootId, 0); }
+
+private:
+    void note(const QByteArray &id)
+    {
+        if (m_noted.contains(id))
+            return;
+        m_noted.insert(id);
+        m_ids.append(id);
+    }
+
+    QByteArray read(const QByteArray &id)
+    {
+        QByteArray object;
+        if (!m_store->get(id, &object)) {
+            m_error = QStringLiteral("object %1 is missing from the store")
+                .arg(QString::fromLatin1(id.toHex()));
+            return QByteArray();
+        }
+        QByteArray plaintext;
+        if (!Object::open(m_key, object, &plaintext, &m_error)) {
+            if (m_error.isEmpty())
+                m_error = QStringLiteral("object %1 does not open with this key")
+                    .arg(QString::fromLatin1(id.toHex()));
+            return QByteArray();
+        }
+        return plaintext;
+    }
+
+    bool visitManifest(const QByteArray &id, int depth)
+    {
+        if (depth > kMaxTreeDepth) {
+            m_error = QStringLiteral("bundle tree is nested too deeply");
+            return false;
+        }
+
+        note(id);
+        const QByteArray manifest = read(id);
+        if (!ok())
+            return false;
+
+        Manifest::Directory directory;
+        if (!Manifest::decodeDirectory(manifest, &directory, &m_error))
+            return false;
+        if (!directory.segment)
+            return visitEntries(directory.entries, depth);
+
+        for (int i = 0; i < directory.children.size(); ++i) {
+            note(directory.children.at(i));
+            const QByteArray leafManifest = read(directory.children.at(i));
+            if (!ok())
+                return false;
+            Manifest::Directory leaf;
+            if (!Manifest::decodeDirectory(leafManifest, &leaf, &m_error))
+                return false;
+            if (leaf.segment) {
+                m_error = QStringLiteral("segment index points at another segment index");
+                return false;
+            }
+            if (!visitEntries(leaf.entries, depth))
+                return false;
+        }
+        return true;
+    }
+
+    bool visitEntries(const QVector<Manifest::Entry> &entries, int depth)
+    {
+        for (int i = 0; i < entries.size(); ++i) {
+            const bool descended = entries.at(i).isDir
+                ? visitManifest(entries.at(i).hash, depth + 1)
+                : visitFile(entries.at(i).hash);
+            if (!descended)
+                return false;
+        }
+        return true;
+    }
+
+    bool visitFile(const QByteArray &id)
+    {
+        note(id);
+        const QByteArray manifest = read(id);
+        if (!ok())
+            return false;
+
+        // The chunks are named, not read: a bundle whose data has holes still
+        // lists every object it is made of.
+        Manifest::File file;
+        if (!Manifest::decodeFile(manifest, &file, &m_error))
+            return false;
+        for (int i = 0; i < file.chunks.size(); ++i)
+            note(file.chunks.at(i));
+        return true;
+    }
+
+    ObjectStore *m_store;
+    QByteArray m_key;
+    QVector<QByteArray> m_ids;
+    QSet<QByteArray> m_noted;
+    QString m_error;
+};
+
 } // namespace
 
 QByteArray contentKey(const QByteArray &secret)
@@ -540,6 +659,33 @@ bool missingObjects(ObjectStore *store, const QByteArray &key,
     }
 
     *missing = walker.ids();
+    return true;
+}
+
+bool bundleObjects(ObjectStore *store, const QByteArray &key,
+                   const QByteArray &rootId, QVector<QByteArray> *ids, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (ids)
+        ids->clear();
+    if (!store || !ids) {
+        *error = QStringLiteral("no object store or destination");
+        return false;
+    }
+    if (rootId.size() != Crypto::Sha256Size) {
+        *error = QStringLiteral("bundle id is not a 32-byte object id");
+        return false;
+    }
+
+    Reach walker(store, key);
+    if (!walker.walk(rootId)) {
+        *error = walker.error();
+        return false;
+    }
+
+    *ids = walker.ids();
     return true;
 }
 

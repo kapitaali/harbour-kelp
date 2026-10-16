@@ -111,6 +111,37 @@ qint64 KelpObjectStore::diskUsage() const
     return total;
 }
 
+QVector<QByteArray> KelpObjectStore::objectIds() const
+{
+    QVector<QByteArray> ids;
+    const QDir root(m_root);
+    const QStringList shards = root.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (int i = 0; i < shards.size(); ++i) {
+        const QDir shard(root.filePath(shards.at(i)));
+        const QStringList files = shard.entryList(QDir::Files);
+        for (int j = 0; j < files.size(); ++j) {
+            const QByteArray id = QByteArray::fromHex(files.at(j).toLatin1());
+            if (id.size() == Kelp::Crypto::Sha256Size)
+                ids.append(id);
+        }
+    }
+    return ids;
+}
+
+qint64 KelpObjectStore::objectSize(const QByteArray &id) const
+{
+    const QString path = pathForId(id);
+    return path.isEmpty() ? 0 : QFileInfo(path).size();
+}
+
+bool KelpObjectStore::remove(const QByteArray &id)
+{
+    const QString path = pathForId(id);
+    if (path.isEmpty())
+        return false;
+    return QFile::remove(path);
+}
+
 bool KelpFileSource::read(const QString &path, qint64 offset, qint64 length,
                           QByteArray *out, QString *error)
 {

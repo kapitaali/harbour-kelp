@@ -21,6 +21,7 @@
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 #include <QVariantMap>
 
 #include "kelp_link.h"
@@ -203,6 +204,131 @@ static void testPublish()
     QFile::remove(KelpSettings::filePath());
 }
 
+/*
+ * Storage management (design §12.7): the store is shared by every share and by
+ * whatever a fetch leaves behind, and nothing ever deleted from it. These checks
+ * drive the real store on disk — an object that is not reachable from a share is
+ * the only thing a clean-up may touch, and a share that cannot be read must stop
+ * the whole thing rather than have its objects mistaken for junk.
+ */
+static void testStoreManagement()
+{
+    QFile::remove(KelpSettings::filePath());
+
+    const QString base = KelpLog::dataDirectory() + QStringLiteral("/storage-test");
+    QDir().mkpath(base);
+
+    section("storage: what the shares need, and what is left over");
+    {
+        QDir().mkpath(base + "/a");
+        KelpObjectStore store(base + "/a/objects");
+        QString error;
+        CHECK(store.initialise(&error));
+
+        KelpServer server(&store);
+        KelpBundles bundles(&store, &server);
+        KelpSettings settings;
+        bundles.setSettings(&settings);
+
+        const QVariantMap sealed = sealOne(bundles, base + "/a", "bundle-a");
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        const int objects = sealed.value(QStringLiteral("objectCount")).toInt();
+        CHECK(objects > 0);
+        CHECK_EQ(store.objectCount(), objects);
+
+        // The row the Bundles page holds, in the shape the storage calls want.
+        QVariantMap row;
+        row.insert(QStringLiteral("bundleId"), sealed.value(QStringLiteral("bundleId")));
+        row.insert(QStringLiteral("secret"), sealed.value(QStringLiteral("secret")));
+        QVariantList shares;
+        shares << row;
+
+        // Everything here belongs to the one share, so nothing is unused.
+        QVariantMap usage = bundles.storeUsage(shares);
+        CHECK(usage.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(usage.value(QStringLiteral("objects")).toInt(), objects);
+        CHECK_EQ(usage.value(QStringLiteral("inUseObjects")).toInt(), objects);
+        CHECK_EQ(usage.value(QStringLiteral("unusedObjects")).toInt(), 0);
+
+        // A stray object — what a fetch leaves behind, say — is not named by any
+        // share, so it is the only thing a clean-up may touch.
+        QByteArray strayId;
+        CHECK(store.put(QByteArray("leftover from something else"), &strayId));
+        CHECK(store.contains(strayId));
+
+        usage = bundles.storeUsage(shares);
+        CHECK_EQ(usage.value(QStringLiteral("objects")).toInt(), objects + 1);
+        CHECK_EQ(usage.value(QStringLiteral("unusedObjects")).toInt(), 1);
+        CHECK(usage.value(QStringLiteral("unusedBytes")).toLongLong() > 0);
+
+        // Clean up: the stray goes, every object the share needs stays.
+        const QVariantMap pruned = bundles.pruneStore(shares);
+        CHECK(pruned.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(pruned.value(QStringLiteral("removed")).toInt(), 1);
+        CHECK_EQ(store.objectCount(), objects);
+        CHECK(!store.contains(strayId));
+
+        // The share is still whole, root and all.
+        Kelp::Link::Bundle parsed;
+        CHECK(Kelp::Link::decode(sealed.value(QStringLiteral("link")).toString(),
+                                 &parsed, &error));
+        CHECK(store.contains(parsed.bundleId));
+
+        usage = bundles.storeUsage(shares);
+        CHECK_EQ(usage.value(QStringLiteral("inUseObjects")).toInt(), objects);
+        CHECK_EQ(usage.value(QStringLiteral("unusedObjects")).toInt(), 0);
+
+        // Nothing left to do is not a failure: the second clean-up removes zero
+        // and says so.
+        const QVariantMap again = bundles.pruneStore(shares);
+        CHECK(again.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(again.value(QStringLiteral("removed")).toInt(), 0);
+    }
+
+    section("storage: a share that cannot be read stops the clean-up");
+    {
+        QDir().mkpath(base + "/b");
+        KelpObjectStore store(base + "/b/objects");
+        QString error;
+        CHECK(store.initialise(&error));
+
+        KelpServer server(&store);
+        KelpBundles bundles(&store, &server);
+        KelpSettings settings;
+        bundles.setSettings(&settings);
+
+        const QVariantMap sealed = sealOne(bundles, base + "/b", "bundle-b");
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        const int objects = sealed.value(QStringLiteral("objectCount")).toInt();
+
+        QByteArray strayId;
+        CHECK(store.put(QByteArray("another leftover"), &strayId));
+
+        // A row whose stored key no longer opens the manifests. The app cannot tell
+        // this share's objects from junk, so it must refuse to delete anything —
+        // including the stray — rather than guess.
+        QVariantMap row;
+        row.insert(QStringLiteral("bundleId"), sealed.value(QStringLiteral("bundleId")));
+        row.insert(QStringLiteral("secret"),
+                   Kelp::Link::base64UrlEncode(QByteArray(32, '\0')));
+        QVariantList shares;
+        shares << row;
+
+        const QVariantMap usage = bundles.storeUsage(shares);
+        CHECK_EQ(usage.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(!usage.value(QStringLiteral("error")).toString().isEmpty());
+
+        const QVariantMap pruned = bundles.pruneStore(shares);
+        CHECK_EQ(pruned.value(QStringLiteral("ok")).toBool(), false);
+        CHECK_EQ(pruned.value(QStringLiteral("removed")).toInt(), 0);
+        CHECK_EQ(store.objectCount(), objects + 1);
+        CHECK(store.contains(strayId));
+    }
+
+    QDir(base).removeRecursively();
+    QFile::remove(KelpSettings::filePath());
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -215,6 +341,7 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName(QStringLiteral("harbour-kelp-bundles-test"));
 
     testPublish();
+    testStoreManagement();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

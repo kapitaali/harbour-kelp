@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QScopedPointer>
 #include <QString>
+#include <QVector>
 
 #include "kelp_bundle.h"
 #include "kelp_store.h"
@@ -37,6 +38,13 @@ public:
     // Both walk the whole sharded tree, so only use them for the About page.
     int objectCount() const;
     qint64 diskUsage() const;
+
+    // Storage management (design §12.7): what is here, how big it is, and letting
+    // one go. `objectIds` walks the sharded tree like the two above; a half-written
+    // `.tmp` file never passes the id-length check, so it is not mistaken for one.
+    QVector<QByteArray> objectIds() const;
+    qint64 objectSize(const QByteArray &id) const;
+    bool remove(const QByteArray &id);
 
 private:
     QString m_root;

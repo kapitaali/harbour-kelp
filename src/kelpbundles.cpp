@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QSet>
 
 #include "kelp_crypto.h"
 #include "kelp_link.h"
@@ -29,6 +30,47 @@ bool linksInLog(const KelpSettings *settings)
            || !qgetenv("KELP_DEBUG_LINK").isEmpty();
 }
 
+// The object ids the shares on this device are made of. Strict on purpose: if one
+// share cannot be walked, the whole computation fails. "Not in this set" has to
+// mean "safe to delete", and an object this device merely cannot account for —
+// because a manifest is unreadable, or its stored key is wrong — is not junk.
+bool liveObjects(KelpObjectStore *store, const QVariantList &shares,
+                 QSet<QByteArray> *live, QString *error)
+{
+    for (int i = 0; i < shares.size(); ++i) {
+        const QVariantMap row = shares.at(i).toMap();
+        const QString bundleId = row.value(QStringLiteral("bundleId")).toString();
+        if (bundleId.isEmpty())
+            continue;
+
+        QByteArray rootId;
+        QString why;
+        if (!Kelp::Link::base32Decode(bundleId, &rootId, &why)) {
+            *error = QStringLiteral("share %1: %2").arg(bundleId, why);
+            return false;
+        }
+
+        const QString secretText = row.value(QStringLiteral("secret")).toString();
+        QByteArray secret;
+        if (!Kelp::Link::base64UrlDecode(secretText, &secret, &why)
+            || secret.size() != Kelp::Crypto::KeySize) {
+            *error = QStringLiteral("share %1: its stored key is not usable")
+                         .arg(bundleId);
+            return false;
+        }
+
+        QVector<QByteArray> ids;
+        if (!Kelp::bundleObjects(store, Kelp::contentKey(secret), rootId, &ids, &why)) {
+            *error = QStringLiteral("share %1 cannot be read, so nothing was "
+                                    "deleted: %2").arg(bundleId, why);
+            return false;
+        }
+        for (int j = 0; j < ids.size(); ++j)
+            live->insert(ids.at(j));
+    }
+    return true;
+}
+
 } // namespace
 
 KelpBundles::KelpBundles(KelpObjectStore *store, KelpServer *server, QObject *parent)
@@ -49,6 +91,86 @@ QVariantMap KelpBundles::storeInfo()
     info.insert(QStringLiteral("bytes"), m_store->diskUsage());
     info.insert(QStringLiteral("serving"), m_server ? m_server->lanAddress() : QString());
     return info;
+}
+
+QVariantMap KelpBundles::storeUsage(const QVariantList &shares)
+{
+    QVariantMap usage;
+    usage.insert(QStringLiteral("ok"), false);
+
+    if (!m_store) {
+        usage.insert(QStringLiteral("error"), QStringLiteral("no object store"));
+        return usage;
+    }
+
+    const QVector<QByteArray> ids = m_store->objectIds();
+
+    QSet<QByteArray> live;
+    QString error;
+    if (!liveObjects(m_store, shares, &live, &error)) {
+        usage.insert(QStringLiteral("error"), error);
+        return usage;
+    }
+
+    qint64 bytes = 0;
+    int inUseObjects = 0;
+    qint64 inUseBytes = 0;
+    for (int i = 0; i < ids.size(); ++i) {
+        const qint64 size = m_store->objectSize(ids.at(i));
+        bytes += size;
+        if (live.contains(ids.at(i))) {
+            ++inUseObjects;
+            inUseBytes += size;
+        }
+    }
+
+    usage.insert(QStringLiteral("ok"), true);
+    usage.insert(QStringLiteral("objects"), ids.size());
+    usage.insert(QStringLiteral("bytes"), QVariant::fromValue(bytes));
+    usage.insert(QStringLiteral("inUseObjects"), inUseObjects);
+    usage.insert(QStringLiteral("inUseBytes"), QVariant::fromValue(inUseBytes));
+    usage.insert(QStringLiteral("unusedObjects"), ids.size() - inUseObjects);
+    usage.insert(QStringLiteral("unusedBytes"), QVariant::fromValue(bytes - inUseBytes));
+    return usage;
+}
+
+QVariantMap KelpBundles::pruneStore(const QVariantList &shares)
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("ok"), false);
+
+    if (!m_store) {
+        result.insert(QStringLiteral("error"), QStringLiteral("no object store"));
+        return result;
+    }
+
+    QSet<QByteArray> live;
+    QString error;
+    if (!liveObjects(m_store, shares, &live, &error)) {
+        result.insert(QStringLiteral("error"), error);
+        return result;
+    }
+
+    int removed = 0;
+    qint64 freed = 0;
+    const QVector<QByteArray> ids = m_store->objectIds();
+    for (int i = 0; i < ids.size(); ++i) {
+        if (live.contains(ids.at(i)))
+            continue;
+        const qint64 size = m_store->objectSize(ids.at(i));
+        if (!m_store->remove(ids.at(i)))
+            continue;
+        ++removed;
+        freed += size;
+    }
+
+    qInfo() << "KelpBundles: cleaned up" << removed << "unused object(s)," << freed
+            << "bytes";
+
+    result.insert(QStringLiteral("ok"), true);
+    result.insert(QStringLiteral("removed"), removed);
+    result.insert(QStringLiteral("freedBytes"), QVariant::fromValue(freed));
+    return result;
 }
 
 void KelpBundles::setRelays(const QStringList &relays)

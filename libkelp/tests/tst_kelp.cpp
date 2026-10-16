@@ -13,6 +13,7 @@
 
 #include <QByteArray>
 #include <QPair>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -902,6 +903,82 @@ void testMissingObjects()
     CHECK(guarded.contains(sealed.rootId));
 }
 
+void testBundleObjects()
+{
+    section("object listing: every object a bundle is made of");
+
+    const QByteArray key = contentKey(testHash("reach-secret"));
+    const TreeNode tree = sampleTree();
+
+    TreeSource source;
+    MemoryStore origin;
+    SealedBundle sealed;
+    QString error;
+    CHECK(seal(&origin, key, source.build(tree), &source, &sealed, &error));
+
+    QVector<QByteArray> ids;
+    CHECK(bundleObjects(&origin, key, sealed.rootId, &ids, &error));
+    if (!error.isEmpty())
+        printf("  listing error: %s\n", qPrintable(error));
+
+    // The store holds this bundle and nothing else, so the list is the whole store:
+    // every manifest and every chunk, and nothing invented.
+    CHECK_EQ(ids.size(), origin.count());
+    CHECK_EQ(ids.size(), sealed.objectCount);
+    CHECK(ids.contains(sealed.rootId));
+
+    // Nothing twice — a share's object set is a set, and an id reached by two
+    // paths (or a chunk named by two files) must be counted once.
+    QSet<QByteArray> unique;
+    for (int i = 0; i < ids.size(); ++i)
+        unique.insert(ids.at(i));
+    CHECK_EQ(unique.size(), ids.size());
+
+    for (int i = 0; i < ids.size(); ++i)
+        CHECK_EQ(origin.contains(ids.at(i)), true);
+
+    // The wrong key cannot read the manifests, so nothing can be enumerated — and
+    // that is an error, not an empty list. This is the property storage management
+    // leans on: an object it cannot account for is never called unreferenced.
+    ids.clear();
+    CHECK(!bundleObjects(&origin, contentKey(testHash("other-secret")),
+                         sealed.rootId, &ids, &error));
+    CHECK(!error.isEmpty());
+
+    // Refill: the wrong-key case cleared the list.
+    CHECK(bundleObjects(&origin, key, sealed.rootId, &ids, &error));
+
+    // Drop one object at a time from a copy of the store. A chunk is named by its
+    // file manifest rather than read, so losing one leaves the listing whole;
+    // losing a manifest is refused, because what is under it is then unknown.
+    int chunk = 0;
+    int manifest = 0;
+    for (int i = 0; i < ids.size(); ++i) {
+        MemoryStore trial = origin;
+        trial.remove(ids.at(i));
+
+        QVector<QByteArray> sub;
+        QString subError;
+        if (bundleObjects(&trial, key, sealed.rootId, &sub, &subError)) {
+            ++chunk;
+            CHECK_EQ(sub.size(), ids.size());
+        } else {
+            ++manifest;
+        }
+    }
+    CHECK(manifest > 0);
+    CHECK(chunk > 0);
+
+    // The root is the one manifest that is always needed: without it there is no
+    // bundle to walk at all.
+    MemoryStore headless = origin;
+    headless.remove(sealed.rootId);
+    CHECK(!bundleObjects(&headless, key, sealed.rootId, &ids, &error));
+
+    // Nor is an id that could never name an object a bundle.
+    CHECK(!bundleObjects(&origin, key, QByteArray("short"), &ids, &error));
+}
+
 void testCorruptionIsCaught()
 {
     section("verification: a damaged object is never used");
@@ -1252,6 +1329,7 @@ int main()
     testLink();
     testBundleRoundTrip();
     testMissingObjects();
+    testBundleObjects();
     testCorruptionIsCaught();
     testLargeDirectorySegmentation();
     testWire();

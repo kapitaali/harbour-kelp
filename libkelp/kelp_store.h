@@ -34,6 +34,9 @@ public:
     int count() const { return m_objects.size(); }
     qint64 byteCount() const;
 
+    // A seam for tests that need a store to have *lost* an object.
+    bool remove(const QByteArray &id) { return m_objects.remove(id) > 0; }
+
 private:
     QHash<QByteArray, QByteArray> m_objects;
 };

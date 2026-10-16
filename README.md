@@ -47,15 +47,17 @@ swarm wire format.
   fetched from), you pick the folder to save into, and the download reports
   progress and then where the files went.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
-  permission), relay address, *Include my local address in the link*, *Include
-  links in the log*, and a *Clear log* action. The first three switches are the
-  shape of the intended behaviour and are deliberately not acted on yet — only
-  the LAN path is wired up, and now in both directions. Two switches are real and
-  persisted: *Include my local address in the link* decides whether a link carries
-  this device's address at all (and so whether the bundle is served locally), and
-  *Include links in the log* decides whether a share's `kelp://` link (and so its
-  key) is written to the log. When the address *is* carried it is sealed, not
-  spelled out — see *Serving on the LAN* below.
+  permission), relay address, *Include my local address in the link*, **Storage**
+  (what the object store holds, what the shares need, and a *Remove unused
+  objects* action), *Include links in the log*, and a *Clear log* action. The
+  first three switches are the shape of the intended behaviour and are
+  deliberately not acted on yet — only the LAN path is wired up, and now in both
+  directions. Two switches are real and persisted: *Include my local address in
+  the link* decides whether a link carries this device's address at all (and so
+  whether the bundle is served locally), and *Include links in the log* decides
+  whether a share's `kelp://` link (and so its key) is written to the log. When
+  the address *is* carried it is sealed, not spelled out — see *Serving on the
+  LAN* below.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
@@ -214,8 +216,8 @@ libkelp/
   kelp_object.{h,cpp}    the object envelope and its content address
   kelp_manifest.{h,cpp}  file/directory manifests, segmentation, NFC names
   kelp_store.{h,cpp}     the object-store interface, plus an in-memory store
-  kelp_bundle.{h,cpp}    seal a tree, open a tree, plan a fetch, store what
-                         arrives, derive the keys
+  kelp_bundle.{h,cpp}    seal a tree, open a tree, plan a fetch, list every object
+                         a bundle is made of, store what arrives, derive the keys
   kelp_link.{h,cpp}      encode/decode a kelp:// link, base32 and base64url
   tests/                 unit tests with pinned vectors
 ```
@@ -225,9 +227,10 @@ libkelp/
 ```
 src/
   kelpstore.{h,cpp}      KelpObjectStore: objects on disk, sharded by id, written
-                         atomically; KelpFileSource: reads files for the sealer
-  kelpbundles.{h,cpp}    KelpBundles, the QML-facing seal()/storeInfo(), and the
-                         publisher's relay tunnels
+                         atomically, and removable; KelpFileSource: reads files
+                         for the sealer
+  kelpbundles.{h,cpp}    KelpBundles, the QML-facing seal()/storeInfo()/storeUsage()/
+                         pruneStore(), and the publisher's relay tunnels
   kelpserver.{h,cpp}     KelpServer, the LAN listener: serves objects to whoever
                          holds the link (wire spec §7.2)
   kelpshares.{h,cpp}     KelpShares: the shared-bundle rows on disk, so a restart
@@ -249,15 +252,27 @@ random master secret, seals into the store, publishes the bundle on the LAN and
 returns the link, bundle id, key, object count, file count, total bytes and the
 address it is being served on. Sealing is synchronous on the UI thread, so a large
 folder freezes the window while it works — a worker thread is a known TODO.
-Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log; they
-are never deleted yet, and re-sharing the same folder writes new objects because
-every seal uses fresh nonces.
+Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log. Re-sharing
+the same folder writes new objects because every seal uses fresh nonces.
 
 `KelpBundles::republish(bundleId, secret, name, objects, files, bytes)` is the
 restore path: it serves a bundle again from the saved row — the objects are
 already in the store, and the link is minted afresh because the LAN port is
 ephemeral. `seal()` and `republish()` share one `publish()` helper, so a freshly
 sealed bundle and a restored one get the same LAN address and relay treatment.
+
+Nothing is deleted automatically: seals and fetches both add objects, so Settings →
+**Storage** shows what is there and offers **Remove unused objects**. *Unused* has
+to be decided globally, because the store is one deduplicated pool and the graph
+points down (an object does not know which manifests name it). `Kelp::bundleObjects`
+walks every share's object graph in full to build the "in use" set; `KelpBundles::storeUsage`
+and `pruneStore` turn that into the display and the deletion, taking the share rows
+from the UI so "in use" is exactly what this device is serving. The walk is strict —
+a manifest that will not open fails the whole call, and nothing is deleted — because
+an object that cannot be accounted for must never be treated as junk. What the walk
+does *not* cover is a download's cached objects: those belong to no share here, and
+deleting them costs a re-download, not the content, since downloads are kept as
+ordinary files in *Downloads*.
 
 Serving is one listener for the whole app, started the first time anything is
 shared and told which bundles are currently published; `unshare()` (called by

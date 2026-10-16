@@ -62,8 +62,15 @@ Current verified state (2026-10-16)
   complete valid 4096x3072 JPEG (sha256 aea871ba24141a462828df0da156be6f9631826b1376a9673ae0aa55a6a402cc).
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
-- libkelp: 304 checks, 0 failures. App-layer harnesses: tst_kelpfetch 29, tst_kelpsettings
-  16, tst_kelpshares 24, tst_kelpqr 9 (all 0 failures). Relay harness: 4/4 ALL PASS.
+- libkelp: 345 checks, 0 failures. App-layer harnesses: tst_kelpfetch 37, tst_kelpsettings
+  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 54 (all 0 failures). Relay harness: 4/4
+  ALL PASS.
+- A link no longer spells out the publisher's address: encode() seals the address and label
+  into q= (AES-256-GCM under HKDF(secret, "kelp/v1/link"), bundle id as AAD); decode() still
+  accepts the old plaintext l=/n= form. Verified live (PROGRESS §3.11).
+- Settings -> Storage shows what the object store holds and what the shares on this device
+  need, and Remove unused objects deletes exactly the rest — refusing, and deleting nothing,
+  if any share cannot be walked. Verified live through the real page (PROGRESS §3.12).
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
@@ -106,7 +113,13 @@ Next Move (in this order — 1–3 are done as of this note)
    can still be read from the log on a device with no clipboard.
 5. Store management: nothing ever deletes objects and the store now also grows from what
    others send. Show its size; give bundles a Remove (needs the object graph walked
-   backwards) and/or an LRU. See kelp-design.md §12.7.
+   backwards) and/or an LRU. See kelp-design.md §12.7. **Done** — the answer is neither
+   per-bundle Remove nor an LRU: the store is one deduplicated pool and the graph points
+   down, so "unused" is only definable globally. Kelp::bundleObjects() (libkelp) walks every
+   share's graph in full and strictly (an unreadable manifest fails the call, so unaccounted
+   objects are never called junk); KelpBundles::storeUsage()/pruneStore() drive Settings ->
+   Storage (what is here, what the shares need, what is left over, a confirmed clean-up).
+   libkelp 345 checks, tst_kelpbundles 54, verified live on the emulator (PROGRESS §3.12).
 6. Only then C4 (browser viewer + gateway) or C7 (swarm).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file.
@@ -115,16 +128,18 @@ Relevant files
 - src/kelpfetch.{h,cpp} — KelpSource, LanSource, RelaySource. Bug 1 lives here (create()).
 - src/kelpclient.{h,cpp} — the fetch loop: walk, ask, fetch, repeat; writes the tree.
 - src/kelpserver.{h,cpp} — the LAN listener the client talks to (endpoints, auth, guards).
-- src/kelpbundles.{h,cpp} — seal()/republish()/unshare()/storeInfo()/linkInfo(); the link
-  logging gate and the shared publish() helper.
+- src/kelpbundles.{h,cpp} — seal()/republish()/unshare()/storeInfo()/storeUsage()/
+  pruneStore()/linkInfo(); the link logging gate and the shared publish() helper.
 - src/kelpshares.{h,cpp} — the shared rows on disk (owner-only shares.json), so a restart
   restores and re-serves them.
 - src/kelpqr.{h,cpp} — the QML-painted QR item for a share link; src/qrcodegen.{hpp,cpp} is
   the vendored MIT QR encoder it calls, with its notice in src/qrcodegen.LICENSE.
 - src/kelplog.{h,cpp} — dataDirectory(): the one place the data path is decided.
-- src/kelpstore.h — KelpObjectStore (sharded ab/<64-hex>, temp+rename, re-hash on get).
+- src/kelpstore.h — KelpObjectStore (sharded ab/<64-hex>, temp+rename, re-hash on get),
+  plus objectIds/objectSize/remove for the storage clean-up.
 - src/kelptunnel.{h,cpp}, src/kelptls.{h,cpp} — the publisher's outbound tunnel + TLS 1.3.
-- libkelp/kelp_bundle.{h,cpp} — seal/open/missingObjects (the walker).
+- libkelp/kelp_bundle.{h,cpp} — seal/open/missingObjects (the fetch walker) and
+  bundleObjects (the storage walker: strict, lists every object a bundle is made of).
 - libkelp/kelp_link.h, kelp_object.h, kelp_manifest.h, kelp_store.h, kelp_wire.{h,cpp}.
 - libkelp/tests/tst_kelp.cpp — CHECK/CHECK_EQ style and the harness patterns to mirror.
 - src/tests/ — app-layer harnesses to mirror for anything above libkelp: tst_kelpfetch
@@ -172,8 +187,9 @@ Known gaps carried forward
 - No TLS on the LAN path (deliberate). Shares ARE persisted now, but the address is still
   captured at share time and the port stays ephemeral: a restart remints the link (and a
   network change within a session is not noticed until the next restart). Serving stops
-  when the app exits. No object GC. No swarm, no relay caching or stewards, no browser
+  when the app exits. No swarm, no relay caching or stewards, no browser
   gateway. Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
-  Symlink skips are only logged. Some diagnostic printf lines remain.
+  Symlink skips are only logged. Some diagnostic printf lines remain. The storage clean-up
+  runs on the UI thread too, and there is no size cap or LRU — it is a manual action.
 
 Open design questions are in kelp-design.md §12; they are still open.
