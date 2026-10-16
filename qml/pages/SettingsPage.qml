@@ -86,6 +86,16 @@ Page {
 
             SectionHeader { text: qsTr("Diagnostics") }
 
+            TextSwitch {
+                text: qsTr("Include links in the log")
+                description: qsTr("Write each share's kelp:// link to the log file. A link holds the key to that bundle, so anyone able to read the log can open it. Leave this off unless you need it — it is the only way to read a link off a device with no usable clipboard.")
+                checked: kelpSettings.includeLinksInLog
+                onCheckedChanged: {
+                    if (checked !== kelpSettings.includeLinksInLog)
+                        kelpSettings.includeLinksInLog = checked
+                }
+            }
+
             Button {
                 width: parent.width
                 text: qsTr("Clear log")

@@ -20,6 +20,9 @@ RPMS/
 # The relay's self-signed test certificate is generated on demand, not committed.
 /relay/test/certs/
 
+# The app-layer test harness (src/tests/*.pro) also builds out of source.
+/src/tests/.build/
+
 # Editor swap/backup files.
 *.swp
 *.swo

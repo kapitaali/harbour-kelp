@@ -26,6 +26,7 @@
 #include "kelpfiles.h"
 #include "kelplog.h"
 #include "kelpserver.h"
+#include "kelpsettings.h"
 #include "kelpstore.h"
 
 int main(int argc, char *argv[])
@@ -46,6 +47,7 @@ int main(int argc, char *argv[])
 
     KelpFiles kelpFiles;
     KelpLog kelpLog;
+    KelpSettings kelpSettings;
 
     // Objects live beside the log, in the app's own data directory — the one
     // Sailjail gives us, so this works from the app grid as well as a shell.
@@ -63,6 +65,9 @@ int main(int argc, char *argv[])
     KelpServer objectServer(&objectStore);
 
     KelpBundles kelpBundles(&objectStore, &objectServer);
+    // The publisher acts on the log-links preference; hand it the same object
+    // the Settings page writes to.
+    kelpBundles.setSettings(&kelpSettings);
 
     // The receiving end shares the same object store: an object received for one
     // bundle is verified content like any other, and nothing here can be confused
@@ -86,6 +91,7 @@ int main(int argc, char *argv[])
     context->setContextProperty("initialLink", initialLink);
     context->setContextProperty("kelpFiles", &kelpFiles);
     context->setContextProperty("kelpLog", &kelpLog);
+    context->setContextProperty("kelpSettings", &kelpSettings);
     context->setContextProperty("kelpBundles", &kelpBundles);
     context->setContextProperty("kelpClient", &kelpClient);
     context->setContextProperty("appVersion", QStringLiteral(APP_VERSION));

@@ -43,9 +43,11 @@ swarm wire format.
   explained before anything happens (name, content address, where it will be
   fetched from), and the download reports progress and then where the files went.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
-  permission), relay address, and a *Clear log* action. These switches are the
-  shape of the intended behaviour and are deliberately not acted on yet — only the
-  LAN path is wired up, and now in both directions.
+  permission), relay address, *Include links in the log*, and a *Clear log*
+  action. The first four switches are the shape of the intended behaviour and
+  are deliberately not acted on yet — only the LAN path is wired up, and now in
+  both directions. *Include links in the log* is real and persisted: it decides
+  whether a share's `kelp://` link (and so its key) is written to the log.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
@@ -258,16 +260,26 @@ kelpLog.info("added " + path + " (" + fileCount + " files)")
 
 The file rotates to `kelp.log.1` once it passes 512 KB.
 
-Two environment variables help when there is no usable clipboard — a headless
-device, the emulator, an ssh session:
+There are two ways to get a `kelp://` link written into the log, which is what a
+device with no usable clipboard — a headless box, the emulator over ssh — needs:
 
-- `KELP_DEBUG_LINK=1` — write the `kelp://` link into the log when a bundle is
-  shared, so it can be read back out with `grep`. Off by default: a link is a
-  capability, and the log is a file like any other.
-- `KELP_INITIAL_LINK=<kelp://…>` (or passing the link as an argument) — open that
-  link in *Open a link* at startup. This is how a link is handed *to* a device
-  that cannot paste into it, and it is the same seam a `kelp://` activation will
-  use later.
+- **Settings → *Include links in the log*** — a persisted switch, off by default.
+  When on, every share's link is written to the log and can be read back with
+  `grep`. A link holds the decryption key, and the log is a plain file, so the
+  switch is off unless the user asks for it.
+- `KELP_DEBUG_LINK=1` in the app's environment — the same effect for a single
+  run, without touching the UI. Kept so existing headless scripts keep working.
+
+`KELP_INITIAL_LINK=<kelp://…>` (or passing the link as an argument) opens that
+link in *Open a link* at startup. This is how a link is handed *to* a device
+that cannot paste into it, and it is the same seam a `kelp://` activation will
+use later.
+
+Both write the link to the log; read it back with:
+
+```sh
+grep -o 'kelp://[^ ]*' ~/.local/share/harbour.kelp/harbour-kelp/kelp.log | tail -1
+```
 
 ## Testing `libkelp`
 

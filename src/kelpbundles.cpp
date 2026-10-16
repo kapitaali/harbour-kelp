@@ -8,6 +8,7 @@
 #include "kelp_crypto.h"
 #include "kelp_link.h"
 #include "kelpserver.h"
+#include "kelpsettings.h"
 #include "kelpstore.h"
 #include "kelptunnel.h"
 
@@ -240,10 +241,14 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("link"), linkText);
     // A link is a capability — whoever holds it can read the bundle — so it is
-    // never logged by default. Set KELP_DEBUG_LINK=1 to have it written to the
-    // log, which is how a headless device (or the emulator) hands a link to a
-    // developer when there is no clipboard to copy it to.
-    if (!qgetenv("KELP_DEBUG_LINK").isEmpty())
+    // never logged by default. It is written only when the user turns on
+    // Settings → "Include links in the log" (which is what lets a device with no
+    // usable clipboard be handed a link) or when KELP_DEBUG_LINK is set in the
+    // environment for a one-off run. The env override stays so existing headless
+    // scripts keep working without touching the UI.
+    const bool logLink = (m_settings && m_settings->includeLinksInLog())
+                         || !qgetenv("KELP_DEBUG_LINK").isEmpty();
+    if (logLink)
         qInfo() << "KelpBundles: link" << linkText;
     result.insert(QStringLiteral("relay"),
                   m_tunnels.contains(QString::fromLatin1(Kelp::Link::base32Encode(sealed.rootId)))

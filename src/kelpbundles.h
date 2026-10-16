@@ -10,6 +10,7 @@
 
 class KelpObjectStore;
 class KelpServer;
+class KelpSettings;
 class KelpTunnel;
 
 /*
@@ -35,6 +36,10 @@ public:
     Q_INVOKABLE void setRelays(const QStringList &relays);
     QStringList relays() const { return m_relays; }
 
+    // User preferences the publisher acts on. Optional: without one, nothing is
+    // written to the log unless the KELP_DEBUG_LINK override is set.
+    void setSettings(KelpSettings *settings) { m_settings = settings; }
+
     // Returns { ok, error, link, bundleId, secret, objectCount, fileCount,
     //           totalBytes, skippedLinks, lan, relay }.
     Q_INVOKABLE QVariantMap seal(const QStringList &paths, const QString &name);
@@ -59,6 +64,7 @@ private:
 
     KelpObjectStore *m_store;
     KelpServer *m_server;
+    KelpSettings *m_settings = nullptr;
 
     QStringList m_relays;
     // One outgoing tunnel per shared bundle, keyed by the base32 bundle id.

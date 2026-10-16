@@ -42,6 +42,7 @@ SOURCES += \
     src/kelpfiles.cpp \
     src/kelplog.cpp \
     src/kelpserver.cpp \
+    src/kelpsettings.cpp \
     src/kelpstore.cpp \
     src/kelptls.cpp \
     src/kelptunnel.cpp
@@ -53,6 +54,7 @@ HEADERS += \
     src/kelpfiles.h \
     src/kelplog.h \
     src/kelpserver.h \
+    src/kelpsettings.h \
     src/kelpstore.h \
     src/kelptls.h \
     src/kelptunnel.h
