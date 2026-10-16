@@ -163,6 +163,8 @@ Important context — build, deploy, debug
   and logs and really fetch over the LAN. For emulator-as-sender, the emulator cannot be
   dialled into (QEMU NAT) — src/tests/run-emu-share.sh forwards a host port into it and
   rewrites the link (PROGRESS §4.5); it can also write QR PNGs of the rewritten link.
+  The phone must be able to reach *this host*, so host and phone must share a network
+  (the host's Wi-Fi was software-disabled; nmcli radio wifi on, then join the phone's).
 - Verify like this: object count in the store, the transfer lines in the log, sha256sum of
   the written file against the original, and diff -r for a tree.
 
