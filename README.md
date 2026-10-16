@@ -35,7 +35,8 @@ swarm wire format.
   *Stop sharing*.
 - **Bundle** — details (files, size, location, object count, the address it is
   served on, encryption), the real `kelp://` link laid out in its three parts
-  (identity · where · key), a QR placeholder, a note saying who can reach it, and
+  (identity · where · key), *Show QR code* — the whole link, key and all, as a
+  scannable code for the other device — a note saying who can reach it, and
   *Stop sharing* — which stops serving, not just listing.
 - **Add** — pick real files (each tap adds to the selection) or a whole folder.
   Sizes and file counts are read from disk; long-press a picked row to remove it.
@@ -321,6 +322,13 @@ side — walking a bundle that is only half here, asking for exactly what is
 missing, and refusing an object that does not hash to the address it was fetched
 for.
 
+The app layer above `libkelp` has the same kind of harnesses under `src/tests/`,
+each with a `run-*-test.sh` that builds out of source: `tst_kelpfetch` (the LAN
+request header), `tst_kelpsettings` (the persisted preference), `tst_kelpshares`
+(the persisted rows) and `tst_kelpqr` (QR encoding, pinned against Python's
+`qrcode`). Run them the same way, e.g.
+`build-shell sh "$PWD/src/tests/run-kelpqr-test.sh"`.
+
 ## Building
 
 qmake-based Sailfish OS project, built with
@@ -347,4 +355,9 @@ is a base-image package, so it is always present.
 
 ## License
 
-`GPL-3.0-only`
+`GPL-3.0-only`.
+
+The QR encoding on the Bundle page uses Project Nayuki's QR Code generator
+library (MIT), vendored in `src/qrcodegen.*`. Its license notice is shipped in
+`src/qrcodegen.LICENSE` and installed alongside the app; MIT is compatible with
+the GPL-3.0-only rest of the tree.

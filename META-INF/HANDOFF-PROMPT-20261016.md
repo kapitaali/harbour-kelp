@@ -63,7 +63,10 @@ Current verified state (2026-10-16)
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
 - libkelp: 304 checks, 0 failures. App-layer harnesses: tst_kelpfetch 17, tst_kelpsettings
-  16, tst_kelpshares 24 (all 0 failures). Relay harness: 4/4 ALL PASS.
+  16, tst_kelpshares 24, tst_kelpqr 9 (all 0 failures). Relay harness: 4/4 ALL PASS.
+- A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
+  is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
+  rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
 - Phone RPM with the current fixes: build it (see below); the emulator RPM from the last
   session is RPMS/SailfishOS-5.1.0.11-i486/harbour-kelp-0.1.0-1.i486.rpm. The repo IS a
   git repository now (git init done), so commit the work — the earlier note that it was
@@ -88,10 +91,17 @@ Next Move (in this order — 1–3 are done as of this note)
    startup, KelpBundles::republish() mints a fresh link. Verified live, including a fetch
    through a restored link and a sandboxed pass (PROGRESS §3.7). While here, "Stop sharing"
    from the Bundles list was found not to stop serving (PROGRESS §2.4) and was fixed.
-4. Store management: nothing ever deletes objects and the store now also grows from what
+4. QR-code sharing (user-requested, done between the planned moves): the Bundle page's
+   placeholder is now a real, scannable QR of the whole link. **Done** — src/qrcodegen.*
+   (vendored MIT Nayuki generator) + src/kelpqr.{h,cpp} (the Qt Quick item), tst_kelpqr
+   (9 checks) pinning the encoder against an independent implementation, and a live scan
+   with a real decoder (PROGRESS §3.8). Follow-up: republish() should honour the
+   "Include links in the log" setting that seal() already does, so a restored share's link
+   can still be read from the log on a device with no clipboard.
+5. Store management: nothing ever deletes objects and the store now also grows from what
    others send. Show its size; give bundles a Remove (needs the object graph walked
    backwards) and/or an LRU. See kelp-design.md §12.7.
-5. Only then C4 (browser viewer + gateway) or C7 (swarm).
+6. Only then C4 (browser viewer + gateway) or C7 (swarm).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file.
 
@@ -103,6 +113,8 @@ Relevant files
   logging gate and the shared publish() helper.
 - src/kelpshares.{h,cpp} — the shared rows on disk (owner-only shares.json), so a restart
   restores and re-serves them.
+- src/kelpqr.{h,cpp} — the QML-painted QR item for a share link; src/qrcodegen.{hpp,cpp} is
+  the vendored MIT QR encoder it calls, with its notice in src/qrcodegen.LICENSE.
 - src/kelplog.{h,cpp} — dataDirectory(): the one place the data path is decided.
 - src/kelpstore.h — KelpObjectStore (sharded ab/<64-hex>, temp+rename, re-hash on get).
 - src/kelptunnel.{h,cpp}, src/kelptls.{h,cpp} — the publisher's outbound tunnel + TLS 1.3.
@@ -111,7 +123,7 @@ Relevant files
 - libkelp/tests/tst_kelp.cpp — CHECK/CHECK_EQ style and the harness patterns to mirror.
 - src/tests/ — app-layer harnesses to mirror for anything above libkelp: tst_kelpfetch
   (LAN header), tst_kelpsettings (persisted preference), tst_kelpshares (persisted rows),
-  each with its run-*-test.sh.
+  tst_kelpqr (QR encoding, pinned against Python's qrcode), each with its run-*-test.sh.
 - relay/ — kelp-relay, a separate binary; relay/test/run-relay-test.sh is its harness.
 - qml/ — harbour-kelp.qml (page stack, addBundle) and pages/ (Bundles, Add, Bundle,
   OpenLink, Settings, About).

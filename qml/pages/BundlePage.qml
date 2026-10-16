@@ -1,5 +1,6 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import harbour.kelp 1.0
 import "../components"
 
 Page {
@@ -208,9 +209,12 @@ Page {
         }
     }
 
-    // Placeholder: the real QR renderer arrives with the bundle format.
+    // The link as a QR code: the shortest way to get a share from this device to
+    // another. It carries the same key the text link does, so it is shown only on
+    // demand, here.
     Dialog {
         id: qrDialog
+        objectName: "kelpQrDialog"
 
         Column {
             width: parent.width
@@ -232,13 +236,25 @@ Page {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Math.min(parent.width - 2 * Theme.horizontalPageMargin, 3 * Theme.itemSizeLarge)
                     height: width
+                    // White behind the code, never themed: a scanner wants contrast.
                     color: "white"
+
+                    KelpQrCode {
+                        id: qrImage
+                        objectName: "kelpQrCode"
+                        anchors.fill: parent
+                        anchors.margins: Theme.paddingSmall
+                        text: bundlePage.entry ? bundlePage.entry.link : ""
+                    }
 
                     Label {
                         anchors.centerIn: parent
+                        width: parent.width - 2 * Theme.paddingLarge
                         horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
                         color: "black"
-                        text: qsTr("QR\nplaceholder")
+                        visible: !qrImage.valid
+                        text: qsTr("This link is too long to show as a QR code.")
                     }
                 }
             }
@@ -250,6 +266,16 @@ Page {
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
+                text: qsTr("Scan this with Kelp on the other device. The code holds the same key as the link.")
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WrapAnywhere
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
                 text: bundlePage.entry ? bundlePage.entry.link : ""
             }
         }

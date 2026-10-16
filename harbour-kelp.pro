@@ -41,12 +41,14 @@ SOURCES += \
     src/kelpfetch.cpp \
     src/kelpfiles.cpp \
     src/kelplog.cpp \
+    src/kelpqr.cpp \
     src/kelpserver.cpp \
     src/kelpsettings.cpp \
     src/kelpshares.cpp \
     src/kelpstore.cpp \
     src/kelptls.cpp \
-    src/kelptunnel.cpp
+    src/kelptunnel.cpp \
+    src/qrcodegen.cpp
 
 HEADERS += \
     src/kelpbundles.h \
@@ -54,12 +56,14 @@ HEADERS += \
     src/kelpfetch.h \
     src/kelpfiles.h \
     src/kelplog.h \
+    src/kelpqr.h \
     src/kelpserver.h \
     src/kelpsettings.h \
     src/kelpshares.h \
     src/kelpstore.h \
     src/kelptls.h \
-    src/kelptunnel.h
+    src/kelptunnel.h \
+    src/qrcodegen.hpp
 
 # sailfishapp.prf installs the whole qml/ tree; this list exists so the IDE
 # and qmake know about the files.
@@ -74,6 +78,13 @@ QML_FILES = \
     qml/pages/FolderPickPage.qml \
     qml/pages/SettingsPage.qml \
     qml/pages/AboutPage.qml
+# The QR generator (src/qrcodegen.*) is MIT-licensed third-party code; install
+# its notice with the app so the terms travel with a binary-only RPM too. The
+# spec's %{_datadir}/harbour-kelp glob already picks the file up.
+license.files = src/qrcodegen.LICENSE
+license.path = /usr/share/harbour-kelp
+INSTALLS += license
+
 OTHER_FILES += \
     harbour-kelp.desktop \
     rpm/harbour-kelp.spec \

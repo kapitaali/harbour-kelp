@@ -16,6 +16,7 @@
 #include <QGuiApplication>
 #include <QQmlContext>
 #include <QQmlError>
+#include <QQmlEngine>
 #include <QQuickView>
 #include <QScopedPointer>
 #include <QStandardPaths>
@@ -25,6 +26,7 @@
 #include "kelpclient.h"
 #include "kelpfiles.h"
 #include "kelplog.h"
+#include "kelpqr.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
 #include "kelpshares.h"
@@ -104,6 +106,10 @@ int main(int argc, char *argv[])
     context->setContextProperty("kelpClient", &kelpClient);
     context->setContextProperty("appVersion", QStringLiteral(APP_VERSION));
     context->setContextProperty("buildId", QStringLiteral(BUILD_ID));
+
+    // The QR code for a share link is a painted item, so it is a QML type rather
+    // than a context property (the page instantiates it).
+    qmlRegisterType<KelpQrCode>("harbour.kelp", 1, 0, "KelpQrCode");
 
     view->setSource(SailfishApp::pathTo("qml/harbour-kelp.qml"));
 
