@@ -1,0 +1,29 @@
+# Build artifacts — sfdk build compiles in place, in this directory.
+Makefile
+.qmake.stash
+*.o
+moc_*.cpp
+*.moc
+qmlcache/
+*.qmlc
+documentation.list
+
+# The binary is named after the directory it lives in.
+/harbour-kelp
+
+# Packaged output and per-target copies.
+RPMS/
+
+# The relay (C3) and its test harness build in place too.
+/relay/.build/
+/relay/test/.build/
+# The relay's self-signed test certificate is generated on demand, not committed.
+/relay/test/certs/
+
+# Editor swap/backup files.
+*.swp
+*.swo
+*~
+
+# Local secrets (license keys, tokens). Never committed.
+/secrets/

@@ -1,0 +1,41 @@
+#!/bin/bash
+# RPM %changelog body, generated from git at build time.
+#
+# sfdk runs this and splices its stdout straight into the %changelog section,
+# so every entry needs a "* <date> <name> <email> - <version-release>" headline
+# or rpmbuild drops it with: "error: %changelog entries must start with *".
+# sfdk-changelog only writes those headlines for tagged revisions, so the
+# still-unreleased work gets one from here.
+#
+# The bullet lines come from commit messages matching
+# "[tag] <past-tense description>", e.g.
+#
+#     [app] Added pull-down menu to the bundles page.
+#     [packaging] Bumped version to 0.2.
+#
+# Takes precedence over harbour-kelp.changes. See: sfdk changelog --help
+
+spec=rpm/harbour-kelp.spec
+[ -f "$spec" ] || spec="$(dirname "$0")/harbour-kelp.spec"
+version=$(sed -n 's/^Version:[[:space:]]*//p' "$spec")
+release=$(sed -n 's/^Release:[[:space:]]*//p' "$spec")
+
+# Prefer the commit author, then the repo identity, then the static changelog,
+# so the headline is never malformed.
+author=$(git log -1 --pretty='format:%an <%ae>' 2>/dev/null)
+[ -n "$author" ] || author="$(git config user.name) <$(git config user.email)>"
+[ -n "$author" ] || author=$(sed -n '2s/^[^ ]* [^ ]* [0-9]* [0-9]* \([^ ]* [^ ]*\).*/\1/p' \
+    "$(dirname "$0")/harbour-kelp.changes" 2>/dev/null)
+[ -n "$author" ] || author="kapitaali <teppo@kapitaali.com>"   # last resort
+
+# Unreleased work: everything reachable before the first release tag.
+entries=$(sfdk-changelog --untagged-only 2>/dev/null)
+if [ -n "$entries" ]; then
+    echo "* $(date '+%a %b %-d %Y') $author - $version-$release"
+    printf '%s\n' "$entries"
+    echo
+fi
+
+# Released entries, each with its own headline. Warns (harmlessly) until the
+# first tag exists, so it must not fail the build.
+sfdk-changelog || true

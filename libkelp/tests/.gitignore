@@ -1,0 +1,2 @@
+# libkelp unit tests: the test binary is built out of source into .build/.
+.build/

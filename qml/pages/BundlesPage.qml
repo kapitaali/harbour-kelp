@@ -1,0 +1,164 @@
+import QtQuick 2.0
+import Sailfish.Silica 1.0
+import "../components"
+
+Page {
+    id: bundlesPage
+
+    // Injected by the ApplicationWindow (see qml/harbour-kelp.qml).
+    property var store
+
+    // The whole bundle list depends on `store.bundlesModel` actually being a
+    // property; if it resolves to undefined the list is silently empty.
+    Component.onCompleted: kelpLog.info("BundlesPage: store=" + (store ? "present" : "missing")
+                                        + " bundlesModel="
+                                        + ((store && store.bundlesModel) ? "present" : "undefined"))
+
+    SilicaListView {
+        id: listView
+
+        anchors.fill: parent
+        model: bundlesPage.store ? bundlesPage.store.bundlesModel : null
+        header: PageHeader { title: qsTr("Kelp") }
+
+        onCountChanged: kelpLog.info("BundlesPage: list count = " + count)
+
+        PullDownMenu {
+            MenuItem {
+                text: qsTr("Add files or folder…")
+                onClicked: {
+                    kelpLog.info("BundlesPage: opening Add page")
+                    pageStack.push(Qt.resolvedUrl("AddPage.qml"),
+                                   { store: bundlesPage.store })
+                }
+            }
+            MenuItem {
+                text: qsTr("Open a link…")
+                onClicked: {
+                    kelpLog.info("BundlesPage: opening Open-link page")
+                    pageStack.push(Qt.resolvedUrl("OpenLinkPage.qml"))
+                }
+            }
+            MenuItem {
+                text: qsTr("Settings")
+                onClicked: pageStack.push(Qt.resolvedUrl("SettingsPage.qml"),
+                                          { store: bundlesPage.store })
+            }
+            MenuItem {
+                text: qsTr("About")
+                onClicked: pageStack.push(Qt.resolvedUrl("AboutPage.qml"))
+            }
+        }
+
+        delegate: ListItem {
+            id: delegate
+
+            width: listView.width
+            contentHeight: Theme.itemSizeMedium
+
+            Column {
+                anchors {
+                    left: parent.left
+                    leftMargin: Theme.horizontalPageMargin
+                    right: rightColumn.left
+                    rightMargin: Theme.paddingMedium
+                    verticalCenter: parent.verticalCenter
+                }
+                spacing: Theme.paddingSmall / 2
+
+                Label {
+                    width: parent.width
+                    text: name
+                    truncationMode: TruncationMode.Elide
+                    color: delegate.highlighted ? Theme.highlightColor : Theme.primaryColor
+                }
+
+                Label {
+                    width: parent.width
+                    truncationMode: TruncationMode.Elide
+                    color: Theme.secondaryColor
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    text: (kind === "folder" ? qsTr("%1 files").arg(files)
+                                             : qsTr("%1 file").arg(files))
+                          + " · " + size
+                }
+            }
+
+            // State and where the objects can be fetched from, stacked. Encryption
+            // is not shown: every bundle is encrypted, so it carries no
+            // information here. The address is the useful part — it is the
+            // difference between a link that works and one that does not.
+            Column {
+                id: rightColumn
+                anchors {
+                    right: parent.right
+                    rightMargin: Theme.horizontalPageMargin
+                    verticalCenter: parent.verticalCenter
+                }
+                spacing: Theme.paddingSmall / 2
+
+                Label {
+                    anchors.right: parent.right
+                    text: state === "seeding" ? qsTr("Seeding") : qsTr("Offline")
+                    color: state === "seeding" ? Theme.highlightColor : Theme.secondaryColor
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                }
+
+                Label {
+                    anchors.right: parent.right
+                    text: lan.length > 0 ? lan : qsTr("not serving")
+                    color: Theme.secondaryColor
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                }
+            }
+
+            menu: ContextMenu {
+                MenuItem {
+                    text: qsTr("Open")
+                    onClicked: pageStack.push(Qt.resolvedUrl("BundlePage.qml"),
+                                              { store: bundlesPage.store, index: index })
+                }
+                MenuItem {
+                    text: qsTr("Copy link")
+                    onClicked: {
+                        Clipboard.text = link
+                        toast.show(qsTr("Link copied"))
+                    }
+                }
+                MenuItem {
+                    text: qsTr("Stop sharing")
+                    onClicked: {
+                        var doomed = index
+                        kelpLog.info("Stop sharing: remorse started for index " + doomed)
+                        remorse.execute(qsTr("Stopping sharing"), function() {
+                            kelpLog.info("Stop sharing: removing index " + doomed
+                                         + " (count " + bundlesPage.store.bundlesModel.count + ")")
+                            bundlesPage.store.bundlesModel.remove(doomed)
+                        })
+                    }
+                }
+            }
+
+            onClicked: pageStack.push(Qt.resolvedUrl("BundlePage.qml"),
+                                      { store: bundlesPage.store, index: index })
+        }
+
+        ViewPlaceholder {
+            enabled: listView.count === 0
+            text: qsTr("No shared bundles")
+            hintText: qsTr("Pull down to add real files or a folder")
+        }
+
+        VerticalScrollDecorator {}
+    }
+
+    RemorsePopup {
+        id: remorse
+
+        // Diagnosable from the log: "canceled" means the tap-to-undo was seen,
+        // "triggered" means the action actually ran.
+        onTriggered: kelpLog.info("remorse: triggered — action will run")
+        onCanceled: kelpLog.info("remorse: canceled — undo was honoured")
+    }
+    Toast { id: toast }
+}
