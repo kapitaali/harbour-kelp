@@ -21,8 +21,9 @@ Read before touching anything
   §16 pinned vectors.
 - README.md — current state, screens, how to debug.
 - META-INF/ipfs-fileshare-PLAN.md — parked, separate name. Leave it as-is.
-- The repo is NOT a git repository: no history, no commits, changes are plain file edits.
-  Keep the dated PROGRESS-<date>.md notes up to date as you go; they are the history.
+- The repo IS a git repository now (git init was done on 2026-10-16; commits d85d0ab,
+  3b5c4fe, fbbf829, 94feab3). Commit your work as you go, and keep the dated
+  PROGRESS-<date>.md notes up to date — they are also the history.
 
 Requirements
 - Keep planning docs as loose .md files under harbour-kelp/META-INF/.
@@ -59,23 +60,34 @@ Current verified state (2026-10-16)
   2 136 168-byte JPEG (11 objects, 1 file) on 172.28.172.1:34637; the emulator fetched
   11 objects in 4 rounds, wrote ~/Downloads/20260924_124949.jpg, and the file is a
   complete valid 4096x3072 JPEG (sha256 aea871ba24141a462828df0da156be6f9631826b1376a9673ae0aa55a6a402cc).
-- libkelp: 304 checks, 0 failures. Relay harness: 4/4 ALL PASS.
-- Phone RPM with all three fixes: RPMS/SailfishOS-5.1.0.11-aarch64/harbour-kelp-0.1.0-1.aarch64.rpm.
-  Emulator RPM: RPMS/SailfishOS-5.1.0.11-i486/harbour-kelp-0.1.0-1.i486.rpm. There is no
-  git commit for any of it.
+- Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
+  a second instance fetched through the restored link and the file was byte-identical.
+- libkelp: 304 checks, 0 failures. App-layer harnesses: tst_kelpfetch 17, tst_kelpsettings
+  16, tst_kelpshares 24 (all 0 failures). Relay harness: 4/4 ALL PASS.
+- Phone RPM with the current fixes: build it (see below); the emulator RPM from the last
+  session is RPMS/SailfishOS-5.1.0.11-i486/harbour-kelp-0.1.0-1.i486.rpm. The repo IS a
+  git repository now (git init done), so commit the work — the earlier note that it was
+  not is stale.
 
-Next Move (in this order)
+Next Move (in this order — 1–3 are done as of this note)
 1. Regression test for the LAN request header. src/kelpfetch.cpp's LanSource puts the
    swarm token in Authorization: Bearer <token>, and the sender base64url-decodes that
    header and compares bytes. It was handed raw bytes for a while, which the sender
    silently answered 401 ("the sender did not recognise this link"). Nothing tests it.
    Pin the format with a test that asserts the header equals base64url(swarmToken(secret)).
+   **Done** — src/tests/tst_kelpfetch.cpp, 17 checks (negative control verified).
 2. Settings -> "Include links in the log", persisted, off by default. Today the link is
    only written to kelp.log when the app is launched with KELP_DEBUG_LINK=1, which makes
    the emulator (no usable clipboard) need a shell launch to get a link at all.
+   **Done** — src/kelpsettings.{h,cpp}, switch under Settings -> Diagnostics,
+   KELP_DEBUG_LINK kept as a one-run override.
 3. Make a share survive reality: shared rows are not persisted, so a restart silently
    drops the share; and the link's address is captured at share time, so a network change
    makes it stale with no indication to the user.
+   **Done** — src/kelpshares.{h,cpp} (owner-only shares.json), restored and re-served at
+   startup, KelpBundles::republish() mints a fresh link. Verified live, including a fetch
+   through a restored link and a sandboxed pass (PROGRESS §3.7). While here, "Stop sharing"
+   from the Bundles list was found not to stop serving (PROGRESS §2.4) and was fixed.
 4. Store management: nothing ever deletes objects and the store now also grows from what
    others send. Show its size; give bundles a Remove (needs the object graph walked
    backwards) and/or an LRU. See kelp-design.md §12.7.
@@ -87,13 +99,19 @@ Relevant files
 - src/kelpfetch.{h,cpp} — KelpSource, LanSource, RelaySource. Bug 1 lives here (create()).
 - src/kelpclient.{h,cpp} — the fetch loop: walk, ask, fetch, repeat; writes the tree.
 - src/kelpserver.{h,cpp} — the LAN listener the client talks to (endpoints, auth, guards).
-- src/kelpbundles.{h,cpp} — seal()/unshare()/storeInfo()/linkInfo(); the link logging gate.
+- src/kelpbundles.{h,cpp} — seal()/republish()/unshare()/storeInfo()/linkInfo(); the link
+  logging gate and the shared publish() helper.
+- src/kelpshares.{h,cpp} — the shared rows on disk (owner-only shares.json), so a restart
+  restores and re-serves them.
 - src/kelplog.{h,cpp} — dataDirectory(): the one place the data path is decided.
 - src/kelpstore.h — KelpObjectStore (sharded ab/<64-hex>, temp+rename, re-hash on get).
 - src/kelptunnel.{h,cpp}, src/kelptls.{h,cpp} — the publisher's outbound tunnel + TLS 1.3.
 - libkelp/kelp_bundle.{h,cpp} — seal/open/missingObjects (the walker).
 - libkelp/kelp_link.h, kelp_object.h, kelp_manifest.h, kelp_store.h, kelp_wire.{h,cpp}.
 - libkelp/tests/tst_kelp.cpp — CHECK/CHECK_EQ style and the harness patterns to mirror.
+- src/tests/ — app-layer harnesses to mirror for anything above libkelp: tst_kelpfetch
+  (LAN header), tst_kelpsettings (persisted preference), tst_kelpshares (persisted rows),
+  each with its run-*-test.sh.
 - relay/ — kelp-relay, a separate binary; relay/test/run-relay-test.sh is its harness.
 - qml/ — harbour-kelp.qml (page stack, addBundle) and pages/ (Bundles, Add, Bundle,
   OpenLink, Settings, About).
@@ -129,10 +147,11 @@ Important context — build, deploy, debug
   the written file against the original, and diff -r for a tree.
 
 Known gaps carried forward
-- No TLS on the LAN path (deliberate). Shares are not persisted; the address is captured
-  at share time; the port is ephemeral. Serving stops when the app exits. No object GC. No
-  swarm, no relay caching or stewards, no browser gateway. Sealing is synchronous on the UI
-  thread. open() holds the whole tree in memory. Symlink skips are only logged. Some
-  diagnostic printf lines remain.
+- No TLS on the LAN path (deliberate). Shares ARE persisted now, but the address is still
+  captured at share time and the port stays ephemeral: a restart remints the link (and a
+  network change within a session is not noticed until the next restart). Serving stops
+  when the app exits. No object GC. No swarm, no relay caching or stewards, no browser
+  gateway. Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
+  Symlink skips are only logged. Some diagnostic printf lines remain.
 
 Open design questions are in kelp-design.md §12; they are still open.

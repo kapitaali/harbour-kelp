@@ -27,6 +27,7 @@
 #include "kelplog.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
+#include "kelpshares.h"
 #include "kelpstore.h"
 
 int main(int argc, char *argv[])
@@ -48,6 +49,9 @@ int main(int argc, char *argv[])
     KelpFiles kelpFiles;
     KelpLog kelpLog;
     KelpSettings kelpSettings;
+    // The saved share list, restored by the UI at startup so a restart no longer
+    // drops a share (the objects were already staying on disk).
+    KelpShares kelpShares;
 
     // Objects live beside the log, in the app's own data directory — the one
     // Sailjail gives us, so this works from the app grid as well as a shell.
@@ -95,6 +99,7 @@ int main(int argc, char *argv[])
     context->setContextProperty("kelpFiles", &kelpFiles);
     context->setContextProperty("kelpLog", &kelpLog);
     context->setContextProperty("kelpSettings", &kelpSettings);
+    context->setContextProperty("kelpShares", &kelpShares);
     context->setContextProperty("kelpBundles", &kelpBundles);
     context->setContextProperty("kelpClient", &kelpClient);
     context->setContextProperty("appVersion", QStringLiteral(APP_VERSION));

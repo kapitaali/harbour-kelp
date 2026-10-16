@@ -129,11 +129,17 @@ Page {
                     text: qsTr("Stop sharing")
                     onClicked: {
                         var doomed = index
+                        var bundleId = bundlesPage.store.bundlesModel.get(doomed).bundleId
                         kelpLog.info("Stop sharing: remorse started for index " + doomed)
                         remorse.execute(qsTr("Stopping sharing"), function() {
                             kelpLog.info("Stop sharing: removing index " + doomed
                                          + " (count " + bundlesPage.store.bundlesModel.count + ")")
+                            // Stop serving before the row goes away, or the
+                            // bundle would stay fetchable with nothing in the
+                            // list to stop it.
+                            kelpBundles.unshare(bundleId)
                             bundlesPage.store.bundlesModel.remove(doomed)
+                            bundlesPage.store.saveShares()
                         })
                     }
                 }

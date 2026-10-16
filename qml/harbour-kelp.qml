@@ -11,9 +11,10 @@ ApplicationWindow {
      *
      * A row appears only once a bundle has really been sealed into the object
      * store (see the Add page), so `link`, `bundleId` and `secret` are the real
-     * thing and the link is the only copy of the key. The rows are not
-     * persisted yet: restarting forgets them, though the sealed objects stay on
-     * disk.
+     * thing and the link is the only copy of the key. The rows are saved to disk
+     * (KelpShares) and restored at startup: the address captured in a link is
+     * NOT stored, though, so restoring re-serves on a fresh address and the row
+     * carries the new link.
      */
     property bool seedingEnabled: true
     property bool wifiOnly: true
@@ -44,6 +45,7 @@ ApplicationWindow {
             "kind": info.kind,
             "files": info.files,
             "size": info.size,
+            "bytes": info.bytes,
             "path": info.path,
             "swarm": info.swarm === true,
             // "Seeding" only means something when there is an address to serve
@@ -57,12 +59,69 @@ ApplicationWindow {
             "objects": info.objects
         })
         kelpLog.info("addBundle: bundlesModel.count is now " + bundlesModel.count)
+        saveShares()
+    }
+
+    // Writes the row fields the app must remember across a restart. The link
+    // itself is not saved: it embeds an address that goes stale the moment the
+    // app exits, so it is reminted by restoreShares() instead.
+    function saveShares() {
+        var rows = []
+        for (var i = 0; i < bundlesModel.count; ++i) {
+            var row = bundlesModel.get(i)
+            rows.push({
+                "name": row.name,
+                "kind": row.kind,
+                "files": row.files,
+                "size": row.size,
+                "bytes": row.bytes,
+                "path": row.path,
+                "swarm": row.swarm,
+                "objects": row.objects,
+                "bundleId": row.bundleId,
+                "secret": row.secret
+            })
+        }
+        kelpLog.info("saveShares: writing " + rows.length + " row(s)")
+        kelpShares.save(rows)
+    }
+
+    // Brings back the saved shares and serves them again. A share is only useful
+    // if its link points at somewhere reachable, and the LAN port is ephemeral,
+    // so each row is republished and shows the freshly minted link. A row whose
+    // stored key or id is unusable is dropped rather than restored broken.
+    function restoreShares() {
+        var rows = kelpShares.load()
+        kelpLog.info("restoreShares: " + rows.length + " saved row(s)")
+        for (var i = 0; i < rows.length; ++i) {
+            var row = rows[i]
+            var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
+                                                  row.objects, row.files, row.bytes)
+            if (!published.ok) {
+                kelpLog.warn("restoreShares: dropping \"" + row.name + "\": " + published.error)
+                continue
+            }
+            bundlesModel.append({
+                "name": row.name,
+                "kind": row.kind,
+                "files": row.files,
+                "size": row.size,
+                "bytes": row.bytes,
+                "path": row.path,
+                "swarm": row.swarm === true,
+                "state": (published.lan && published.lan.length > 0) ? "seeding" : "offline",
+                "lan": published.lan ? published.lan : "",
+                "link": published.link,
+                "bundleId": row.bundleId,
+                "secret": row.secret,
+                "objects": row.objects
+            })
+        }
     }
 
     // Starts empty on purpose: add real files or folders from the Add page and
-    // they show up here. The rows are not persisted yet, so restarting forgets
-    // the list — the sealed objects stay on disk, but nothing serves them again
-    // until they are shared afresh.
+    // they show up here. Saved shares are put back by restoreShares() at startup,
+    // so the list survives a restart.
     ListModel {
         id: bundleStore
     }
@@ -76,6 +135,7 @@ ApplicationWindow {
         kelpLog.info("Kelp " + appVersion + " (build " + buildId
                      + ") UI ready; log file: " + kelpLog.filePath())
         kelp.applyRelays()                // hand the configured relay to the publisher
+        kelp.restoreShares()              // serve the shares saved by earlier runs
         if (initialLink.length > 0) {     // a link was given on the command line / env
             kelpLog.info("Kelp: opening the link given at startup")
             openLinkTimer.start()

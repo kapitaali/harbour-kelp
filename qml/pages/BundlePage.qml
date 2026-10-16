@@ -183,6 +183,7 @@ Page {
                                 // the list to stop it.
                                 kelpBundles.unshare(bundleId)
                                 bundlePage.store.bundlesModel.remove(doomed)
+                                bundlePage.store.saveShares()
                                 pageStack.pop()
                             })
                         }

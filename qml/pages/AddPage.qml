@@ -106,6 +106,7 @@ Page {
                 "files": sealed.fileCount,
                 "size": kelpFiles.formatSize(sealed.totalBytes),
                 "path": entry.path,
+                "bytes": sealed.totalBytes,
                 "swarm": peerSwarm,
                 "lan": sealed.lan,
                 "link": sealed.link,

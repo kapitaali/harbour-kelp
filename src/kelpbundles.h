@@ -7,6 +7,7 @@
 #include <QVariantMap>
 
 #include "kelp_bundle.h"
+#include "kelp_link.h"
 
 class KelpObjectStore;
 class KelpServer;
@@ -44,6 +45,14 @@ public:
     //           totalBytes, skippedLinks, lan, relay }.
     Q_INVOKABLE QVariantMap seal(const QStringList &paths, const QString &name);
 
+    // Serves a bundle that was shared in an earlier run — the objects and the
+    // key are unchanged, only the address is minted afresh, because the LAN port
+    // is ephemeral and will have moved. Restores the saved share list at startup
+    // (see KelpShares). Returns { ok, error, link, lan, relay }.
+    Q_INVOKABLE QVariantMap republish(const QString &bundleId, const QString &secret,
+                                      const QString &name, int objects, int files,
+                                      quint64 bytes);
+
     // Stops serving a bundle. The objects stay on disk; nothing else can fetch
     // them until they are shared again.
     Q_INVOKABLE void unshare(const QString &bundleId);
@@ -61,6 +70,12 @@ private:
     bool collect(const QString &path, const QString &name, int depth,
                  Kelp::SourceNode *node, int *fileCount, int *skippedLinks,
                  QString *error);
+
+    // Serves an already-sealed bundle and mints a link for it: the LAN address is
+    // added as `l=` and any relays as `r=`. Shared by seal() and republish(), so
+    // a freshly sealed bundle and a restored one are published the same way.
+    Kelp::Link::Bundle publish(const QByteArray &rootId, const QByteArray &secret,
+                               const QString &name, int objects, int files, quint64 bytes);
 
     KelpObjectStore *m_store;
     KelpServer *m_server;

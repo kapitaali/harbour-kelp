@@ -29,8 +29,10 @@ swarm wire format.
 ## Screens
 
 - **Bundles** — list of shared bundles, each showing whether it is being served and
-  the address it is served on. Pull down for *Add files or folder*, *Open a link*,
-  *Settings*, *About*; long-press a row for *Open*, *Copy link*, *Stop sharing*.
+  the address it is served on. The list is remembered: sealed shares are restored
+  and served again at the next launch. Pull down for *Add files or folder*,
+  *Open a link*, *Settings*, *About*; long-press a row for *Open*, *Copy link*,
+  *Stop sharing*.
 - **Bundle** — details (files, size, location, object count, the address it is
   served on, encryption), the real `kelp://` link laid out in its three parts
   (identity · where · key), a QR placeholder, a note saying who can reach it, and
@@ -101,6 +103,15 @@ cost is that a sniffer on the same Wi-Fi learns the token — and so the sender'
 address and availability — but not the plaintext, because the content key and the
 swarm token are separate HKDF outputs of the same secret. The swarm transport,
 where peer addresses are handed around, keeps TLS. See wire spec §7.2.
+
+Sharing is remembered. Each row — name, size, object counts, the bundle id and the
+secret — is written to a small owner-only file (`shares.json`, mode `0600`) beside
+the log, and the next launch serves those bundles again instead of silently
+forgetting them. The *address* is deliberately not stored: the LAN port is
+ephemeral, so a fresh one is chosen at startup and the link is minted again, which
+is why the app always shows the current link rather than one captured earlier.
+Storing the secret asks for no more trust than the link already does — it is the
+same key — but the file is kept owner-only and is never logged.
 
 ## Opening a link
 
@@ -196,6 +207,8 @@ src/
                          publisher's relay tunnels
   kelpserver.{h,cpp}     KelpServer, the LAN listener: serves objects to whoever
                          holds the link (wire spec §7.2)
+  kelpshares.{h,cpp}     KelpShares: the shared-bundle rows on disk, so a restart
+                         restores and re-serves them (owner-only JSON)
   kelpfetch.{h,cpp}      KelpSource and its two implementations: the LAN fast path
                          and the relay tunnel, behind one interface
   kelpclient.{h,cpp}     KelpClient, the other end: fetches a link, verifies what
@@ -216,6 +229,12 @@ folder freezes the window while it works — a worker thread is a known TODO.
 Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log; they
 are never deleted yet, and re-sharing the same folder writes new objects because
 every seal uses fresh nonces.
+
+`KelpBundles::republish(bundleId, secret, name, objects, files, bytes)` is the
+restore path: it serves a bundle again from the saved row — the objects are
+already in the store, and the link is minted afresh because the LAN port is
+ephemeral. `seal()` and `republish()` share one `publish()` helper, so a freshly
+sealed bundle and a restored one get the same LAN address and relay treatment.
 
 Serving is one listener for the whole app, started the first time anything is
 shared and told which bundles are currently published; `unshare()` (called by

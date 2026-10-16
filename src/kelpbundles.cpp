@@ -70,6 +70,41 @@ void KelpBundles::unshare(const QString &bundleId)
     qInfo() << "KelpBundles: no longer serving" << bundleId;
 }
 
+QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secretText,
+                                   const QString &name, int objects, int files,
+                                   quint64 bytes)
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("ok"), false);
+
+    QByteArray rootId;
+    QString error;
+    if (!Kelp::Link::base32Decode(bundleId, &rootId, &error)) {
+        result.insert(QStringLiteral("error"), error);
+        return result;
+    }
+
+    QByteArray secret;
+    if (!Kelp::Link::base64UrlDecode(secretText, &secret, &error)
+        || secret.size() != Kelp::Crypto::KeySize) {
+        result.insert(QStringLiteral("error"), QStringLiteral("stored key is not usable"));
+        return result;
+    }
+
+    const Kelp::Link::Bundle link = publish(rootId, secret, name, objects, files, bytes);
+
+    qInfo() << "KelpBundles: restored" << name << "->" << objects << "objects,"
+            << files << "files," << bytes << "bytes";
+
+    result.insert(QStringLiteral("ok"), true);
+    result.insert(QStringLiteral("link"), Kelp::Link::encode(link));
+    result.insert(QStringLiteral("lan"), link.lan);
+    result.insert(QStringLiteral("relay"),
+                  m_tunnels.contains(QString::fromLatin1(Kelp::Link::base32Encode(rootId)))
+                      ? m_relays.value(0) : QString());
+    return result;
+}
+
 QVariantMap KelpBundles::linkInfo(const QString &link)
 {
     QVariantMap info;
@@ -191,46 +226,9 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
         return result;
     }
 
-    Kelp::Link::Bundle link;
-    link.bundleId = sealed.rootId;
-    link.secret = secret;
-    link.name = name;
-
-    // Publish on the LAN before minting the link, so `l=` is in it. Failing to
-    // listen is not fatal: sealing worked, the link simply has no address.
-    if (m_server) {
-        QString listenError;
-        if (m_server->start(&listenError)) {
-            m_server->share(sealed.rootId, Kelp::swarmToken(secret), sealed.objectCount,
-                            sealed.fileCount, sealed.totalBytes);
-            link.lan = m_server->lanAddress();
-        } else {
-            qWarning() << "KelpBundles: cannot serve" << name << "on the LAN:"
-                       << listenError;
-        }
-    }
-
-    // Publish on the relay(s), if any are configured, and put their addresses in
-    // the link as `r=`. This is the path that works off-network: the phone dials
-    // out and keeps the tunnel open (design §3.2). Failing to reach a relay is
-    // not fatal — the link still works on the LAN.
-    if (!m_relays.isEmpty()) {
-        link.relays = m_relays;
-        const QString tunnelKey =
-            QString::fromLatin1(Kelp::Link::base32Encode(sealed.rootId));
-        KelpTunnel *tunnel = new KelpTunnel(m_store, this);
-        QString tunnelError;
-        if (tunnel->start(m_relays, sealed.rootId, Kelp::relayToken(secret),
-                          sealed.objectCount, sealed.fileCount, sealed.totalBytes,
-                          &tunnelError)) {
-            m_tunnels.insert(tunnelKey, tunnel);
-        } else {
-            qWarning() << "KelpBundles: cannot publish" << name << "on a relay:"
-                       << tunnelError;
-            link.relays.clear();
-            tunnel->deleteLater();
-        }
-    }
+    const Kelp::Link::Bundle link =
+        publish(sealed.rootId, secret, name, sealed.objectCount, sealed.fileCount,
+                sealed.totalBytes);
 
     qInfo() << "KelpBundles: sealed" << name << "->" << sealed.objectCount << "objects,"
             << sealed.fileCount << "files," << sealed.totalBytes << "bytes in"
@@ -262,4 +260,53 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
     result.insert(QStringLiteral("skippedLinks"), skippedLinks);
     result.insert(QStringLiteral("lan"), link.lan);
     return result;
+}
+
+Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArray &secret,
+                                        const QString &name, int objects, int files,
+                                        quint64 bytes)
+{
+    Kelp::Link::Bundle link;
+    link.bundleId = rootId;
+    link.secret = secret;
+    link.name = name;
+
+    // Publish on the LAN before minting the link, so `l=` is in it. Failing to
+    // listen is not fatal: the objects are sealed either way, the link simply
+    // has no address.
+    if (m_server) {
+        QString listenError;
+        if (m_server->start(&listenError)) {
+            m_server->share(rootId, Kelp::swarmToken(secret), objects, files, bytes);
+            link.lan = m_server->lanAddress();
+        } else {
+            qWarning() << "KelpBundles: cannot serve" << name << "on the LAN:"
+                       << listenError;
+        }
+    }
+
+    // Publish on the relay(s), if any are configured, and put their addresses in
+    // the link as `r=`. This is the path that works off-network: the phone dials
+    // out and keeps the tunnel open (design §3.2). Failing to reach a relay is
+    // not fatal — the link still works on the LAN. A bundle already tunnelled
+    // (republish called twice) is left alone rather than tunnelled again.
+    const QString tunnelKey = QString::fromLatin1(Kelp::Link::base32Encode(rootId));
+    if (m_tunnels.contains(tunnelKey)) {
+        link.relays = m_relays;
+    } else if (!m_relays.isEmpty()) {
+        link.relays = m_relays;
+        KelpTunnel *tunnel = new KelpTunnel(m_store, this);
+        QString tunnelError;
+        if (tunnel->start(m_relays, rootId, Kelp::relayToken(secret), objects, files,
+                          bytes, &tunnelError)) {
+            m_tunnels.insert(tunnelKey, tunnel);
+        } else {
+            qWarning() << "KelpBundles: cannot publish" << name << "on a relay:"
+                       << tunnelError;
+            link.relays.clear();
+            tunnel->deleteLater();
+        }
+    }
+
+    return link;
 }
