@@ -77,6 +77,10 @@ Page {
         }
 
         onAccepted: {
+            if (kelpClient.busy) {
+                kelpLog.warn("SettingsPage: clean-up skipped, a download is running")
+                return
+            }
             var result = kelpBundles.pruneStore(settingsPage.shareRows())
             if (result.ok) {
                 kelpLog.info("SettingsPage: removed " + result.removed
@@ -189,9 +193,21 @@ Page {
             Button {
                 width: parent.width
                 text: qsTr("Remove unused objects")
+                // Not while a fetch is running: its objects are not in use yet, and
+                // deleting them mid-transfer would break the download.
                 enabled: settingsPage.usage && settingsPage.usage.ok
-                         && settingsPage.usage.unusedObjects > 0
+                         && settingsPage.usage.unusedObjects > 0 && !kelpClient.busy
                 onClicked: confirmPrune.open()
+            }
+
+            Label {
+                visible: kelpClient.busy
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: qsTr("A download is running, so nothing can be removed just now.")
             }
 
             SectionHeader { text: qsTr("Diagnostics") }
