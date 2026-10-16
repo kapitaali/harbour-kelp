@@ -661,6 +661,13 @@ void testLink()
     CHECK_EQ(parsed.relays.size(), 2);
     CHECK_EQ(parsed.relays.value(1), bundle.relays.value(1));
 
+    // Where it is served from and what it is called are sealed, not spelled out.
+    // The address's host part cannot appear by chance — base64url has no dots —
+    // and the label has no plaintext form either.
+    CHECK(link.contains(QStringLiteral("q=")));
+    CHECK(!link.contains(bundle.lan.left(bundle.lan.indexOf(QLatin1Char(':')))));
+    CHECK(!link.contains(QStringLiteral("samples")));
+
     // A link without a key is a name, not a capability.
     const QString id32 = QString::fromLatin1(Link::base32Encode(bundle.bundleId));
     CHECK(!Link::decode(QStringLiteral("kelp://") + id32, &parsed, &error));
@@ -682,6 +689,40 @@ void testLink()
     CHECK_EQ(reparsed.name, minimal.name);
     CHECK(reparsed.relays.isEmpty());
     CHECK(reparsed.lan.isEmpty());
+
+    // A link minted before the address was sealed carries `l=`/`n=` in the clear
+    // and still decodes — links already out there keep working forever.
+    const QString legacy = QStringLiteral("kelp://") + id32
+        + QStringLiteral("?l=192.168.1.7%3A7373&n=Kelp%20samples")
+        + QStringLiteral("#k=") + Link::base64UrlEncode(bundle.secret);
+    error.clear();
+    CHECK(Link::decode(legacy, &parsed, &error));
+    CHECK_EQ(parsed.lan, bundle.lan);
+    CHECK_EQ(parsed.name, QStringLiteral("Kelp samples"));
+
+    // Tampering with the sealed block is caught, not silently ignored.
+    QString tampered = link;
+    const int qAt = tampered.indexOf(QStringLiteral("q=")) + 2;
+    tampered[qAt] = (tampered.at(qAt) == QLatin1Char('A')) ? QLatin1Char('B')
+                                                           : QLatin1Char('A');
+    error.clear();
+    CHECK(!Link::decode(tampered, &parsed, &error));
+
+    // The block is bound to its bundle id: the same block sewn onto another
+    // link's id does not open.
+    Link::Bundle other;
+    other.bundleId = testHash("other-bundle");
+    other.secret = bundle.secret;
+    other.lan = bundle.lan;
+    const QString otherLink = Link::encode(other);
+    const int blobAt = otherLink.indexOf(QStringLiteral("q=")) + 2;
+    const int blobEnd = otherLink.indexOf(QStringLiteral("#k="));
+    const QString foreignBlob = otherLink.mid(blobAt, blobEnd - blobAt);
+    error.clear();
+    CHECK(!Link::decode(QStringLiteral("kelp://") + id32 + QStringLiteral("?q=")
+                            + foreignBlob + QStringLiteral("#k=")
+                            + Link::base64UrlEncode(bundle.secret),
+                        &parsed, &error));
 }
 
 void testBundleRoundTrip()

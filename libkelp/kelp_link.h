@@ -11,13 +11,21 @@ namespace Link {
 /*
  * The kelp:// link (wire spec §5).
  *
- *   kelp://<bundle_id_b32>?r=<relay>[&r=…][&l=<host:port>][&n=<name>]#k=<secret>
+ *   kelp://<bundle_id_b32>?r=<relay>[&r=…][&q=<blob>]#k=<secret>
  *
  * The bundle id is base32 — lowercase and unpadded, which is 52 characters for
  * 32 bytes — so a link survives case-insensitive handling and can be read out
  * loud. The secret is base64url. Everything after '#' is the fragment: a
  * fragment is never sent to a server, which is what makes the link a capability
  * rather than a request.
+ *
+ * `q=` is the publisher's location hints — its own host:port and the share's
+ * label — sealed with AES-256-GCM under HKDF(secret, "kelp/v1/link"). The link
+ * text therefore does not say where the bundle is served from to anything that
+ * sees it without the fragment; the recipient, which holds the fragment, decrypts
+ * it and dials it. A link minted before this carries the same two hints in the
+ * clear as `l=` and `n=`, and decode still accepts them, so links already out
+ * there keep working.
  */
 
 struct Bundle {

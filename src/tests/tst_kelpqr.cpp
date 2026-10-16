@@ -133,11 +133,11 @@ void testPinnedVector()
 void testRealisticLink()
 {
     section("a real-shaped link encodes to a valid QR");
-    // Roughly the shape of a real link: 52-char bundle id, an address, a name and
-    // a 43-char key in the fragment.
+    // Roughly the shape of a real link: 52-char bundle id, the address and label
+    // sealed into one `q=` block, and a 43-char key in the fragment.
     const std::string link =
         "kelp://zsjvdjr4fgaswxdjc5hmyqckjhikf2vv6dmecxnba2tl7pm34qcq"
-        "?l=10.0.2.15%3A38223&n=payload.bin"
+        "?q=OXGac2N-lR1tf2s_grQL4ZslqV-ekhbdrQLRowaZ9n7cdPagsgrEv4KixSY0Q6bJfL-Y2Bsf6WLum36poUg"
         "#k=jx4k5x43hYtVsCIiP8RakSDdVe8RzE6u8zqRZ72CTHc";
 
     const qrcodegen::QrCode qr =

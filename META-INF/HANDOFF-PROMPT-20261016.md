@@ -42,10 +42,10 @@ Requirements
 
 Decisions already taken — don't relitigate
 - Name Kelp, app id harbour-kelp, scheme kelp://. SHA-256 content-addressing with canonical
-  CBOR manifests, AES-256-GCM, key in the URL fragment. Identity hashed, location and key
-  not: bundle_id = SHA-256 of the root manifest, addresses as l=<host:port> / r=<relay> in
-  the query. HKDF-SHA256, salt = 32 zero bytes, info strings kelp/v1/content,
-  kelp/v1/swarm, kelp/v1/relay.
+  CBOR manifests, AES-256-GCM, key in the URL fragment. Identity hashed, location sealed
+  and key not: bundle_id = SHA-256 of the root manifest, relays as r=<relay> and the
+  publisher's own address+label sealed as q=<…> in the query. HKDF-SHA256, salt = 32 zero
+  bytes, info strings kelp/v1/content, kelp/v1/swarm, kelp/v1/relay, kelp/v1/link.
 - LAN transport is deliberately plain HTTP: content is ciphertext and hash-verified, Qt 5.6
   cannot do TLS 1.3 + ALPN, and the cost (an on-path sniffer learns the token, not the
   plaintext) is recorded in kelp-design.md §3.1. The tunnel keeps TLS 1.3 + ALPN "kelp/1",

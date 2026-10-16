@@ -70,11 +70,15 @@ void checkEqual(const A &actual, const B &expected, const char *expression, int 
 #define CHECK(cond) check((cond), #cond, __LINE__)
 #define CHECK_EQ(actual, expected) checkEqual((actual), (expected), #actual " == " #expected, __LINE__)
 
-// True when the link names a LAN address, as `?l=...` or `&l=...` (relays come
-// first in the query, so `l` is not necessarily first).
+// True when the link carries a LAN address. The address rides sealed in `q=`,
+// so this decodes the link rather than looking for a readable `l=`.
 bool linkNamesLan(const QString &link)
 {
-    return link.contains(QStringLiteral("?l=")) || link.contains(QStringLiteral("&l="));
+    Kelp::Link::Bundle parsed;
+    QString error;
+    if (!Kelp::Link::decode(link, &parsed, &error))
+        return false;
+    return !parsed.lan.isEmpty();
 }
 
 QString writeFile(const QString &path, const QByteArray &content)

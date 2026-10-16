@@ -17,6 +17,18 @@ namespace {
 // Deep enough for any real folder; there to stop a symlink loop.
 const int kMaxDepth = 64;
 
+// A link is a capability — whoever holds it can read the bundle — so it is never
+// logged by default. It is written only when the user turns on Settings →
+// "Include links in the log" (which is what lets a device with no usable
+// clipboard be handed a link) or when KELP_DEBUG_LINK is set in the environment
+// for a one-off run. The env override stays so existing headless scripts keep
+// working without touching the UI.
+bool linksInLog(const KelpSettings *settings)
+{
+    return (settings && settings->includeLinksInLog())
+           || !qgetenv("KELP_DEBUG_LINK").isEmpty();
+}
+
 } // namespace
 
 KelpBundles::KelpBundles(KelpObjectStore *store, KelpServer *server, QObject *parent)
@@ -92,12 +104,19 @@ QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secre
     }
 
     const Kelp::Link::Bundle link = publish(rootId, secret, name, objects, files, bytes);
+    const QString linkText = Kelp::Link::encode(link);
 
     qInfo() << "KelpBundles: restored" << name << "->" << objects << "objects,"
             << files << "files," << bytes << "bytes";
 
+    // A restored share mints a fresh link (its address may have changed since the
+    // row was written), so the link a script reads from the log is this one, by
+    // the same rule seal() follows.
+    if (linksInLog(m_settings))
+        qInfo() << "KelpBundles: link" << linkText;
+
     result.insert(QStringLiteral("ok"), true);
-    result.insert(QStringLiteral("link"), Kelp::Link::encode(link));
+    result.insert(QStringLiteral("link"), linkText);
     result.insert(QStringLiteral("lan"), link.lan);
     result.insert(QStringLiteral("relay"),
                   m_tunnels.contains(QString::fromLatin1(Kelp::Link::base32Encode(rootId)))
@@ -230,23 +249,15 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
         publish(sealed.rootId, secret, name, sealed.objectCount, sealed.fileCount,
                 sealed.totalBytes);
 
+    const QString linkText = Kelp::Link::encode(link);
+
     qInfo() << "KelpBundles: sealed" << name << "->" << sealed.objectCount << "objects,"
             << sealed.fileCount << "files," << sealed.totalBytes << "bytes in"
             << timer.elapsed() << "ms";
 
-    const QString linkText = Kelp::Link::encode(link);
-
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("link"), linkText);
-    // A link is a capability — whoever holds it can read the bundle — so it is
-    // never logged by default. It is written only when the user turns on
-    // Settings → "Include links in the log" (which is what lets a device with no
-    // usable clipboard be handed a link) or when KELP_DEBUG_LINK is set in the
-    // environment for a one-off run. The env override stays so existing headless
-    // scripts keep working without touching the UI.
-    const bool logLink = (m_settings && m_settings->includeLinksInLog())
-                         || !qgetenv("KELP_DEBUG_LINK").isEmpty();
-    if (logLink)
+    if (linksInLog(m_settings))
         qInfo() << "KelpBundles: link" << linkText;
     result.insert(QStringLiteral("relay"),
                   m_tunnels.contains(QString::fromLatin1(Kelp::Link::base32Encode(sealed.rootId)))

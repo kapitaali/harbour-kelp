@@ -51,10 +51,11 @@ swarm wire format.
   links in the log*, and a *Clear log* action. The first three switches are the
   shape of the intended behaviour and are deliberately not acted on yet — only
   the LAN path is wired up, and now in both directions. Two switches are real and
-  persisted: *Include my local address in the link* decides whether a link names
-  this device (`l=`) and the bundle is served locally, and *Include links in the
-  log* decides whether a share's `kelp://` link (and so its key) is written to
-  the log.
+  persisted: *Include my local address in the link* decides whether a link carries
+  this device's address at all (and so whether the bundle is served locally), and
+  *Include links in the log* decides whether a share's `kelp://` link (and so its
+  key) is written to the log. When the address *is* carried it is sealed, not
+  spelled out — see *Serving on the LAN* below.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
@@ -85,8 +86,12 @@ swarm is a distribution choice rather than a visibility one. See
 
 Sharing a bundle starts a small HTTP listener on this device's LAN address — not on
 every interface, so mobile data never opens a port by accident — and that address
-goes into the link as `l=host:port`. Two devices on one Wi-Fi are therefore the
-first thing that works:
+goes into the link, **sealed** rather than spelled out: the link's `q=` block is the
+`host:port` and the share's label under AES-256-GCM, keyed by `HKDF(secret,
+"kelp/v1/link")`. Anyone who holds the link holds the fragment and so can open it;
+anything that sees the link without the fragment — a redacted paste, a chat preview,
+a log — learns neither. Two devices on one Wi-Fi are therefore the first thing that
+works:
 
 ```
 GET /v1/bundle/<bundle_id>/object/<object_id>    → the object's bytes
@@ -108,11 +113,12 @@ address and availability — but not the plaintext, because the content key and 
 swarm token are separate HKDF outputs of the same secret. The swarm transport,
 where peer addresses are handed around, keeps TLS. See wire spec §7.2.
 
-Because a link is handed to whoever it is sent to, the address in it is disclosed
-to all of them: normally a private `192.168.x.x`, but a cellular bearer is a real
-IP. *Settings → Include my local address in the link* turns the whole path off —
-nothing is served locally, `l=` is left out, and only a relay can carry the
-bundle.
+Because a link is handed to whoever it is sent to, the address in it reaches all of
+them — normally a private `192.168.x.x`, but a cellular bearer is a real IP. Sealing
+keeps it out of the link *text*, but the recipient must still learn it to connect, so
+for a share that must not disclose where it is served from at all there is the switch:
+*Settings → Include my local address in the link* turns the whole path off — nothing
+is served locally, the link carries no address, and only a relay can carry the bundle.
 
 Sharing is remembered. Each row — name, size, object counts, the bundle id and the
 secret — is written to a small owner-only file (`shares.json`, mode `0600`) beside
@@ -314,10 +320,16 @@ link in *Open a link* at startup. This is how a link is handed *to* a device
 that cannot paste into it, and it is the same seam a `kelp://` activation will
 use later.
 
+`KELP_ADVERTISE_HOST=<address>` makes a link name that address instead of the one
+the listener bound. It is for a device reachable only through another one — the
+emulator behind QEMU's NAT, bridged by `src/tests/run-emu-share.sh` — where the
+address that works is the *host's*, not the guest's. Only the address written into
+the link changes; the socket still binds the real interface.
+
 Both write the link to the log; read it back with:
 
 ```sh
-grep -o 'kelp://[^ ]*' ~/.local/share/harbour.kelp/harbour-kelp/kelp.log | tail -1
+grep -o 'kelp://[^"]*' ~/.local/share/harbour.kelp/harbour-kelp/kelp.log | tail -1
 ```
 
 ## Testing `libkelp`

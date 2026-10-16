@@ -135,22 +135,49 @@ index knowledge is only needed for compact availability reporting.
 ## 5. Link format
 
 ```
-kelp://<bundle_id_b32>?r=<relay-url>[&r=<relay-url>…][&l=<host:port>][&n=<display name>]#k=<secret_b64url>
+kelp://<bundle_id_b32>?r=<relay-url>[&r=<relay-url>…][&q=<sealed_hints>]#k=<secret_b64url>
 ```
 
 - `bundle_id_b32` — base32, lowercase, unpadded (52 chars).
 - `r` — relay base URL, repeatable (try in order).
-- `l` — publisher LAN `host:port` (direct fast path).
-- `n` — optional human label.
-- Fragment `k` — the base32/base64url secret. **Fragments are never sent to servers.**
+- `q` — the publisher's own location hints, sealed (below).
+- Fragment `k` — the base64url secret. **Fragments are never sent to servers.**
+
+`q` carries the publisher's LAN `host:port` and the share's display label together, so
+the link text names neither to anything that cannot open it:
+
+```
+q = base64url( nonce(12) ‖ AES-256-GCM ciphertext ‖ tag(16) )
+
+  key       = HKDF-SHA256(secret, salt=32 zero bytes, info="kelp/v1/link")
+  aad       = bundle_id (32 bytes)
+  plaintext = canonical CBOR map { "l": <host:port>, "n": <label> }   (either may be absent)
+```
+
+The key is an independent HKDF output of the link's own secret — not the content key and
+not the swarm or relay token — so the fragment is what opens the block, and every intended
+recipient holds the fragment. The bundle id is the associated data, so a block cannot be
+lifted out of one link and pasted into another. This does not hide the address from the
+recipient, who must dial it; it hides it from everything that sees the link *without* its
+fragment — a redacted paste, a chat link preview, a log, a browser gateway.
+
+Links minted before this carried the same two hints in the clear, as `l=` and `n=`, and
+decoding still accepts that form, so published links keep working:
+
+```
+kelp://<bundle_id_b32>?r=<relay-url>[&l=<host:port>][&n=<display name>]#k=<secret_b64url>
+```
+
+A link that carries both uses the sealed block. A reader that predates `q=` sees no LAN
+address and falls back to a relay.
 
 A CID-shaped variant (`b` multibase prefix) is reserved for the IPFS bridge.
 
 Implemented in `libkelp/kelp_link.{h,cpp}` (`Link::encode` / `Link::decode`), with
 the base32/base64url codecs and round-trip tests. Decoding refuses a link with no
-`#k=` fragment: without the key it is a name, not a capability. The app mints
-links of this shape today, but with no `r=` or `l=` yet, because nothing serves
-objects over the network.
+`#k=` fragment: without the key it is a name, not a capability. The app mints links
+of this shape today (`r=` when a relay is configured, `q=` whenever it advertises an
+address) and serves objects over the LAN (wire spec §7.2).
 
 ---
 

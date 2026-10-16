@@ -1,7 +1,10 @@
 #include "kelp_link.h"
 
+#include <QPair>
 #include <QUrl>
+#include <QVector>
 
+#include "kelp_cbor.h"
 #include "kelp_crypto.h"
 
 namespace Kelp {
@@ -14,6 +17,100 @@ const char kBase64UrlAlphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 const char kScheme[] = "kelp://";
+
+// The key the link's own location hints are sealed under. It is an independent
+// HKDF output, so a link address key is useless for reading content or joining a
+// swarm — the same separation content/swarm/relay already keep.
+QByteArray linkKey(const QByteArray &secret)
+{
+    QByteArray out;
+    if (!Crypto::hkdfSha256(secret, QByteArray(Crypto::Sha256Size, '\0'),
+                            QByteArrayLiteral("kelp/v1/link"), Crypto::KeySize, &out))
+        return QByteArray();
+    return out;
+}
+
+// {l: address, n: label} as canonical CBOR, sealed into nonce || ciphertext ||
+// tag and base64url'd. Returns an empty string when there is nothing to seal or
+// the secret cannot key the seal.
+QString sealLocations(const Bundle &bundle)
+{
+    const QByteArray key = linkKey(bundle.secret);
+    if (key.size() != Crypto::KeySize)
+        return QString();
+
+    QVector<QPair<QByteArray, QByteArray> > entries;
+    if (!bundle.lan.isEmpty())
+        entries.append(qMakePair(Cbor::encodeText(QStringLiteral("l")),
+                                 Cbor::encodeText(bundle.lan)));
+    if (!bundle.name.isEmpty())
+        entries.append(qMakePair(Cbor::encodeText(QStringLiteral("n")),
+                                 Cbor::encodeText(bundle.name)));
+    const QByteArray payload = Cbor::encodeMap(entries);
+    if (payload.isEmpty())
+        return QString();
+
+    const QByteArray nonce = Crypto::randomBytes(Crypto::NonceSize);
+    if (nonce.size() != Crypto::NonceSize)
+        return QString();
+
+    QByteArray ciphertext;
+    // The bundle id is the associated data, so a block cannot be lifted out of
+    // one link and pasted into another.
+    if (!Crypto::aes256GcmEncrypt(key, nonce, payload, bundle.bundleId, &ciphertext))
+        return QString();
+
+    return base64UrlEncode(nonce + ciphertext);
+}
+
+bool openLocations(const QByteArray &secret, const QByteArray &bundleId,
+                   const QString &blob, QString *lan, QString *name, QString *error)
+{
+    QByteArray raw;
+    if (!base64UrlDecode(blob, &raw, error))
+        return false;
+    if (raw.size() < Crypto::NonceSize + Crypto::TagSize) {
+        *error = QStringLiteral("the link's address block is too short");
+        return false;
+    }
+
+    const QByteArray key = linkKey(secret);
+    if (key.size() != Crypto::KeySize) {
+        *error = QStringLiteral("cannot derive the address key for this link");
+        return false;
+    }
+
+    QByteArray payload;
+    if (!Crypto::aes256GcmDecrypt(key, raw.left(Crypto::NonceSize),
+                                  raw.mid(Crypto::NonceSize), bundleId, &payload)) {
+        *error = QStringLiteral("the link's address block did not decrypt");
+        return false;
+    }
+
+    Cbor::Value value;
+    if (!Cbor::decode(payload, &value, error))
+        return false;
+    if (!value.isMap()) {
+        *error = QStringLiteral("the link's address block is not a map");
+        return false;
+    }
+
+    if (const Cbor::Value *l = value.member("l")) {
+        if (l->type != Cbor::Value::Text) {
+            *error = QStringLiteral("the link's address is not text");
+            return false;
+        }
+        *lan = l->text;
+    }
+    if (const Cbor::Value *n = value.member("n")) {
+        if (n->type != Cbor::Value::Text) {
+            *error = QStringLiteral("the link's label is not text");
+            return false;
+        }
+        *name = n->text;
+    }
+    return true;
+}
 
 } // namespace
 
@@ -157,14 +254,28 @@ QString encode(const Bundle &bundle)
         query.append(QStringLiteral("r=")
                      + QString::fromLatin1(QUrl::toPercentEncoding(bundle.relays.at(i))));
     }
-    if (!bundle.lan.isEmpty()) {
-        query.append(QStringLiteral("l=")
-                     + QString::fromLatin1(QUrl::toPercentEncoding(bundle.lan)));
+
+    // The address and the label are the link's only plaintext metadata, so they
+    // go into one opaque `q=` block. A reader without the fragment then sees a
+    // bundle id, some relay names, and random-looking bytes — not where the
+    // bundle is being served from.
+    if (!bundle.lan.isEmpty() || !bundle.name.isEmpty()) {
+        const QString sealed = sealLocations(bundle);
+        if (!sealed.isEmpty()) {
+            query.append(QStringLiteral("q=") + sealed);
+        } else {
+            // No usable secret to seal under — an internal-invariant breach
+            // (decode would reject such a link anyway). Keep the address rather
+            // than mint a link that reaches nothing.
+            if (!bundle.lan.isEmpty())
+                query.append(QStringLiteral("l=")
+                             + QString::fromLatin1(QUrl::toPercentEncoding(bundle.lan)));
+            if (!bundle.name.isEmpty())
+                query.append(QStringLiteral("n=")
+                             + QString::fromLatin1(QUrl::toPercentEncoding(bundle.name)));
+        }
     }
-    if (!bundle.name.isEmpty()) {
-        query.append(QStringLiteral("n=")
-                     + QString::fromLatin1(QUrl::toPercentEncoding(bundle.name)));
-    }
+
     if (!query.isEmpty())
         text += QLatin1Char('?') + query.join(QLatin1Char('&'));
 
@@ -231,6 +342,7 @@ bool decode(const QString &text, Bundle *out, QString *error)
         return false;
     }
 
+    QString sealedLocations;
     const QStringList queryParts = query.split(QLatin1Char('&'), QString::SkipEmptyParts);
     for (int i = 0; i < queryParts.size(); ++i) {
         const QString &part = queryParts.at(i);
@@ -238,6 +350,10 @@ bool decode(const QString &text, Bundle *out, QString *error)
         if (equals <= 0)
             continue;
         const QString key = part.left(equals);
+        if (key == QLatin1String("q")) {
+            sealedLocations = part.mid(equals + 1);   // base64url: no escapes
+            continue;
+        }
         const QString value =
             QUrl::fromPercentEncoding(part.mid(equals + 1).toUtf8());
         if (key == QLatin1String("r"))
@@ -247,6 +363,13 @@ bool decode(const QString &text, Bundle *out, QString *error)
         else if (key == QLatin1String("n"))
             bundle.name = value;
     }
+
+    // The sealed block is authoritative — it is what this build mints, and the
+    // recipient needs the address in it to reach the publisher at all.
+    if (!sealedLocations.isEmpty()
+        && !openLocations(bundle.secret, bundle.bundleId, sealedLocations,
+                          &bundle.lan, &bundle.name, error))
+        return false;
 
     *out = bundle;
     return true;

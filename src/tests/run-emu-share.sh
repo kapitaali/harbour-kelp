@@ -10,25 +10,29 @@
 #   * reads the emulator's running KelpServer port from its log,
 #   * opens an ssh -L forward from this host's LAN address into the guest, so
 #     the host becomes the address that can actually be reached,
-#   * prints each shared bundle as a link whose l= names this host, ready to be
-#     pasted or scanned into a recipient's Kelp app.
+#   * prints the links the app itself minted, which name this host.
 #
-# The emulator's own port is ephemeral, so run this again after the app
-# restarts. The forward is left running in the background; the script prints how
-# to stop it.
+# The app seals the address it puts in a link (q=), so only the app can name this
+# host in one. Tell it to, when you launch it in the guest:
+#
+#   KELP_ADVERTISE_HOST=<this host> KELP_DEBUG_LINK=1 /usr/bin/harbour-kelp
+#
+# then run this with the same address. The forward is left running in the
+# background; the script prints how to stop it.
+#
+# The emulator's own port is ephemeral, so run this again after the app restarts.
 #
 # Usage:
 #   src/tests/run-emu-share.sh [--host ADDRESS] [--redact] [--qr DIR]
 #
 #   --host ADDRESS  an address recipients can reach THIS machine on. Defaults to
-#                   the host's primary LAN IPv4. Use this when the phone is not
-#                   on the same network as the default address.
+#                   the host's primary LAN IPv4. It has to match the
+#                   KELP_ADVERTISE_HOST the app was launched with.
 #   --redact        print links with the #k= fragment removed, for logs or
 #                   screenshots. The fragment is the decryption key.
 #   --qr DIR        also write one PNG QR code per share into DIR. These contain
 #                   the full link, key included, so they can be scanned straight
-#                   into a phone — the easiest way to move a 140-character link
-#                   without a clipboard bridge. Treat the files as secrets.
+#                   into a phone. Treat the files as secrets.
 #
 # The printed links carry each share's secret. Treat them like passwords: do not
 # paste them into a bug report, a log, or a chat.
@@ -46,7 +50,7 @@ while [ $# -gt 0 ]; do
         --host) HOST="${2:?--host needs an address}"; shift 2 ;;
         --redact) REDACT=1; shift ;;
         --qr) QR_DIR="${2:?--qr needs a directory}"; shift 2 ;;
-        -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -60,23 +64,40 @@ if [ -z "$HOST" ]; then
     [ -n "$HOST" ] || { echo "cannot work out this host's address; pass --host" >&2; exit 1; }
 fi
 
-# The address the guest is serving on, e.g. 10.0.2.15:43071. Its host part is
-# what the ssh forward must target (the guest binds its LAN interface, not
-# loopback); its port is the one recipients will reach, on OUR address instead.
-SERVING="$($SSH "grep -a 'KelpServer: serving on' '$DATA_DIR/kelp.log'" 2>/dev/null \
-           | sed -n 's/.*serving on "\([^"]*\)".*/\1/p' | tail -1 || true)"
+LOG="$($SSH "cat '$DATA_DIR/kelp.log'" 2>/dev/null || true)"
+
+# The address the app put in its links, e.g. 10.0.2.15:43071 — or this host's
+# address, when it was launched with KELP_ADVERTISE_HOST. Its host part must be
+# this host for the forward to be the address that works; its port is the one
+# recipients will reach, on OUR address instead.
+SERVING="$(printf '%s\n' "$LOG" | grep -a 'KelpServer: serving on' \
+           | sed -n 's/.*serving on "\([^"]*\)".*/\1/p' | tail -1)"
 if [ -z "$SERVING" ]; then
     echo "no running share found in $DATA_DIR/kelp.log" >&2
     echo "start the app and share (or restore) a bundle first." >&2
     exit 1
 fi
 
-GUEST_HOST="${SERVING%:*}"
-PORT="${SERVING##*:}"
+# What the app actually bound, when that differs from what it advertises. That is
+# the address the forward must target: the guest binds its LAN interface, not
+# loopback, and advertising does not move the socket.
+BOUND="$(printf '%s\n' "$LOG" | grep -a 'KelpServer: bound to' \
+         | sed -n 's/.*bound to "\([^"]*\)".*/\1/p' | tail -1)"
 
-# A share is one row: identity in bundleId/secret, a display name, and no
-# address — the address is the ephemeral one above. So the link can be rebuilt
-# exactly, just pointed at this host.
+SERVING_HOST="${SERVING%:*}"
+PORT="${SERVING##*:}"
+GUEST_HOST="${BOUND%:*}"
+[ -n "$GUEST_HOST" ] || GUEST_HOST="$SERVING_HOST"
+
+if [ "$SERVING_HOST" != "$HOST" ]; then
+    echo "the app is advertising $SERVING_HOST, so its links point there, not at $HOST." >&2
+    echo "restart it in the guest with KELP_ADVERTISE_HOST=$HOST KELP_DEBUG_LINK=1," >&2
+    echo "then run this again with --host $HOST." >&2
+    exit 1
+fi
+
+# The shares the app still holds, so a link left in the log by an earlier run is
+# not shown for a bundle that has since been removed.
 SHARES="$($SSH "cat '$DATA_DIR/shares.json'" 2>/dev/null || true)"
 if [ -z "$SHARES" ] || [ "$SHARES" = "[]" ]; then
     echo "no shares in $DATA_DIR/shares.json" >&2
@@ -108,27 +129,33 @@ echo
 if [ -n "$QR_DIR" ]; then
     mkdir -p "$QR_DIR"
 fi
-echo "links (l= names $HOST; #k= is the key):"
-printf '%s' "$SHARES" | python3 -c '
-import json, os, sys, urllib.parse
-host, port, redact, qr_dir = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4]
-for row in json.load(sys.stdin):
-    name = row.get("name") or row.get("path") or ""
-    query = "l=" + urllib.parse.quote(host + ":" + port)
-    if name:
-        query += "&n=" + urllib.parse.quote(name)
+echo "links (sealed by the app; #k= is the key):"
+printf '%s' "$LOG" | python3 -c '
+import json, os, re, sys
+shares_raw, redact, qr_dir = sys.argv[1], sys.argv[2] == "1", sys.argv[3]
+log = sys.stdin.read()
+
+links = {}
+for found in re.finditer(r"kelp://[^\"\s]+", log):
+    link = found.group(0)
+    bundle = link[len("kelp://"):].split("?")[0].split("#")[0]
+    links[bundle] = link                 # the last link the app minted wins
+
+for row in json.loads(shares_raw):
     bundle = row.get("bundleId", "")
-    secret = row.get("secret", "")
-    head = "kelp://%s?%s#k=" % (bundle, query)
-    print(head + ("<redacted>" if redact else secret))
+    name = row.get("name") or row.get("path") or bundle
+    link = links.get(bundle)
+    if not link:
+        print("%s\n  no link in the log — share it with links logging on" % name)
+        continue
+    shown = re.sub(r"#k=.*$", "#k=<redacted>", link) if redact else link
+    print("%s\n  %s" % (name, shown))
     if qr_dir:
         import qrcode
         path = os.path.join(qr_dir, bundle + ".png")
-        qrcode.make(head + secret).save(path)   # the QR always carries the key
+        qrcode.make(link).save(path)     # the QR always carries the key
         print("  QR (contains the key): %s" % path)
-' "$HOST" "$PORT" "$REDACT" "$QR_DIR"
-
-echo
+' "$SHARES" "$REDACT" "$QR_DIR"
 
 echo
 if [ -n "${FORWARD_PID:-}" ]; then

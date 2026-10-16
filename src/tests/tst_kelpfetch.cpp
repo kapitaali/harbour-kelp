@@ -112,6 +112,31 @@ void testLanAuthHeader()
     }
     CHECK_EQ(lan->describe(), link.lan);
 
+    // The address now arrives sealed in the link's `q=`, opened by the link's own
+    // secret. encode -> decode -> create is the whole recipient path, so it has
+    // to land on the same host:port the publisher wrote.
+    Link::Bundle outgoing;
+    outgoing.bundleId = link.bundleId;
+    outgoing.secret = link.secret;
+    outgoing.lan = link.lan;
+    outgoing.name = link.name;
+    const QString text = Link::encode(outgoing);
+    CHECK(text.contains(QStringLiteral("q=")));
+    CHECK(!text.contains(QStringLiteral("192.168.1.7")));
+
+    Link::Bundle decoded;
+    CHECK(Link::decode(text, &decoded, &error));
+    CHECK_EQ(decoded.lan, link.lan);
+    CHECK_EQ(decoded.name, link.name);
+
+    KelpSource *fromLink = KelpSource::create(decoded, nullptr, &error);
+    CHECK(fromLink != nullptr);
+    LanSource *lanFromLink = qobject_cast<LanSource *>(fromLink);
+    CHECK(lanFromLink != nullptr);
+    if (lanFromLink)
+        CHECK_EQ(lanFromLink->describe(), link.lan);
+    delete fromLink;
+
     const QByteArray expected =
         QByteArrayLiteral("Bearer ") + Link::base64UrlEncode(swarm).toLatin1();
 

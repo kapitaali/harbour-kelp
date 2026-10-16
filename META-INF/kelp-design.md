@@ -110,17 +110,20 @@ key. Trade-off noted in §7.
 ## 2. The link (a capability, not a pointer)
 
 ```
-kelp://<bundle-id>[?r=<relay>][&lan=<addr>]#<secret>
+kelp://<bundle-id>[?r=<relay>][&q=<sealed hints>]#<secret>
 ```
 
 - `bundle-id` — 32-byte SHA-256, **base32**-encoded (~52 chars, no ambiguous chars).
 - `#<secret>` — the bundle secret, **base64url** (~43 chars).
 - The fragment is **never sent to servers** — the relay and any gateway see only the id.
-- `?r=` / `&lan=` optionally carry a rendezvous relay and the publisher's LAN address, so
-  the recipient knows *where* to look as well as *what* to look for.
+- `?r=` names a rendezvous relay; `?q=` carries the publisher's own LAN address and the
+  share's label, sealed under `HKDF(secret, "kelp/v1/link")` (wire spec §5). The link text
+  discloses neither, while a holder of the fragment — every intended recipient — opens the
+  block and dials. An older link spells those hints out in the clear as `l=`/`n=`, which
+  decoding still accepts.
 
-A ~100-char link: fully self-contained, revocable only by withholding key/ciphertext, and
-usable by an app or (via §5) a browser.
+A 150–190-char link: fully self-contained, revocable only by withholding key/ciphertext,
+and usable by an app or (via §5) a browser.
 
 **Web3 note:** the object identifier is deliberately *one step from a CID* — a
 multihash/base32 CIDv1 over the same bytes. Where interoperability matters (§6) we emit a
@@ -171,7 +174,7 @@ TLS is a **self-signed cert whose fingerprint is in the link** (cert pinning), s
 and no plaintext-on-LAN. This path involves **no third party at all** — genuinely P2P.
 
 > **What shipped at C2a differs from this sketch, deliberately.** The address rides in the
-> link's `l=` instead of being discovered with mDNS — a link is a capability, it does not
+> link instead of being discovered with mDNS — a link is a capability, it does not
 > have to *find* the sender, and mDNS would announce the share to the whole LAN. The
 > endpoint is the link-gated form of wire spec §7.2
 > (`/v1/bundle/<bundle_id>/object/<object_id>` with a bearer `swarm_token` derived from the
@@ -188,13 +191,16 @@ and no plaintext-on-LAN. This path involves **no third party at all** — genuin
 > anywhere on Earth uses the relay path (§3.2); the app picks automatically (try LAN if
 > the advertised address is reachable on the current network, else relay).
 
-> **The address can be withheld.** `l=` is the publisher's *own* address, so it is
-> disclosed to everyone the link reaches — a private LAN address in the common case,
-> but a carrier-assigned one when the chosen interface is a cellular bearer (the LAN
-> host picker falls back to a point-to-point interface). *Settings → Include my local
-> address in the link* (on by default) drops the whole LAN publish, so the link carries
-> no `l=` and the relay path is all that remains. That is the answer for a share that
-> must not disclose where it is being served from.
+> **The address is sealed, and can be withheld entirely.** The address is the publisher's
+> *own*, so it is the one part of a link that was not already opaque: it is now sealed
+> (`q=`, wire spec §5, key `HKDF(secret, "kelp/v1/link")`), so the link text does not name
+> it to anything that sees the link *without* its fragment. It is still a private LAN
+> address in the common case, but a carrier-assigned one when the chosen interface is a
+> cellular bearer (the LAN host picker falls back to a point-to-point interface). The
+> recipient, which holds the fragment, necessarily learns the address in order to dial it —
+> so for a share that must not disclose where it is served from at all, the switch is the
+> answer: *Settings → Include my local address in the link* (on by default) drops the whole
+> LAN publish, so the link carries no address and the relay path is all that remains.
 
 ### 3.2 The relay (the answer to NAT) — publisher dials *out*
 
@@ -453,7 +459,8 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   core UX with zero servers).
   - **C2a (done)** — the *publish* half: one listener for the app, bound to this device's
     LAN address (never `0.0.0.0`, so mobile data opens nothing), the address written into
-    the link as `l=`, and the direct-fetch endpoint of wire spec §7.2 gated by the
+    the link — in the clear as `l=` then, sealed as `q=` now (wire spec §5) — and the
+    direct-fetch endpoint of wire spec §7.2 gated by the
     link-derived `swarm_token`. Verified by fetching objects back over the LAN address with
     `curl` and checking every byte against its content address; a bundle stops answering the
     moment it is unshared, while others keep serving.
@@ -474,7 +481,7 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     written byte-identical to the source, plus the failure cases — a wrong key, a bundle
     the sender is not serving, a link with no address, and a cancelled-then-retried fetch
     (the objects already stored are kept, so the retry only asks for the rest).
-    Still open: no relay (a link without `l=` says so and stops), the whole tree is held in
+    Still open: no relay (a link with no address says so and stops), the whole tree is held in
     memory before it is written, and nothing in the app can serve again what it downloaded.
 - **C3** — Relay: outbound tunnel + object proxy + cache; cross-network fetch from a
   different network (this is the Kelp equivalent of the IPFS M0 NAT spike).

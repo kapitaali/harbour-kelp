@@ -115,6 +115,20 @@ bool KelpServer::start(QString *error)
     m_host = address.toString();
     m_port = m_server->serverPort();
     m_sweeper->start();
+
+    // A test affordance: a device behind NAT — the Sailfish emulator behind
+    // QEMU's user-mode NAT — is reachable only through its host, so the host
+    // names itself in the link instead (src/tests/run-emu-share.sh). Only the
+    // address written into the link changes; the socket still binds the real
+    // interface, and the link is still sealed by the app, which is the only
+    // party that can seal it.
+    const QByteArray advertised = qgetenv("KELP_ADVERTISE_HOST");
+    if (!advertised.isEmpty())
+        m_host = QString::fromUtf8(advertised);
+
+    if (m_host != address.toString())
+        qInfo() << "KelpServer: bound to"
+                << (address.toString() + QLatin1Char(':') + QString::number(m_port));
     qInfo() << "KelpServer: serving on" << lanAddress();
     return true;
 }
