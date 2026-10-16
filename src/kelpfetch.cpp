@@ -10,6 +10,7 @@
 #include <QQueue>
 #include <QSet>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QUrl>
 
 #include "kelp_bundle.h"
@@ -17,6 +18,19 @@
 #include "kelptls.h"
 
 namespace {
+
+// How long a first request may stay unanswered before the address is treated as
+// unreachable. A reachable peer answers (or connects) well inside this, even on
+// a slow network; an address that is dialled into but never heard from — the
+// usual cause is a NAT with no way in — is otherwise indistinguishable from a
+// peer that has gone quiet, and leaving it to KelpClient's silence deadline both
+// takes too long and blames the wrong thing. Kept below that deadline on
+// purpose, so "could not reach" wins the race for a peer that never answered.
+const int kConnectMs = 8000;
+
+// A relay is further away and does a TLS handshake, so it gets a little longer
+// to show any sign of life.
+const int kRelayConnectMs = 10000;
 
 // What a status means to the person holding the link. The relay and the LAN
 // answer the same codes for the same reasons (wire spec §7.2, §12.1).
@@ -90,9 +104,17 @@ bool kelpRelayHostPort(const QString &relay, QString *host, quint16 *port)
 LanSource::LanSource(const QUrl &base, const QByteArray &swarm, const QString &label,
                      const QString &bundleIdText, QObject *parent)
     : KelpSource(parent), m_base(base), m_label(label), m_swarm(swarm),
-      m_bundleIdText(bundleIdText)
+      m_bundleIdText(bundleIdText), m_reachability(new QTimer(this))
 {
     m_network = new QNetworkAccessManager(this);
+    m_reachability->setSingleShot(true);
+    m_reachability->setInterval(kConnectMs);
+    connect(m_reachability, &QTimer::timeout, this, &LanSource::onConnectTimeout);
+}
+
+void LanSource::setConnectTimeout(int ms)
+{
+    m_reachability->setInterval(ms);
 }
 
 // The one place that knows the header format: "Bearer " plus the base64url
@@ -119,7 +141,37 @@ void LanSource::begin()
 {
     QNetworkReply *reply = m_network->get(infoRequest());
     m_replies.insert(reply);
+    // The shape request doubles as a reachability probe: any sign of life —
+    // response headers, or a finish carrying an error — means the address is
+    // there. Nothing at all within the timeout means it is not.
+    connect(reply, &QNetworkReply::metaDataChanged, this, &LanSource::noteReached);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() { onInfo(reply); });
+    m_reachability->start();
+}
+
+void LanSource::noteReached()
+{
+    m_reached = true;
+    m_reachability->stop();
+}
+
+void LanSource::onConnectTimeout()
+{
+    if (m_reached)
+        return;
+    m_unreachable = true;
+
+    // Drop what is in flight without reporting it: the closure of an aborted
+    // request is not a second failure.
+    const QSet<QNetworkReply *> replies = m_replies;
+    m_replies.clear();
+    for (QSet<QNetworkReply *>::const_iterator it = replies.constBegin();
+         it != replies.constEnd(); ++it) {
+        (*it)->disconnect(this);
+        (*it)->abort();
+        (*it)->deleteLater();
+    }
+    emit failed(QStringLiteral("could not reach the sender — no answer from %1").arg(m_label));
 }
 
 void LanSource::requestObject(const QByteArray &id)
@@ -132,6 +184,7 @@ void LanSource::requestObject(const QByteArray &id)
 
 void LanSource::stop()
 {
+    m_reachability->stop();
     const QSet<QNetworkReply *> replies = m_replies;
     m_replies.clear();
     for (QSet<QNetworkReply *>::const_iterator it = replies.constBegin();
@@ -175,6 +228,10 @@ void LanSource::onInfo(QNetworkReply *reply)
 {
     m_replies.remove(reply);
     reply->deleteLater();
+    if (m_unreachable)
+        return;                     // the probe already reported; this is its echo
+    m_reached = true;
+    m_reachability->stop();
     QString reason;
     if (!usable(reply, &reason)) {
         emit failed(reason);
@@ -190,6 +247,10 @@ void LanSource::onObject(QNetworkReply *reply)
 {
     m_replies.remove(reply);
     reply->deleteLater();
+    if (m_unreachable)
+        return;
+    m_reached = true;
+    m_reachability->stop();
     QString reason;
     if (!usable(reply, &reason)) {
         emit failed(reason);
@@ -209,9 +270,20 @@ public:
     RelaySource(const QString &host, quint16 port, const QByteArray &token,
                 const QString &bundleIdText, QObject *parent = nullptr)
         : KelpSource(parent), m_host(host), m_port(port),
-          m_bundleIdText(bundleIdText), m_connected(false), m_failed(false)
+          m_bundleIdText(bundleIdText), m_connected(false), m_failed(false),
+          m_connect(new QTimer(this))
     {
         m_tokenText = Kelp::Link::base64UrlEncode(token);
+
+        // A relay that accepts nothing, or accepts and stalls before TLS is up,
+        // is unreachable, not "answering slowly": say so rather than waiting for
+        // the fetch loop's silence deadline to call it a stopped sender.
+        m_connect->setSingleShot(true);
+        connect(m_connect, &QTimer::timeout, this, [this]() {
+            if (!m_connected && !m_failed)
+                fail(QStringLiteral("could not reach the relay — no answer from %1:%2")
+                         .arg(m_host).arg(m_port));
+        });
     }
 
     void begin() override
@@ -239,6 +311,7 @@ public:
 
     void stop() override
     {
+        m_connect->stop();
         m_queue.clear();
         if (m_tls) {
             m_tls->disconnect(this);
@@ -296,6 +369,7 @@ private:
             }
         });
         connect(m_tls, &KelpTls::encrypted, this, [this]() {
+            m_connect->stop();              // talking to it: it is reachable
             m_connected = true;
             sendNext();
         });
@@ -317,6 +391,7 @@ private:
             fail(QStringLiteral("could not reach the relay — %1").arg(m_socket->errorString()));
         });
         m_socket->connectToHost(m_host, m_port);
+        m_connect->start(kRelayConnectMs);
     }
 
     void sendNext()
@@ -393,6 +468,7 @@ private:
     bool m_connected;
     bool m_inFlight = false;
     bool m_failed;
+    QTimer *m_connect = nullptr;
 };
 
 // --- construction --------------------------------------------------------

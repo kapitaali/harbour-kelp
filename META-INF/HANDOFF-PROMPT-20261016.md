@@ -62,11 +62,16 @@ Current verified state (2026-10-16)
   complete valid 4096x3072 JPEG (sha256 aea871ba24141a462828df0da156be6f9631826b1376a9673ae0aa55a6a402cc).
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
-- libkelp: 304 checks, 0 failures. App-layer harnesses: tst_kelpfetch 17, tst_kelpsettings
+- libkelp: 304 checks, 0 failures. App-layer harnesses: tst_kelpfetch 29, tst_kelpsettings
   16, tst_kelpshares 24, tst_kelpqr 9 (all 0 failures). Relay harness: 4/4 ALL PASS.
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
+- An unreachable sender is no longer reported as one that "stopped answering": the
+  transports now probe for a first sign of life (LAN 8 s, relay 10 s) and say *could not
+  reach the sender* when there is none, leaving the 20 s silence deadline for a peer that
+  has answered and then gone quiet. Found by the user (emulator behind QEMU user-mode NAT
+  cannot be dialled into); verified live, pinned in tst_kelpfetch (PROGRESS §2.5, §3.9).
 - Phone RPM with the current fixes: build it (see below); the emulator RPM from the last
   session is RPMS/SailfishOS-5.1.0.11-i486/harbour-kelp-0.1.0-1.i486.rpm. The repo IS a
   git repository now (git init done), so commit the work — the earlier note that it was
@@ -78,7 +83,8 @@ Next Move (in this order — 1–3 are done as of this note)
    header and compares bytes. It was handed raw bytes for a while, which the sender
    silently answered 401 ("the sender did not recognise this link"). Nothing tests it.
    Pin the format with a test that asserts the header equals base64url(swarmToken(secret)).
-   **Done** — src/tests/tst_kelpfetch.cpp, 17 checks (negative control verified).
+   **Done** — src/tests/tst_kelpfetch.cpp, 29 checks (negative control verified; since
+   extended with the reachability rule, §2.5/§3.9).
 2. Settings -> "Include links in the log", persisted, off by default. Today the link is
    only written to kelp.log when the app is launched with KELP_DEBUG_LINK=1, which makes
    the emulator (no usable clipboard) need a shell launch to get a link at all.

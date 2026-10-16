@@ -13,6 +13,7 @@
 class KelpObjectStore;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QTimer;
 
 // Parses a relay address from a link or settings — "host[:port]", default port
 // 9443 — into a host and port a TLS connection can be made to. Returns false if
@@ -93,11 +94,17 @@ public:
     QNetworkRequest infoRequest() const;
     QNetworkRequest objectRequest(const QByteArray &id) const;
 
+    // For a test: how long begin()'s request may stay unanswered before the
+    // address is called unreachable. Milliseconds; the default is a few seconds.
+    void setConnectTimeout(int ms);
+
 private:
     QUrl endpoint(const QString &suffix) const;
     bool usable(QNetworkReply *reply, QString *error) const;
     void onInfo(QNetworkReply *reply);
     void onObject(QNetworkReply *reply);
+    void noteReached();
+    void onConnectTimeout();
 
     QNetworkAccessManager *m_network;
     QUrl m_base;
@@ -105,6 +112,14 @@ private:
     QByteArray m_swarm;               // raw bytes; encoded at request time
     QString m_bundleIdText;
     QSet<QNetworkReply *> m_replies;
+
+    // The first request doubles as a reachability probe (see begin()). A peer
+    // that answers — with anything, even a 401 — is reachable; one that never
+    // says anything is called unreachable rather than left to the silence
+    // deadline, whose "stopped answering" blames a sender that was never heard.
+    QTimer *m_reachability;
+    bool m_reached = false;
+    bool m_unreachable = false;
 };
 
 #endif // KELPFETCH_H

@@ -144,6 +144,13 @@ the UI binds to. What a peer cannot do is substitute content: an object is
 verified against its address before it is stored, and a link whose key is not the
 sender's is reported as such instead of being retried forever.
 
+A fetch that cannot get through says which wall it hit. An address that accepts
+the connection but never answers is reported as *could not reach the sender*
+after a few seconds; only a sender that has answered *and then* gone quiet is
+called out as *stopped answering*. The two are different faults, and the first
+is usually a network path that is not there at all — for instance an address
+behind a NAT with no way in.
+
 When the link also names a relay (`r=`), the relay is used instead — see below —
 which is what makes a link work off the local network.
 

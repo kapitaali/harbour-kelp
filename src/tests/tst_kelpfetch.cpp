@@ -10,17 +10,26 @@
  * which the sender silently answered 401 — indistinguishable from a wrong link
  * by design (no enumeration oracle), so nothing failed loudly.
  *
- * No network, no device, no event-loop traffic: it inspects the requests
- * begin()/requestObject() would send, and runs the sender's decode step from
- * libkelp on the header value.
+ * The first half inspects the requests begin()/requestObject() would send, and
+ * runs the sender's decode step from libkelp on the header value. The second
+ * half runs a real local server to pin the reachability rule: a peer that
+ * accepts the connection but never answers is called unreachable, and one that
+ * answers — even with a refusal — is not.
  */
 
 #include <stdio.h>
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QHostAddress>
+#include <QList>
 #include <QNetworkRequest>
 #include <QString>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTimer>
 
 #include "kelp_bundle.h"
 #include "kelp_crypto.h"
@@ -155,6 +164,125 @@ void testLanAuthHeader()
     CHECK(!error.isEmpty());
 }
 
+// A link whose only address is a port on the loopback, so a test can point it at
+// a server of its own making.
+Link::Bundle localLink(quint16 port, const char *seed)
+{
+    Link::Bundle link;
+    link.bundleId = testHash(seed);
+    link.secret = Crypto::sha256(QByteArray(seed) + QByteArrayLiteral("-secret"));
+    link.lan = QStringLiteral("127.0.0.1:%1").arg(port);
+    link.name = QStringLiteral("probe");
+    return link;
+}
+
+// Runs begin() to a verdict and returns what the source reported, plus how long
+// it took. `guardMs` is a backstop so a regression hangs the test rather than CI.
+QString fetchVerdict(KelpSource *source, int guardMs, qint64 *elapsedMs)
+{
+    QString message;
+    QElapsedTimer clock;
+    clock.start();
+    QEventLoop loop;
+    QObject::connect(source, &KelpSource::failed, &loop, [&](const QString &text) {
+        message = text;
+        loop.quit();
+    });
+    QTimer::singleShot(guardMs, &loop, &QEventLoop::quit);
+    source->begin();
+    loop.exec();
+    *elapsedMs = clock.elapsed();
+    return message;
+}
+
+void testUnreachableSender()
+{
+    section("a sender that never answers is called unreachable");
+
+    // Accept the connection, then say nothing: exactly the shape of an address
+    // that can be dialled but not heard from — a host behind a NAT with no way
+    // in. A refused connection fails on its own; this is the case that used to
+    // hang until KelpClient's 20 s silence deadline and then blame the sender
+    // for "stopping" when it had never been heard from at all.
+    QTcpServer blackhole;
+    CHECK(blackhole.listen(QHostAddress::LocalHost, 0));
+    QList<QTcpSocket *> held;                // keep accepted sockets open
+    QObject::connect(&blackhole, &QTcpServer::newConnection, [&]() {
+        while (blackhole.hasPendingConnections())
+            held.append(blackhole.nextPendingConnection());
+    });
+
+    QString error;
+    KelpSource *source =
+        KelpSource::create(localLink(blackhole.serverPort(), "blackhole"), nullptr, &error);
+    LanSource *lan = qobject_cast<LanSource *>(source);
+    CHECK(lan != nullptr);
+    if (!lan) {
+        delete source;
+        return;
+    }
+    lan->setConnectTimeout(1000);        // seconds in the app; milliseconds here
+
+    qint64 elapsed = 0;
+    const QString message = fetchVerdict(lan, 8000, &elapsed);
+
+    CHECK(!message.isEmpty());
+    CHECK(message.contains(QStringLiteral("could not reach the sender")));
+    CHECK(!message.contains(QStringLiteral("stopped answering")));
+    CHECK(elapsed < 5000);               // our timeout fired, not the guard
+
+    delete source;
+}
+
+void testReachableButRejecting()
+{
+    section("a reachable sender is not called unreachable");
+
+    // A server that answers — with a refusal, which is all a wrong token gets by
+    // design. The point is the *shape* of the report: the sender was heard, so
+    // it is named, not accused of being unreachable.
+    QTcpServer server;
+    CHECK(server.listen(QHostAddress::LocalHost, 0));
+    QObject::connect(&server, &QTcpServer::newConnection, [&]() {
+        while (server.hasPendingConnections()) {
+            QTcpSocket *peer = server.nextPendingConnection();
+            QObject::connect(peer, &QTcpSocket::readyRead, peer, [peer]() {
+                if (peer->property("answered").toBool())
+                    return;
+                peer->setProperty("answered", true);
+                peer->readAll();         // the GET request
+                peer->write("HTTP/1.1 401 Unauthorized\r\n"
+                            "Content-Length: 0\r\n"
+                            "Connection: close\r\n\r\n");
+                peer->flush();
+            });
+        }
+    });
+
+    QString error;
+    KelpSource *source =
+        KelpSource::create(localLink(server.serverPort(), "reject"), nullptr, &error);
+    LanSource *lan = qobject_cast<LanSource *>(source);
+    CHECK(lan != nullptr);
+    if (!lan) {
+        delete source;
+        return;
+    }
+    // Longer than the answer takes: proof the reachability probe stopped rather
+    // than the timeout simply not having fired yet.
+    lan->setConnectTimeout(3000);
+
+    qint64 elapsed = 0;
+    const QString message = fetchVerdict(lan, 6000, &elapsed);
+
+    CHECK(!message.isEmpty());
+    CHECK(message.contains(QStringLiteral("did not recognise")));
+    CHECK(!message.contains(QStringLiteral("could not reach")));
+    CHECK(elapsed < 3000);               // answered, so it did not wait the probe
+
+    delete source;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -163,6 +291,8 @@ int main(int argc, char **argv)
     printf("kelpfetch unit test\n");
 
     testLanAuthHeader();
+    testUnreachableSender();
+    testReachableButRejecting();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
