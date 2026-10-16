@@ -41,7 +41,8 @@ swarm wire format.
   help serve this bundle* choice.
 - **Open a link** — paste a `kelp://` link and download the bundle. The link is
   explained before anything happens (name, content address, where it will be
-  fetched from), and the download reports progress and then where the files went.
+  fetched from), you pick the folder to save into, and the download reports
+  progress and then where the files went.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
   permission), relay address, *Include links in the log*, and a *Clear log*
   action. The first four switches are the shape of the intended behaviour and
@@ -117,11 +118,13 @@ rounds are the interesting part:
    the address it was asked for;
 3. go back to step 1, which can now see one level deeper.
 
-When nothing is missing any more the bundle is opened and written into
-**Downloads**: a bundle holding a single file becomes that file, anything else
-becomes a folder named after the link. Every name is checked again on the way out,
-so a hostile manifest cannot write outside that folder, and nothing existing is
-ever overwritten — a second copy becomes "(2)".
+When nothing is missing any more the bundle is opened and written into the chosen
+folder — **Downloads** by default, or wherever the *Save to → Choose folder…*
+picker on the page was last pointed, a choice that is remembered across
+restarts. A bundle holding a single file becomes that file; anything else
+becomes a folder named after the link. Every name is checked again on the way
+out, so a hostile manifest cannot write outside that folder, and nothing existing
+is ever overwritten — a second copy becomes "(2)".
 
 Both halves of that walk live in `libkelp` (`missingObjects` and `storeReceived`),
 where they are unit-tested; the app side is only the network and the bookkeeping

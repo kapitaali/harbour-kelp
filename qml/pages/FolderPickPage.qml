@@ -9,7 +9,11 @@ import Nemo.FileManager 1.0
  * in its dialog header, which is easy to miss. Here tapping a folder opens it,
  * and the folder you are in is always shared with the button pinned at the
  * bottom of the screen — so "choose this folder" is never hidden behind a
- * gesture. Long-pressing a folder shares that subfolder without opening it.
+ * gesture. Long-pressing a folder chooses that subfolder without opening it.
+ *
+ * The wording is configurable so the same page serves both "pick a folder to
+ * share" (the Add page) and "pick a folder to save into" (Open a link); the
+ * defaults keep the sharing wording.
  */
 Page {
     id: pickPage
@@ -17,6 +21,12 @@ Page {
     // Injected by the caller.
     property string startPath: StandardPaths.home
     property var pickedCallback     // function(path)
+
+    // Wording; overridden by the Open-a-link page when picking a save folder.
+    property string title: qsTr("Choose folder")
+    property string hint: qsTr("Tap to open · long-press a folder to share it directly")
+    property string confirmText: qsTr("Share this folder")
+    property string itemMenuText: qsTr("Share this folder")
 
     property string currentPath: startPath
 
@@ -53,7 +63,7 @@ Page {
         header: Column {
             width: listView.width
 
-            PageHeader { title: qsTr("Choose folder") }
+            PageHeader { title: pickPage.title }
 
             Label {
                 x: Theme.horizontalPageMargin
@@ -67,7 +77,7 @@ Page {
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
-                text: qsTr("Tap to open · long-press a folder to share it directly")
+                text: pickPage.hint
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeExtraSmall
             }
@@ -93,7 +103,7 @@ Page {
 
             menu: ContextMenu {
                 MenuItem {
-                    text: qsTr("Share this folder")
+                    text: pickPage.itemMenuText
                     onClicked: pickPage.pick(model.absolutePath)
                 }
             }
@@ -116,7 +126,7 @@ Page {
             bottomMargin: Theme.paddingLarge
         }
 
-        text: qsTr("Share this folder")
+        text: pickPage.confirmText
         onClicked: pickPage.pick(pickPage.currentPath)
     }
 }

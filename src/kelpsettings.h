@@ -30,6 +30,12 @@ class KelpSettings : public QObject
     Q_PROPERTY(bool includeLinksInLog READ includeLinksInLog
                    WRITE setIncludeLinksInLog NOTIFY includeLinksInLogChanged)
 
+    // Where a fetched bundle is written. Empty means the platform's Downloads
+    // folder, which is also the default. The Open-a-link page sets it when the
+    // user picks a folder, and remembers the choice across restarts.
+    Q_PROPERTY(QString downloadDirectory READ downloadDirectory
+                   WRITE setDownloadDirectory NOTIFY downloadDirectoryChanged)
+
 public:
     explicit KelpSettings(QObject *parent = nullptr);
 
@@ -40,8 +46,12 @@ public:
     bool includeLinksInLog() const;
     void setIncludeLinksInLog(bool on);
 
+    QString downloadDirectory() const;
+    void setDownloadDirectory(const QString &path);
+
 signals:
     void includeLinksInLogChanged();
+    void downloadDirectoryChanged();
 
 private:
     QSettings m_settings;

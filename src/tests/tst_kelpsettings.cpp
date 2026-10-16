@@ -119,6 +119,23 @@ void testSettings()
         CHECK_EQ(settings.includeLinksInLog(), false);
     }
 
+    section("download folder");
+    {
+        KelpSettings settings;
+        CHECK_EQ(settings.downloadDirectory(), QString());
+        settings.setDownloadDirectory(QStringLiteral("/home/defaultuser/Documents/inbox"));
+        CHECK_EQ(settings.downloadDirectory(),
+                 QStringLiteral("/home/defaultuser/Documents/inbox"));
+    }
+    {
+        // Read back off disk, like the restart path above.
+        KelpSettings settings;
+        CHECK_EQ(settings.downloadDirectory(),
+                 QStringLiteral("/home/defaultuser/Documents/inbox"));
+        settings.setDownloadDirectory(QString());
+        CHECK_EQ(settings.downloadDirectory(), QString());
+    }
+
     QFile::remove(path);
 }
 

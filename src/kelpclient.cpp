@@ -159,6 +159,16 @@ bool KelpClient::busy() const
     return m_phase == Checking || m_phase == Fetching || m_phase == Saving;
 }
 
+void KelpClient::setDirectory(const QString &path)
+{
+    if (path == m_directory)
+        return;
+    m_directory = path;
+    qInfo() << "KelpClient: download folder set to"
+            << (path.isEmpty() ? QStringLiteral("Downloads (default)") : path);
+    emit changed();
+}
+
 void KelpClient::dropSource()
 {
     m_deadline->stop();
@@ -378,16 +388,20 @@ void KelpClient::writeFiles()
         return;
     }
 
-    QString downloads =
-        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
-    if (downloads.isEmpty())
-        downloads = QDir::homePath() + QStringLiteral("/Downloads");
+    // Where the files are written. The user picks this on the link page; an
+    // empty choice means the platform's Downloads folder.
+    QString base = m_directory;
+    if (base.isEmpty()) {
+        base = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        if (base.isEmpty())
+            base = QDir::homePath() + QStringLiteral("/Downloads");
+    }
 
     // Where it lands. A bundle root is a container, and today the Add page puts
     // the one item that was picked in it — so the item is what the user asked
     // for, not a folder to be nested inside a copy of itself:
     //
-    //   * a single file becomes that file in Downloads;
+    //   * a single file becomes that file in the chosen folder;
     //   * a single folder becomes a folder named for the link, holding what the
     //     picked folder held;
     //   * anything else becomes a folder named for the link.
@@ -399,9 +413,10 @@ void KelpClient::writeFiles()
     QString destination;
 
     if (roots.size() == 1 && !roots.at(0).isDir) {
-        destination = uniquePath(downloads, roots.at(0).name, false);
+        destination = uniquePath(base, roots.at(0).name, false);
         if (QFileInfo::exists(destination)) {
-            failed(QStringLiteral("there are already too many copies of this in Downloads"));
+            failed(QStringLiteral("there are already too many copies of this in %1")
+                       .arg(QDir(base).dirName()));
             return;
         }
         m_destination = destination;
@@ -418,9 +433,10 @@ void KelpClient::writeFiles()
     } else {
         const QVector<Kelp::TreeNode> inside =
             roots.size() == 1 ? roots.at(0).children : roots;
-        destination = uniquePath(downloads, label, true);
+        destination = uniquePath(base, label, true);
         if (QFileInfo::exists(destination)) {
-            failed(QStringLiteral("there are already too many copies of this in Downloads"));
+            failed(QStringLiteral("there are already too many copies of this in %1")
+                       .arg(QDir(base).dirName()));
             return;
         }
         m_destination = destination;

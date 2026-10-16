@@ -6,6 +6,7 @@ namespace {
 
 // Namespaced so a future other section can share the file without collisions.
 const char kIncludeLinksInLogKey[] = "log/include_links";
+const char kDownloadDirectoryKey[] = "download/directory";
 
 } // namespace
 
@@ -33,4 +34,19 @@ void KelpSettings::setIncludeLinksInLog(bool on)
     m_settings.setValue(QString::fromLatin1(kIncludeLinksInLogKey), on);
     m_settings.sync();
     emit includeLinksInLogChanged();
+}
+
+QString KelpSettings::downloadDirectory() const
+{
+    return m_settings.value(QString::fromLatin1(kDownloadDirectoryKey)).toString();
+}
+
+void KelpSettings::setDownloadDirectory(const QString &path)
+{
+    if (path == downloadDirectory())
+        return;
+
+    m_settings.setValue(QString::fromLatin1(kDownloadDirectoryKey), path);
+    m_settings.sync();
+    emit downloadDirectoryChanged();
 }

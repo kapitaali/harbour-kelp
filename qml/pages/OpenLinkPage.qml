@@ -12,7 +12,7 @@ import "../components"
  *
  * Progress and the result come from kelpClient (C++), which fetches the objects
  * from the address, checks each one against its address before keeping it, and
- * writes the files out under Downloads.
+ * writes the files out under the chosen folder (Downloads by default).
  */
 Page {
     id: openPage
@@ -48,16 +48,49 @@ Page {
     property bool canDownload: parsed !== null && parsed.ok && parsed.lan.length > 0
                                && !busy
 
+    // Where the files will be written. The chosen folder is remembered across
+    // sessions; empty means the platform's Downloads folder, the default.
+    property string downloadDirectory: kelpSettings.downloadDirectory
+    property string downloadLabel: downloadDirectory.length > 0
+                                   ? downloadDirectory : qsTr("Downloads")
+
     function shortId(id) {
         return id.length > 16 ? id.substring(0, 16) + "…" : id
     }
 
+    // The fragment is the decryption key, so it must never reach the log. The
+    // rest of the link (address, name, content address) is enough to debug with.
+    function redactLink(text) {
+        var hash = text.indexOf("#")
+        return hash >= 0 ? text.substring(0, hash) + "#k=…" : text
+    }
+
     function startDownload() {
-        kelpLog.info("OpenLinkPage: download pressed for \"" + openPage.link + "\"")
+        kelpLog.info("OpenLinkPage: download pressed for \""
+                     + redactLink(openPage.link) + "\"")
         if (!kelpClient.fetch(openPage.link)) {
             kelpLog.error("OpenLinkPage: fetch refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
         }
+    }
+
+    // Pick the folder to save into, reusing the Add page's chooser with the
+    // wording that fits saving rather than sharing.
+    function chooseFolder() {
+        var start = downloadDirectory.length > 0 ? downloadDirectory
+                                                 : StandardPaths.download
+        pageStack.push(Qt.resolvedUrl("FolderPickPage.qml"), {
+            startPath: start,
+            title: qsTr("Save to"),
+            hint: qsTr("Tap to open a folder · the button saves into the folder you are in"),
+            confirmText: qsTr("Save here"),
+            itemMenuText: qsTr("Save here"),
+            pickedCallback: function(path) {
+                kelpSettings.downloadDirectory = path
+                kelpClient.directory = path
+                kelpLog.info("OpenLinkPage: download folder set to \"" + path + "\"")
+            }
+        })
     }
 
     SilicaFlickable {
@@ -166,14 +199,40 @@ Page {
                     font.pixelSize: Theme.fontSizeExtraSmall
                     text: qsTr("The link also names a relay, which this version cannot use yet")
                 }
+            }
+
+            SectionHeader {
+                visible: openPage.parsed !== null && openPage.parsed.ok
+                         && !openPage.busy && openPage.phase !== "done"
+                text: qsTr("Save to")
+            }
+
+            Column {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                spacing: Theme.paddingSmall
+                visible: openPage.parsed !== null && openPage.parsed.ok
+                         && !openPage.busy && openPage.phase !== "done"
 
                 Label {
                     width: parent.width
                     wrapMode: Text.Wrap
-                    visible: openPage.canDownload
+                    truncationMode: TruncationMode.Fade
+                    text: openPage.downloadLabel
+                }
+
+                Button {
+                    width: parent.width
+                    text: qsTr("Choose folder…")
+                    onClicked: openPage.chooseFolder()
+                }
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.Wrap
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
-                    text: qsTr("Saved in Downloads")
+                    text: qsTr("A single file is saved into this folder; anything else becomes a folder named for the link.")
                 }
             }
 

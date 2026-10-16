@@ -73,6 +73,9 @@ int main(int argc, char *argv[])
     // bundle is verified content like any other, and nothing here can be confused
     // with a sealed one (different key, different ids).
     KelpClient kelpClient(&objectStore);
+    // The chosen download folder is remembered; an empty setting means the
+    // platform's Downloads folder, which KelpClient falls back to by itself.
+    kelpClient.setDirectory(kelpSettings.downloadDirectory());
 
     // A link handed to the app on the command line, or in KELP_INITIAL_LINK, is
     // offered to the Open-a-link page at startup. It is how a link reaches a

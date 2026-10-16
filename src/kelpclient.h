@@ -26,8 +26,8 @@ class QTimer;
  * keeping — live in libkelp. This class is only the bookkeeping the UI binds to:
  * what to ask for, a handful in flight, and a deadline when the sender goes
  * quiet. When nothing is missing the bundle is opened and written into the
- * user's Downloads: a bundle holding a single file is that file, anything else
- * becomes a folder named for the link.
+ * user's chosen download folder (Downloads by default): a bundle holding a
+ * single file is that file, anything else becomes a folder named for the link.
  */
 class KelpClient : public QObject
 {
@@ -47,6 +47,9 @@ class KelpClient : public QObject
     Q_PROPERTY(QString source READ source NOTIFY changed)
     Q_PROPERTY(QString destination READ destination NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
+    // Base folder the bundle is written into. Empty means the platform's
+    // Downloads folder. Kept across fetches so a choice is not lost on retry.
+    Q_PROPERTY(QString directory READ directory WRITE setDirectory NOTIFY changed)
 
 public:
     explicit KelpClient(KelpObjectStore *store, QObject *parent = nullptr);
@@ -74,6 +77,10 @@ public:
     QString source() const { return m_sourceLabel; }
     QString destination() const { return m_destination; }
     QString error() const { return m_error; }
+    QString directory() const { return m_directory; }
+
+    // Where the next fetch is written. Empty restores the Downloads default.
+    void setDirectory(const QString &path);
 
 signals:
     void changed();
@@ -105,6 +112,7 @@ private:
     QString m_name;
     QString m_sourceLabel;
     QString m_destination;
+    QString m_directory;
     QString m_error;
     Phase m_phase;
     int m_total;
