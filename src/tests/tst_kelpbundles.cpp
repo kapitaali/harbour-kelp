@@ -17,10 +17,15 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
+#include <QHostAddress>
+#include <QList>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
+#include <QTcpSocket>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -39,6 +44,7 @@ QString g_section;
 
 QString show(const QString &value) { return value; }
 QString show(int value) { return QString::number(value); }
+QString show(qint64 value) { return QString::number(value); }
 QString show(bool value) { return value ? QStringLiteral("true") : QStringLiteral("false"); }
 
 void section(const char *name)
@@ -90,6 +96,69 @@ QString writeFile(const QString &path, const QByteArray &content)
     file.write(content);
     file.close();
     return path;
+}
+
+// One HTTP GET by hand, so the test talks to the real listener exactly as a
+// recipient does. Kelp binds a specific interface, not every address, so the
+// caller has to dial the address the server reports — loopback would be refused.
+//
+// The listener lives in this same thread, so the event loop has to keep turning
+// while we wait, or it never accepts the connection and every reply times out.
+struct HttpReply {
+    int status = 0;
+    QByteArray body;
+};
+
+HttpReply httpGet(const QString &host, quint16 port, const QString &path,
+                  const QString &token)
+{
+    HttpReply reply;
+
+    QByteArray request = "GET " + path.toUtf8() + " HTTP/1.1\r\n";
+    request += "Host: " + host.toUtf8() + "\r\n";
+    if (!token.isEmpty())
+        request += "Authorization: Bearer " + token.toUtf8() + "\r\n";
+    request += "Connection: close\r\n\r\n";
+
+    QTcpSocket socket;
+    QByteArray response;
+    QEventLoop loop;
+
+    QObject::connect(&socket, &QTcpSocket::connected, [&socket, &request]() {
+        socket.write(request);
+        socket.flush();
+    });
+    QObject::connect(&socket, &QTcpSocket::readyRead,
+                     [&socket, &response]() { response += socket.readAll(); });
+
+    // The listener answers and hangs up, so the response ends with the connection.
+    QObject::connect(&socket, &QTcpSocket::disconnected, &loop, &QEventLoop::quit);
+    // Sailfish's Qt is 5.6: the error signal has no `errorOccurred` name yet and is
+    // overloaded, so the socket-error one is picked by hand.
+    QObject::connect(&socket,
+                     static_cast<void (QAbstractSocket::*)(QAbstractSocket::SocketError)>(
+                         &QAbstractSocket::error),
+                     &loop, &QEventLoop::quit);
+
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+    socket.connectToHost(host, port);
+    timeout.start(5000);
+    loop.exec();
+    response += socket.readAll();
+
+    const int statusEnd = response.indexOf("\r\n");
+    if (statusEnd > 0) {
+        const QList<QByteArray> parts = response.left(statusEnd).split(' ');
+        if (parts.size() >= 2)
+            reply.status = parts.at(1).toInt();
+    }
+    const int bodyStart = response.indexOf("\r\n\r\n");
+    if (bodyStart >= 0)
+        reply.body = response.mid(bodyStart + 4);
+    return reply;
 }
 
 } // namespace
@@ -329,6 +398,108 @@ static void testStoreManagement()
     QFile::remove(KelpSettings::filePath());
 }
 
+/*
+ * The publisher's own view of a fetch (§3.14). The server is stateless, so before
+ * this a recipient that fetched every object and one that never connected left
+ * exactly the same trace: none. These checks drive the real listener over a real
+ * socket, so the tally is built by the same code the device runs.
+ */
+static void testServingVisibility()
+{
+    QFile::remove(KelpSettings::filePath());
+
+    const QString base = KelpLog::dataDirectory() + QStringLiteral("/serving-test");
+    QDir().mkpath(base + "/a");
+
+    KelpObjectStore store(base + "/a/objects");
+    QString error;
+    CHECK(store.initialise(&error));
+
+    KelpServer server(&store);
+    KelpBundles bundles(&store, &server);
+    KelpSettings settings;
+    bundles.setSettings(&settings);
+
+    section("serving: what each peer asked for is recorded");
+    {
+        const QVariantMap sealed = sealOne(bundles, base + "/a", "served");
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        CHECK(server.isListening());
+
+        const QString bundleIdText = sealed.value(QStringLiteral("bundleId")).toString();
+        QByteArray rootId;
+        QString why;
+        CHECK(Kelp::Link::base32Decode(bundleIdText, &rootId, &why));
+
+        QByteArray secret;
+        CHECK(Kelp::Link::base64UrlDecode(sealed.value(QStringLiteral("secret")).toString(),
+                                          &secret, &why));
+        const QString token = Kelp::Link::base64UrlEncode(Kelp::swarmToken(secret));
+
+        const QString lan = server.lanAddress();
+        const int colon = lan.lastIndexOf(QLatin1Char(':'));
+        CHECK(colon > 0);
+        const QString host = lan.left(colon);
+        const quint16 port = quint16(lan.mid(colon + 1).toUInt());
+
+        // A fetch opens with /info. That is the "someone is here" signal, and it
+        // carries the name so the log line is readable.
+        const HttpReply info =
+            httpGet(host, port, QStringLiteral("/v1/bundle/%1/info").arg(bundleIdText),
+                    token);
+        CHECK_EQ(info.status, 200);
+        CHECK(info.body.contains("\"objects\""));
+
+        QHash<QString, KelpServer::Traffic> traffic = server.traffic();
+        CHECK_EQ(traffic.size(), 1);
+        const QString peer = traffic.keys().value(0);
+        CHECK_EQ(traffic.value(peer).requests, qint64(1));
+        CHECK_EQ(traffic.value(peer).bundle, QStringLiteral("served"));
+        CHECK_EQ(traffic.value(peer).objects, qint64(0));
+        CHECK_EQ(traffic.value(peer).bytes, qint64(0));
+
+        // One object, and the counters say exactly what left the device.
+        const HttpReply object =
+            httpGet(host, port,
+                    QStringLiteral("/v1/bundle/%1/object/%2")
+                        .arg(bundleIdText,
+                             QString::fromLatin1(Kelp::Link::base32Encode(rootId))),
+                    token);
+        CHECK_EQ(object.status, 200);
+        CHECK(!object.body.isEmpty());
+
+        traffic = server.traffic();
+        CHECK_EQ(traffic.value(peer).objects, qint64(1));
+        CHECK_EQ(traffic.value(peer).bytes, qint64(object.body.size()));
+        CHECK_EQ(traffic.value(peer).requests, qint64(1));
+
+        // A wrong token gives nothing away and is counted, not served.
+        const HttpReply refused =
+            httpGet(host, port, QStringLiteral("/v1/bundle/%1/info").arg(bundleIdText),
+                    Kelp::Link::base64UrlEncode(QByteArray(32, 'x')));
+        CHECK_EQ(refused.status, 401);
+        CHECK(refused.body.isEmpty() || !refused.body.contains("\"objects\""));
+
+        traffic = server.traffic();
+        CHECK_EQ(traffic.value(peer).refused, qint64(1));
+        CHECK_EQ(traffic.value(peer).requests, qint64(1));
+        CHECK_EQ(traffic.value(peer).objects, qint64(1));
+
+        // An unknown bundle is a refusal too, and is not counted as traffic.
+        const HttpReply unknown =
+            httpGet(host, port,
+                    QStringLiteral("/v1/bundle/%1/info")
+                        .arg(QString::fromLatin1(Kelp::Link::base32Encode(
+                            QByteArray(32, 'z')))),
+                    token);
+        CHECK_EQ(unknown.status, 401);
+        CHECK_EQ(server.traffic().value(peer).refused, qint64(2));
+    }
+
+    QDir(base).removeRecursively();
+    QFile::remove(KelpSettings::filePath());
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -342,6 +513,7 @@ int main(int argc, char **argv)
 
     testPublish();
     testStoreManagement();
+    testServingVisibility();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

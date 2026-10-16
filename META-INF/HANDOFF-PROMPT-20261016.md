@@ -63,7 +63,7 @@ Current verified state (2026-10-16)
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
 - libkelp: 345 checks, 0 failures. App-layer harnesses: tst_kelpfetch 37, tst_kelpsettings
-  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 54 (all 0 failures). Relay harness: 4/4
+  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 79 (all 0 failures). Relay harness: 4/4
   ALL PASS.
 - A link no longer spells out the publisher's address: encode() seals the address and label
   into q= (AES-256-GCM under HKDF(secret, "kelp/v1/link"), bundle id as AAD); decode() still
@@ -71,6 +71,17 @@ Current verified state (2026-10-16)
 - Settings -> Storage shows what the object store holds and what the shares on this device
   need, and Remove unused objects deletes exactly the rest — refusing, and deleting nothing,
   if any share cannot be walked. Verified live through the real page (PROGRESS §3.12).
+- A real phone fetched from the emulator's share: the app relaunched with
+  KELP_ADVERTISE_HOST so its links named the host instead of 10.0.2.15, run-emu-share.sh
+  bridged the port and printed a fresh sealed link and QR, and the phone fetched the bundle
+  (confirmed by the user, PROGRESS §3.13).
+- The serving side now says who fetched: KelpServer tallies each peer's fetches, objects,
+  bytes and 401s and writes one line per peer once it is quiet, so a publisher can tell a
+  fetch that worked from a recipient that never arrived — the blind spot the debugging
+  session hit. src/tests/kelp-probe.py + run-emu-share.sh --fetch check a share from this
+  host the way a recipient would, without printing the link. tst_kelpbundles 79 checks,
+  verified live inside the sandbox (PROGRESS §3.14). This covers the LAN path only: a fetch
+  over a relay is served by KelpTunnel, which does not tally yet.
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
@@ -120,14 +131,22 @@ Next Move (in this order — 1–3 are done as of this note)
    objects are never called junk); KelpBundles::storeUsage()/pruneStore() drive Settings ->
    Storage (what is here, what the shares need, what is left over, a confirmed clean-up).
    libkelp 345 checks, tst_kelpbundles 54, verified live on the emulator (PROGRESS §3.12).
-6. Only then C4 (browser viewer + gateway) or C7 (swarm).
+6. **Done** — the publisher's own view of a fetch: KelpServer::Traffic (per-peer fetches,
+   objects, bytes, refusals) written as one line per peer once it goes quiet, plus
+   kelp-probe.py and run-emu-share.sh --fetch to check a share from this host without
+   printing its key. tst_kelpbundles 79 checks, verified live (PROGRESS §3.14).
+7. Only then C4 (browser viewer + gateway) or C7 (swarm).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file.
 
 Relevant files
 - src/kelpfetch.{h,cpp} — KelpSource, LanSource, RelaySource. Bug 1 lives here (create()).
 - src/kelpclient.{h,cpp} — the fetch loop: walk, ask, fetch, repeat; writes the tree.
-- src/kelpserver.{h,cpp} — the LAN listener the client talks to (endpoints, auth, guards).
+- src/kelpserver.{h,cpp} — the LAN listener the client talks to (endpoints, auth, guards),
+  and the Traffic tally behind the "who fetched" log line.
+- src/tests/kelp-probe.py — fetch from a link the way a recipient would (deriving the token
+  with HKDF-SHA256, kelp/v1/swarm) without ever printing the link; exit status 0 only if
+  every check passed. run-emu-share.sh --fetch drives it through the forward.
 - src/kelpbundles.{h,cpp} — seal()/republish()/unshare()/storeInfo()/storeUsage()/
   pruneStore()/linkInfo(); the link logging gate and the shared publish() helper.
 - src/kelpshares.{h,cpp} — the shared rows on disk (owner-only shares.json), so a restart
@@ -177,9 +196,19 @@ Important context — build, deploy, debug
   machine with two instances under different XDG_DATA_HOME so they have separate stores
   and logs and really fetch over the LAN. For emulator-as-sender, the emulator cannot be
   dialled into (QEMU NAT) — src/tests/run-emu-share.sh forwards a host port into it and
-  rewrites the link (PROGRESS §4.5); it can also write QR PNGs of the rewritten link.
+  rewrites the link (PROGRESS §4.5); it can also write QR PNGs of the rewritten link, and
+  with --fetch it fetches from the share the way a recipient would and prints the
+  publisher's log line for that traffic — the quick "is this share really reachable?"
+  check before a phone is involved.
   The phone must be able to reach *this host*, so host and phone must share a network
   (the host's Wi-Fi was software-disabled; nmcli radio wifi on, then join the phone's).
+- Through that forward the guest sees every peer as itself (10.0.2.15), because sshd inside
+  the guest dials the target: a "who fetched" line made over the bridge always names
+  10.0.2.15, whatever device really fetched. The bridge, not Kelp.
+- Test traps: the listener is a QTcpServer in the same thread as the test, so a helper that
+  blocks in waitForConnected/waitForReadyRead never gets accepted — drive the socket with
+  signals and a QEventLoop (tst_kelpbundles httpGet). Sailfish's Qt is 5.6: no
+  errorOccurred (5.15) and no QOverload (5.7) — cast the overloaded signal explicitly.
 - Verify like this: object count in the store, the transfer lines in the log, sha256sum of
   the written file against the original, and diff -r for a tree.
 
@@ -190,6 +219,10 @@ Known gaps carried forward
   when the app exits. No swarm, no relay caching or stewards, no browser
   gateway. Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
   Symlink skips are only logged. Some diagnostic printf lines remain. The storage clean-up
-  runs on the UI thread too, and there is no size cap or LRU — it is a manual action.
+  runs on the UI thread too, and there is no size cap or LRU — it is a manual action. The
+  "who fetched" line is written only after a peer has been quiet for five seconds (flushed
+  by the sweeper that also expires half-open connections), so it lands within about ten
+  seconds of a fetch; a fetch in the last seconds before the app is killed is not reported
+  at all.
 
 Open design questions are in kelp-design.md §12; they are still open.

@@ -347,6 +347,27 @@ Both write the link to the log; read it back with:
 grep -o 'kelp://[^"]*' ~/.local/share/harbour.kelp/harbour-kelp/kelp.log | tail -1
 ```
 
+**Did anyone fetch it?** The serving side keeps its own account of a transfer and
+writes one line per peer, about five seconds after that peer stops asking:
+
+```text
+2026-10-16 21:01:55.708 INFO  KelpServer: "10.0.2.15: 1 fetch(es) started, 1 object(s), 102 byte(s) of \"Screenshots\"; 3 request(s) refused"
+```
+
+`fetch(es) started` counts authenticated `/info` calls, which the client makes once
+per fetch; `object(s)` and `byte(s)` are what actually left the device; and
+`request(s) refused` counts `401`s — a link or a token that was not recognised.
+Without it, a recipient that fetched everything and one that never arrived left the
+same trace: none. Nothing in the line is secret, so it is always logged. It covers
+the LAN path; a fetch that arrives over a relay is served by the tunnel, which does
+not report yet.
+
+To check a share *before* sending its link to anyone, `run-emu-share.sh --fetch`
+fetches from it the way a recipient would — reachability, token, objects — and
+prints that line for the traffic it just made. The fetching is
+`src/tests/kelp-probe.py`: it parses the link so it can derive the token, but never
+prints the link, so its output is safe to read or paste.
+
 ## Testing `libkelp`
 
 The unit tests are a plain qmake project, so they need the target's Qt and

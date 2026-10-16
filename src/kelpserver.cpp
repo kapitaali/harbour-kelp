@@ -8,6 +8,7 @@
 #include <QNetworkInterface>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 
@@ -25,6 +26,11 @@ const int kMaxRequestBytes = 8 * 1024;
 // floor.
 const int kMaxPendingConnections = 32;
 const int kRequestTimeoutMs = 10000;
+
+// A peer's tally is written to the log once it has been quiet this long. The
+// sweeper runs at half the request timeout, so a finished fetch is reported within
+// about five seconds of its last object.
+const qint64 kTrafficIdleMs = 5000;
 
 // Comparing a token must not leak how much of it was right, so compare every
 // byte rather than returning at the first difference.
@@ -146,10 +152,11 @@ QString KelpServer::lanAddress() const
 }
 
 void KelpServer::share(const QByteArray &bundleId, const QByteArray &swarmToken,
-                       int objects, int files, quint64 bytes)
+                       const QString &name, int objects, int files, quint64 bytes)
 {
     Shared entry;
     entry.token = swarmToken;
+    entry.name = name;
     entry.objects = objects;
     entry.files = files;
     entry.bytes = bytes;
@@ -205,6 +212,47 @@ void KelpServer::sweepPending()
         respond(socket, 408, "Request Timeout", "text/plain; charset=utf-8",
                 QByteArrayLiteral("waited too long for a request\n"));
     }
+
+    flushTraffic();
+}
+
+/*
+ * Writes one line per peer that has gone quiet, then forgets it.
+ *
+ * Without this the log is silent about success: the server is stateless, so a
+ * recipient that fetched every object and one that never connected looked exactly
+ * the same — the publisher could only find out by asking the recipient. A fetch
+ * begins with one authenticated `/info`, so `requests` is how many times this peer
+ * started fetching, and the object count and bytes say how much actually left.
+ *
+ * Errors are still logged as they happen, not held back for this.
+ */
+void KelpServer::flushTraffic()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
+    QStringList quiet;
+    QHash<QString, Traffic>::const_iterator it = m_traffic.constBegin();
+    for (; it != m_traffic.constEnd(); ++it) {
+        if (now - it.value().lastMs >= kTrafficIdleMs)
+            quiet.append(it.key());
+    }
+
+    for (int i = 0; i < quiet.size(); ++i) {
+        const Traffic tally = m_traffic.take(quiet.at(i));
+
+        QString line = QStringLiteral("%1: %2 fetch(es) started, %3 object(s), %4 byte(s)")
+            .arg(quiet.at(i))
+            .arg(tally.requests)
+            .arg(tally.objects)
+            .arg(tally.bytes);
+        if (!tally.bundle.isEmpty())
+            line += QStringLiteral(" of \"%1\"").arg(tally.bundle);
+        if (tally.refused > 0)
+            line += QStringLiteral("; %1 request(s) refused").arg(tally.refused);
+
+        qInfo() << "KelpServer:" << line;
+    }
 }
 
 void KelpServer::readRequest(QTcpSocket *socket)
@@ -256,6 +304,12 @@ void KelpServer::handle(QTcpSocket *socket, const QByteArray &request)
             token = value.mid(7).trimmed();
     }
 
+    // Keyed by address, not address:port: every request arrives on its own
+    // connection, so a port would make each object look like a new peer.
+    const QString peer = socket->peerAddress().toString();
+    Traffic &tally = m_traffic[peer];
+    tally.lastMs = QDateTime::currentMSecsSinceEpoch();
+
     if (method != QByteArrayLiteral("GET")) {
         respond(socket, 405, "Method Not Allowed", "text/plain; charset=utf-8",
                 QByteArrayLiteral("only GET is served\n"));
@@ -273,6 +327,7 @@ void KelpServer::handle(QTcpSocket *socket, const QByteArray &request)
     QByteArray bundleId;
     QString error;
     if (!Kelp::Link::base32Decode(segments.at(2), &bundleId, &error)) {
+        ++tally.refused;
         respond(socket, 401, "Unauthorized", "text/plain; charset=utf-8",
                 QByteArrayLiteral("bad token\n"));
         return;
@@ -292,14 +347,17 @@ void KelpServer::handle(QTcpSocket *socket, const QByteArray &request)
     const bool known = m_shared.contains(bundleId);
     const QByteArray expected = known ? m_shared.value(bundleId).token : QByteArray();
     if (!known || !constantTimeEquals(presented, expected)) {
+        ++tally.refused;
         respond(socket, 401, "Unauthorized", "text/plain; charset=utf-8",
                 QByteArrayLiteral("bad token\n"));
         return;
     }
 
     const Shared shared = m_shared.value(bundleId);
+    tally.bundle = shared.name;
 
     if (segments.size() == 4 && segments.at(3) == QLatin1String("info")) {
+        ++tally.requests;
         const QString info = QStringLiteral("{\"v\":1,\"objects\":%1,\"files\":%2,\"bytes\":%3}\n")
             .arg(shared.objects).arg(shared.files)
             .arg(QString::number(shared.bytes, 'f', 0));
@@ -320,6 +378,9 @@ void KelpServer::handle(QTcpSocket *socket, const QByteArray &request)
                     QByteArrayLiteral("no such object\n"));
             return;
         }
+        // What actually left the device: the object as stored, ciphertext.
+        tally.objects += 1;
+        tally.bytes += object.size();
         respond(socket, 200, "OK", "application/octet-stream", object);
         return;
     }

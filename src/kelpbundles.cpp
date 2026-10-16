@@ -414,7 +414,8 @@ Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArr
     if (m_server && exposeLan) {
         QString listenError;
         if (m_server->start(&listenError)) {
-            m_server->share(rootId, Kelp::swarmToken(secret), objects, files, bytes);
+            m_server->share(rootId, Kelp::swarmToken(secret), name, objects, files,
+                            bytes);
             link.lan = m_server->lanAddress();
         } else {
             qWarning() << "KelpBundles: cannot serve" << name << "on the LAN:"

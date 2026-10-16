@@ -23,7 +23,7 @@
 # The emulator's own port is ephemeral, so run this again after the app restarts.
 #
 # Usage:
-#   src/tests/run-emu-share.sh [--host ADDRESS] [--redact] [--qr DIR]
+#   src/tests/run-emu-share.sh [--host ADDRESS] [--redact] [--qr DIR] [--fetch]
 #
 #   --host ADDRESS  an address recipients can reach THIS machine on. Defaults to
 #                   the host's primary LAN IPv4. It has to match the
@@ -33,6 +33,12 @@
 #   --qr DIR        also write one PNG QR code per share into DIR. These contain
 #                   the full link, key included, so they can be scanned straight
 #                   into a phone. Treat the files as secrets.
+#   --fetch         go on to fetch from the share through the forward, the way a
+#                   recipient would (kelp-probe.py): authenticated /info and root
+#                   object, then two requests that must be refused. Prints status
+#                   codes only, then the line the publisher's own log writes for
+#                   that traffic. Use it to check a share is really reachable
+#                   before handing the link to a phone.
 #
 # The printed links carry each share's secret. Treat them like passwords: do not
 # paste them into a bug report, a log, or a chat.
@@ -45,12 +51,14 @@ DATA_DIR="${KELP_EMU_DATAHOME:-/home/defaultuser/.local/share/harbour.kelp/harbo
 HOST=""
 REDACT=0
 QR_DIR=""
+FETCH=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --host) HOST="${2:?--host needs an address}"; shift 2 ;;
         --redact) REDACT=1; shift ;;
         --qr) QR_DIR="${2:?--qr needs a directory}"; shift 2 ;;
-        -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --fetch) FETCH=1; shift ;;
+        -h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -156,6 +164,23 @@ for row in json.loads(shares_raw):
         qrcode.make(link).save(path)     # the QR always carries the key
         print("  QR (contains the key): %s" % path)
 ' "$SHARES" "$REDACT" "$QR_DIR"
+
+if [ "$FETCH" = "1" ]; then
+    echo
+    echo "fetching through the forward, the way a recipient would. The link is"
+    echo "parsed here and never printed:"
+    if ! printf '%s' "$LOG" | python3 "$(dirname "$0")/kelp-probe.py" \
+            --base "http://$HOST:$PORT"; then
+        echo "the share did not answer as it should (see above)" >&2
+    fi
+
+    echo
+    echo "what the publisher logged for that traffic — one line per peer, written"
+    echo "once the peer has been quiet for five seconds, so within about ten:"
+    sleep 12
+    $SSH "grep -a 'KelpServer' '$DATA_DIR/kelp.log' \
+          | grep -av -e 'serving on' -e 'bound to' | tail -1"
+fi
 
 echo
 if [ -n "${FORWARD_PID:-}" ]; then
