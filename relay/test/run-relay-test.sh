@@ -35,6 +35,8 @@ pkill -x kelp-relay 2>/dev/null || true
 sleep 1
 
 # QT_LOGGING_TO_CONSOLE so the relay's qInfo/qWarning are actually visible here.
+# QT_LOGGING_TO_CONSOLE so the relay's and the app's own qInfo/qWarning are
+# actually visible here — the traffic line included.
 env QT_LOGGING_TO_CONSOLE=1 "$RELAY/.build/kelp-relay" \
     --port "$PORT" \
     --cert "$HERE/certs/cert.pem" --key "$HERE/certs/key.pem" \
@@ -45,7 +47,7 @@ RELAY_PID=$!
 sleep 2
 
 set +e
-"$HERE/.build/relaytest" "$PORT"
+env QT_LOGGING_TO_CONSOLE=1 "$HERE/.build/relaytest" "$PORT"
 STATUS=$?
 set -e
 

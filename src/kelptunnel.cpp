@@ -16,6 +16,12 @@ namespace {
 // tunnel is not mistaken for a dead one by a middlebox.
 const int kKeepaliveMs = 30000;
 
+// How long the asking has to stop before the tunnel reports what it served. Short
+// enough that a publisher can see a fetch was answered while it is still looking
+// at the screen, long enough that one recipient's object requests count as one
+// transfer rather than dozens.
+const int kTrafficIdleMs = 5000;
+
 // Reconnect backoff, capped: 1s, 2s, 4s … 30s.
 const int kRetryBaseMs = 1000;
 const int kRetryMaxMs = 30000;
@@ -35,13 +41,20 @@ KelpTunnel::KelpTunnel(KelpObjectStore *store, QObject *parent)
       m_socket(nullptr),
       m_tls(nullptr),
       m_keepalive(new QTimer(this)),
-      m_retry(new QTimer(this))
+      m_retry(new QTimer(this)),
+      m_idle(new QTimer(this))
 {
     m_keepalive->setInterval(kKeepaliveMs);
     connect(m_keepalive, &QTimer::timeout, this, &KelpTunnel::onKeepalive);
 
     m_retry->setSingleShot(true);
     connect(m_retry, &QTimer::timeout, this, &KelpTunnel::onRetry);
+
+    // Restarted by every WANT, so the report comes when a transfer ends rather
+    // than on a fixed beat; it costs nothing while the tunnel is idle.
+    m_idle->setSingleShot(true);
+    m_idle->setInterval(kTrafficIdleMs);
+    connect(m_idle, &QTimer::timeout, this, &KelpTunnel::flushTraffic);
 }
 
 KelpTunnel::~KelpTunnel()
@@ -50,8 +63,8 @@ KelpTunnel::~KelpTunnel()
 }
 
 bool KelpTunnel::start(const QStringList &relays, const QByteArray &bundleId,
-                       const QByteArray &relayToken, int objects, int files, quint64 bytes,
-                       QString *error)
+                       const QByteArray &relayToken, const QString &name, int objects,
+                       int files, quint64 bytes, QString *error)
 {
     QString scratch;
     if (!error)
@@ -70,12 +83,14 @@ bool KelpTunnel::start(const QStringList &relays, const QByteArray &bundleId,
     m_relays = relays;
     m_bundleId = bundleId;
     m_token = relayToken;
+    m_name = name;
     m_objects = objects;
     m_files = files;
     m_bytes = bytes;
     m_index = 0;
     m_attempt = 0;
     m_wanted = true;
+    m_traffic = Traffic();
 
     connectToRelay(m_index);
     return true;
@@ -86,13 +101,20 @@ void KelpTunnel::stop()
     m_wanted = false;
     m_keepalive->stop();
     m_retry->stop();
+    m_idle->stop();
     teardown();
     emit changed();
 }
 
 void KelpTunnel::teardown()
 {
+    // A tunnel that goes down — or rotates to the next relay — reports what it
+    // served first, so a transfer interrupted by a reconnect is still accounted
+    // for. Clearing m_current below is what makes the report name the right relay.
+    flushTraffic();
+
     m_keepalive->stop();
+    m_idle->stop();
     m_live = false;
     m_current.clear();
     m_reader = Kelp::Wire::FrameReader();
@@ -223,6 +245,9 @@ void KelpTunnel::handleFrame(quint8 type, const QByteArray &payload)
 
 void KelpTunnel::serve(const QByteArray &objectId)
 {
+    ++m_traffic.wanted;
+    m_idle->start();
+
     QByteArray object;
     if (m_store && m_store->get(objectId, &object)) {
         Kelp::Wire::DataMessage data;
@@ -231,16 +256,49 @@ void KelpTunnel::serve(const QByteArray &objectId)
         data.index = 0;
         data.hash = objectId;
         data.bytes = object;
+        ++m_traffic.objects;
+        m_traffic.bytes += object.size();
         m_tls->write(Kelp::Wire::encodeFrame(Kelp::Wire::Data,
                                              Kelp::Wire::encodeData(data)));
         return;
     }
 
+    ++m_traffic.rejected;
     Kelp::Wire::RejectMessage reject;
     reject.hash = objectId;
     reject.why = Kelp::Wire::NotFound;
     m_tls->write(Kelp::Wire::encodeFrame(Kelp::Wire::Reject,
                                          Kelp::Wire::encodeReject(reject)));
+}
+
+/*
+ * Writes what this tunnel served, then forgets it.
+ *
+ * The same blind spot the LAN listener had (§3.14), on the harder path: a relay
+ * fetch that worked and one that never got past the relay looked identical in the
+ * publisher's log. The counts are per tunnel, not per recipient — the relay
+ * multiplexes them — so the useful reading is "objects went out through relay R",
+ * with `rejected` saying a recipient asked for something this device does not
+ * hold (a stale share, or a bug worth chasing).
+ */
+void KelpTunnel::flushTraffic()
+{
+    if (m_traffic.wanted == 0)
+        return;
+
+    const Traffic tally = m_traffic;
+    m_traffic = Traffic();
+
+    QString text = QStringLiteral("%1: %2 object(s) wanted, %3 served (%4 byte(s)), %5 not held")
+        .arg(m_current.isEmpty() ? QStringLiteral("(no relay)") : m_current)
+        .arg(tally.wanted)
+        .arg(tally.objects)
+        .arg(tally.bytes)
+        .arg(tally.rejected);
+    if (!m_name.isEmpty())
+        text += QStringLiteral(" of \"%1\"").arg(m_name);
+
+    qInfo() << "KelpTunnel:" << text;
 }
 
 void KelpTunnel::onSocketError()

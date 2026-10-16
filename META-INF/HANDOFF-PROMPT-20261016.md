@@ -63,8 +63,8 @@ Current verified state (2026-10-16)
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
 - libkelp: 345 checks, 0 failures. App-layer harnesses: tst_kelpfetch 37, tst_kelpsettings
-  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 79 (all 0 failures). Relay harness: 4/4
-  ALL PASS.
+  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 79 (all 0 failures). Relay harness: 6/6
+  ALL PASS, now against the app's own tunnel.
 - A link no longer spells out the publisher's address: encode() seals the address and label
   into q= (AES-256-GCM under HKDF(secret, "kelp/v1/link"), bundle id as AAD); decode() still
   accepts the old plaintext l=/n= form. Verified live (PROGRESS §3.11).
@@ -80,8 +80,12 @@ Current verified state (2026-10-16)
   fetch that worked from a recipient that never arrived — the blind spot the debugging
   session hit. src/tests/kelp-probe.py + run-emu-share.sh --fetch check a share from this
   host the way a recipient would, without printing the link. tst_kelpbundles 79 checks,
-  verified live inside the sandbox (PROGRESS §3.14). This covers the LAN path only: a fetch
-  over a relay is served by KelpTunnel, which does not tally yet.
+  verified live inside the sandbox (PROGRESS §3.14).
+- The relay half reports too, per tunnel (the relay multiplexes recipients): KelpTunnel
+  counts objects wanted, served, their bytes, and anything wanted but not held, and writes a
+  KelpTunnel: line when the asking stops or the tunnel drops. The relay harness now runs the
+  app's own KelpTunnel as the publisher instead of a hand-written stand-in, so the relay is
+  tested against the code the device runs: 6/6, with the tally pinned (PROGRESS §3.15).
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
@@ -134,7 +138,10 @@ Next Move (in this order — 1–3 are done as of this note)
 6. **Done** — the publisher's own view of a fetch: KelpServer::Traffic (per-peer fetches,
    objects, bytes, refusals) written as one line per peer once it goes quiet, plus
    kelp-probe.py and run-emu-share.sh --fetch to check a share from this host without
-   printing its key. tst_kelpbundles 79 checks, verified live (PROGRESS §3.14).
+   printing its key. tst_kelpbundles 79 checks, verified live (PROGRESS §3.14). The relay
+   half is done too (PROGRESS §3.15): KelpTunnel counts objects wanted/served/not-held and
+   reports when the asking stops or the tunnel drops, and the relay harness now runs the app
+   own tunnel as the publisher — 6/6.
 7. Only then C4 (browser viewer + gateway) or C7 (swarm).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file.
@@ -156,7 +163,11 @@ Relevant files
 - src/kelplog.{h,cpp} — dataDirectory(): the one place the data path is decided.
 - src/kelpstore.h — KelpObjectStore (sharded ab/<64-hex>, temp+rename, re-hash on get),
   plus objectIds/objectSize/remove for the storage clean-up.
-- src/kelptunnel.{h,cpp}, src/kelptls.{h,cpp} — the publisher's outbound tunnel + TLS 1.3.
+- src/kelptunnel.{h,cpp}, src/kelptls.{h,cpp} — the publisher's outbound tunnel + TLS 1.3,
+  and the tunnel's own account of what it served (Traffic).
+- relay/test/relaytest.cpp, run-relay-test.sh — the end-to-end relay check. It plays the
+  recipient by hand and the publisher with the app's real KelpTunnel, so app framing and
+  state get exercised against a real relay.
 - libkelp/kelp_bundle.{h,cpp} — seal/open/missingObjects (the fetch walker) and
   bundleObjects (the storage walker: strict, lists every object a bundle is made of).
 - libkelp/kelp_link.h, kelp_object.h, kelp_manifest.h, kelp_store.h, kelp_wire.{h,cpp}.
@@ -223,6 +234,7 @@ Known gaps carried forward
   "who fetched" line is written only after a peer has been quiet for five seconds (flushed
   by the sweeper that also expires half-open connections), so it lands within about ten
   seconds of a fetch; a fetch in the last seconds before the app is killed is not reported
-  at all.
+  at all. The tunnel's line is the same idea but per tunnel, not per recipient — a relay
+  multiplexes them, so the publisher cannot tell two recipients apart.
 
 Open design questions are in kelp-design.md §12; they are still open.

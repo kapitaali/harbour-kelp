@@ -358,9 +358,10 @@ writes one line per peer, about five seconds after that peer stops asking:
 per fetch; `object(s)` and `byte(s)` are what actually left the device; and
 `request(s) refused` counts `401`s — a link or a token that was not recognised.
 Without it, a recipient that fetched everything and one that never arrived left the
-same trace: none. Nothing in the line is secret, so it is always logged. It covers
-the LAN path; a fetch that arrives over a relay is served by the tunnel, which does
-not report yet.
+same trace: none. Nothing in the line is secret, so it is always logged. A fetch
+that arrives over a relay is served by the tunnel and reported by a `KelpTunnel:`
+line instead, per tunnel rather than per peer (the relay multiplexes recipients):
+objects wanted, objects served, bytes, and anything wanted but not held here.
 
 To check a share *before* sending its link to anyone, `run-emu-share.sh --fetch`
 fetches from it the way a recipient would — reachability, token, objects — and

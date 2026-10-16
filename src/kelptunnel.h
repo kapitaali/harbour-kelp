@@ -26,7 +26,9 @@ class QTimer;
  * it serves is the same ciphertext the LAN path serves.
  *
  * The tunnel reconnects on its own if the relay drops it, so a phone that moves
- * between networks recovers without the user re-sharing.
+ * between networks recovers without the user re-sharing. It also records what
+ * recipients asked for and how much of it went out, so the publisher can tell a
+ * fetch that was served from one that never arrived (see Traffic).
  */
 class KelpTunnel : public QObject
 {
@@ -40,14 +42,29 @@ public:
     // bundle. Returns false only when the arguments are unusable; a relay that
     // cannot be reached is retried in the background.
     bool start(const QStringList &relays, const QByteArray &bundleId,
-               const QByteArray &relayToken, int objects, int files, quint64 bytes,
-               QString *error);
+               const QByteArray &relayToken, const QString &name, int objects,
+               int files, quint64 bytes, QString *error);
 
     void stop();
 
     bool isLive() const { return m_live; }
     // The relay it is currently connected to, or empty when it is not.
     QString relay() const { return m_live ? m_current : QString(); }
+
+    /*
+     * What recipients have asked for through the current tunnel, and how much of
+     * it went out. The relay multiplexes recipients, so these counts belong to
+     * the tunnel rather than to one peer — which is all the publisher can know on
+     * this path. One line is written to the log when the asking stops for a few
+     * seconds, or when the tunnel goes down; the tests read this directly (§3.15).
+     */
+    struct Traffic {
+        qint64 wanted = 0;      // WANT frames: objects a recipient asked for
+        qint64 objects = 0;     // DATA frames sent
+        qint64 bytes = 0;       // their size as stored (ciphertext)
+        qint64 rejected = 0;    // REJECTs: wanted, but not held here
+    };
+    Traffic traffic() const { return m_traffic; }
 
 signals:
     void changed();
@@ -65,6 +82,7 @@ private:
     void sendRegister();
     void handleFrame(quint8 type, const QByteArray &payload);
     void serve(const QByteArray &objectId);
+    void flushTraffic();
     void connectToRelay(int index);
     void teardown();
     void scheduleRetry();
@@ -74,9 +92,11 @@ private:
     int m_index;
     QByteArray m_bundleId;
     QByteArray m_token;
+    QString m_name;
     int m_objects;
     int m_files;
     quint64 m_bytes;
+    Traffic m_traffic;
 
     bool m_wanted;
     bool m_live;
@@ -87,6 +107,7 @@ private:
     KelpTls *m_tls;
     QTimer *m_keepalive;
     QTimer *m_retry;
+    QTimer *m_idle;
     Kelp::Wire::FrameReader m_reader;
 };
 

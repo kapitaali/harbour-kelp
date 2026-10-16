@@ -3,20 +3,26 @@
 //
 //   publisher ──TLS tunnel──▶ relay ──TLS HTTP──▶ fetcher
 //
-// It registers a bundle, serves one object from memory, and then runs a handful
-// of recipient requests, printing PASS/FAIL for each. Run it against a relay
-// started with a self-signed cert.
+// The publisher half is the app's own KelpTunnel, not a re-implementation, so
+// this checks the wire code the device really runs: it registers a bundle from a
+// real object store, serves it, and the harness then checks the relay's answers
+// and the tunnel's own account of what it served. Run it against a relay started
+// with a self-signed cert.
 #include <cstdio>
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDir>
+#include <QStandardPaths>
 #include <QTcpSocket>
 #include <QTimer>
 
 #include "kelp_crypto.h"
 #include "kelp_link.h"
 #include "kelp_wire.h"
+#include "kelpstore.h"
 #include "kelptls.h"
+#include "kelptunnel.h"
 
 using namespace Kelp;
 
@@ -115,85 +121,6 @@ private:
     bool m_done = false;
 };
 
-class Publisher : public QObject
-{
-    Q_OBJECT
-public:
-    Publisher(quint16 port, const QByteArray &bundleId, const QByteArray &token,
-              QObject *parent = nullptr)
-        : QObject(parent), m_port(port), m_bundleId(bundleId), m_token(token)
-    {
-        connect(&m_socket, &QTcpSocket::connected, this, [this]() {
-            QString error;
-            if (!m_tls.start(KelpTls::Client, &m_socket, &error))
-                printf("publisher: start failed: %s\n", qPrintable(error));
-        });
-        connect(&m_tls, &KelpTls::encrypted, this, [this]() {
-            Wire::RegisterMessage registration;
-            registration.bundleId = m_bundleId;
-            registration.token = m_token;
-            registration.objects = 22;
-            registration.files = 6;
-            registration.bytes = 1687667;
-            m_tls.write(Wire::encodeFrame(Wire::Register,
-                                          Wire::encodeRegister(registration)));
-            printf("publisher: registered\n");
-            fflush(stdout);
-        });
-        connect(&m_tls, &KelpTls::readyRead, this, [this]() {
-            m_reader.push(m_tls.readAll());
-            quint8 type = 0;
-            QByteArray frame;
-            while (m_reader.next(&type, &frame))
-                onFrame(type, frame);
-        });
-        connect(&m_tls, &KelpTls::error, this, [](const QString &message) {
-            printf("publisher: tls error: %s\n", qPrintable(message));
-        });
-    }
-
-    void go() { m_socket.connectToHost(QStringLiteral("127.0.0.1"), m_port); }
-
-private:
-    void onFrame(quint8 type, const QByteArray &frame)
-    {
-        if (type == Wire::Want) {
-            Wire::WantMessage want;
-            QString error;
-            if (!Wire::decodeWant(frame, &want, &error))
-                return;
-            const QByteArray expected = Crypto::sha256(payload());
-            if (want.hash == expected) {
-                Wire::DataMessage data;
-                data.index = 3;
-                data.hash = want.hash;
-                data.bytes = payload();
-                m_tls.write(Wire::encodeFrame(Wire::Data, Wire::encodeData(data)));
-                printf("publisher: served %s\n", want.hash.toHex().left(12).constData());
-            } else {
-                Wire::RejectMessage reject;
-                reject.hash = want.hash;
-                reject.why = Wire::NotFound;
-                m_tls.write(Wire::encodeFrame(Wire::Reject, Wire::encodeReject(reject)));
-                printf("publisher: rejected %s\n", want.hash.toHex().left(12).constData());
-            }
-            fflush(stdout);
-        } else if (type == Wire::Ping) {
-            quint64 t = 0;
-            QString error;
-            if (Wire::decodePing(frame, &t, &error))
-                m_tls.write(Wire::encodeFrame(Wire::Pong, Wire::encodePing(t)));
-        }
-    }
-
-    quint16 m_port;
-    QByteArray m_bundleId;
-    QByteArray m_token;
-    QTcpSocket m_socket;
-    KelpTls m_tls;
-    Wire::FrameReader m_reader;
-};
-
 } // namespace
 
 int main(int argc, char *argv[])
@@ -202,16 +129,42 @@ int main(int argc, char *argv[])
     // One port serves both roles (relay.h); the harness uses it for both.
     const quint16 port = quint16(QByteArray(argv[1]).toUShort());
 
+    // A throwaway store holding the one object the tunnel is to serve, so it reads
+    // the object back from disk exactly as it would on a device.
+    const QString base = QDir::tempPath() + QStringLiteral("/kelp-relay-test");
+    QDir(base).removeRecursively();
+    QDir().mkpath(base);
+
+    KelpObjectStore store(base + QStringLiteral("/objects"));
+    QString error;
+    if (!store.initialise(&error)) {
+        printf("cannot open the object store: %s\n", qPrintable(error));
+        return 1;
+    }
+
+    const QByteArray objectId = Crypto::sha256(payload());
+    QByteArray storedId;
+    if (!store.put(payload(), &storedId) || storedId != objectId) {
+        printf("cannot store the payload\n");
+        return 1;
+    }
+
     const QByteArray bundleId = Crypto::sha256(QByteArrayLiteral("bundle"));
     const QByteArray token = Crypto::sha256(QByteArrayLiteral("token"));
-    const QByteArray objectId = Crypto::sha256(payload());
 
     const QByteArray path = QByteArrayLiteral("/v1/relay/")
         + Link::base64UrlEncode(token).toLatin1() + QByteArrayLiteral("/bundle/")
         + Link::base32Encode(bundleId) + QByteArrayLiteral("/");
 
-    Publisher publisher(port, bundleId, token);
-    publisher.go();
+    // The app's own tunnel, doing the app's own registering and serving.
+    KelpTunnel tunnel(&store);
+    const QStringList relays =
+        QStringList() << QStringLiteral("127.0.0.1:%1").arg(port);
+    if (!tunnel.start(relays, bundleId, token, QStringLiteral("relay test"), 22, 6,
+                      1687667, &error)) {
+        printf("cannot start the tunnel: %s\n", qPrintable(error));
+        return 1;
+    }
 
     // Let the tunnel register before the first recipient request.
     QTimer::singleShot(500, &app, [&]() {
@@ -245,8 +198,31 @@ int main(int argc, char *argv[])
                     QObject::connect(bad, &Fetch::finished, &app, [&](int s2, const QByteArray &) {
                         report("wrong token -> 401", s2 == 401,
                                QStringLiteral("status=%1").arg(s2));
-                        printf("\n%s\n", g_failures == 0 ? "ALL PASS" : "FAILURES");
-                        app.exit(g_failures == 0 ? 0 : 1);
+
+                        // What the tunnel says it did: two objects were wanted (one
+                        // held here, one not) and one left the device. The wrong
+                        // token never became a WANT, so it is not counted.
+                        const KelpTunnel::Traffic tally = tunnel.traffic();
+                        report("tunnel tallied the transfer",
+                               tally.wanted == 2 && tally.objects == 1
+                                   && tally.bytes == payload().size() && tally.rejected == 1,
+                               QStringLiteral("wanted=%1 served=%2 bytes=%3 notHeld=%4")
+                                   .arg(tally.wanted).arg(tally.objects).arg(tally.bytes)
+                                   .arg(tally.rejected));
+
+                        // And it reports itself once the asking stops — that line is
+                        // what lands in the publisher's log (§3.15). Reporting resets
+                        // the tally, so an empty tally is the proof that it ran.
+                        QTimer::singleShot(7000, &app, [&]() {
+                            const KelpTunnel::Traffic after = tunnel.traffic();
+                            report("tunnel reported itself and reset",
+                                   after.wanted == 0 && after.objects == 0,
+                                   QStringLiteral("wanted=%1 served=%2")
+                                       .arg(after.wanted).arg(after.objects));
+                            printf("\n%s\n", g_failures == 0 ? "ALL PASS" : "FAILURES");
+                            tunnel.stop();
+                            app.exit(g_failures == 0 ? 0 : 1);
+                        });
                     });
                     bad->go();
                 });

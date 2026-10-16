@@ -438,8 +438,8 @@ Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArr
         link.relays = m_relays;
         KelpTunnel *tunnel = new KelpTunnel(m_store, this);
         QString tunnelError;
-        if (tunnel->start(m_relays, rootId, Kelp::relayToken(secret), objects, files,
-                          bytes, &tunnelError)) {
+        if (tunnel->start(m_relays, rootId, Kelp::relayToken(secret), name, objects,
+                          files, bytes, &tunnelError)) {
             m_tunnels.insert(tunnelKey, tunnel);
         } else {
             qWarning() << "KelpBundles: cannot publish" << name << "on a relay:"
