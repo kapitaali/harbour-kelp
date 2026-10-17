@@ -296,7 +296,10 @@ Known gaps carried forward
   low-battery or sleep policy, and the *Share in background* switch is not persisted. No
   swarm, no relay caching or stewards, and nothing that puts a bundle in a browser —
   neither the app-hosted preview (design §5.1, designed but not built) nor the relay
-  gateway (§5.2). Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
+  gateway (§5.2). **Parked, and not to be started (or designed further) before the app is
+  otherwise finished and released: ephemeral rooms / anonymous chat** — a whole sibling
+  protocol, sketched only as design Appendix B (`kelpchat://`, rooms in RAM, nothing
+  stored anywhere). Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
   Symlink skips are only logged. Some diagnostic printf lines remain. The storage clean-up
   runs on the UI thread too, and there is no size cap or LRU — it is a manual action. The
   "who fetched" line is written only after a peer has been quiet for five seconds (flushed

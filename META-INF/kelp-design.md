@@ -738,6 +738,12 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   origin-offload on a real 5–10 peer swarm (optional, and only if C3 shows the relay is a
   bandwidth bottleneck).
 
+**Not on this list: ephemeral rooms (anonymous chat).** Appendix B sketches it — a
+`kelpchat://` link that opens a room with nothing stored anywhere — and it is explicitly
+parked: no part of it is to be built, or designed further, until the app itself is otherwise
+finished and released. It is written down so that the decisions above can be checked against
+it, and so the answer to "could Kelp do this?" does not have to be re-derived.
+
 > **Session records.** Dated progress/handoff notes live beside this file as
 > `PROGRESS-<date>.md` — what was run, what was verified, what broke, and the recipes and
 > traps that go with it. The newest is [`PROGRESS-20261016.md`](PROGRESS-20261016.md): the
@@ -952,3 +958,164 @@ share), **object hashes** (many; shown only in a "details/verify" view), and **p
 (one per device in a swarm). A 40-hex string like `7d97e98f…` is a SHA-1-era BitTorrent v1
 infohash/peer ID; Kelp uses **SHA-256** (~52-char base32), which is also what BitTorrent v2
 uses — one reason v2 is the interop target, not v1.
+
+---
+
+## Appendix B — Ephemeral rooms (anonymous chat)
+
+> **Status: a possible future feature — parked, and explicitly not to be started before the
+> app itself is otherwise finished and released.** C1–C7 (§11) closed, a release build
+> published, and the shared-page preview behind us: only then is this a candidate, and only
+> if the user still wants it. Nothing below is implemented, promised, or specified to the
+> standard of the rest of this document or of `kelp-swarm-wire-spec.md`; if it ever graduates
+> it gets its own wire-spec document, the way the swarm did. It is written down because the
+> question was asked — send a link, a chat opens, nothing is stored anywhere, it lives only
+> until the phone reboots — and because the answer is instructive: **the transport and the
+> link fit it almost unchanged, while the content model is its exact opposite.**
+
+### B.1 The shape
+
+Two people, one link. The initiator mints a room and sends it however they like (a message, a
+QR code, a spoken-out URL); the other opens it in Kelp; a chat page appears and they talk.
+The room lives in the two apps' memory and in the relay's memory, and when the app closes or
+the phone reboots it is gone: no history for a late joiner, nothing held for someone who was
+offline, nothing to find afterwards. That property *is* the feature.
+
+### B.2 Why it is a sibling protocol, not a feature of this one
+
+- The content layer is **immutable, single-writer and content-addressed** (§1.1); a room is
+  mutable, multi-writer and addressed by nothing.
+- The peer messages (wire spec §9) are all object-oriented, and the relay path (wire spec
+  §12.1) is **pull-shaped**: a recipient's `GET` becomes a `WANT` down the publisher's tunnel,
+  and nothing is ever pushed *to* a recipient. A room needs fan-out.
+- This document's §10 lists multi-writer mutable state as a non-goal.
+- **The id stops being a hash** (B.3) — the first Kelp identifier that is not derived from its
+  content.
+
+What carries over, unchanged: the link as a capability (§2); the HKDF-separation principle,
+and specifically **C3.2's rule that the relay gets a credential of its own and never the
+content key**; the dial-out tunnel and its NAT answer (§3.2, wire spec §12.1); TLS 1.3 + ALPN
+`kelp/1`, the `len ‖ type ‖ CBOR` frame and the handshake MAC's shape (C3.1/C3.2); the object
+envelope (§1.1), so that a message can simply *be* an object; and the relay's posture
+"withhold, not substitute" (wire spec §18), extended here to "…and inject junk, but never read
+or forge".
+
+### B.3 Keys and the link
+
+```
+m          = fragment secret (32 random bytes, fresh for every room)
+chat_key   = HKDF-SHA256(m, salt=∅, info="kelp/v1/chat")   # encrypts messages
+room_token = HKDF-SHA256(m, salt=∅, info="kelp/v1/room")   # the relay's own credential
+```
+
+Two independent outputs, for the reason C3.2 gives: the relay needs a bearer token to route
+and to keep non-recipients out, and if that token *were* the message key, the relay could read
+the room. Kept separate, the relay routes what it cannot read.
+
+The **room id is 32 random bytes — the first Kelp id that is not a content hash.** Nothing
+about a room is content-addressed, so the id is only a name, and two rooms may even share one
+if their secrets differ. That is the conceptual break, and the reason the link is a **second
+scheme**:
+
+```
+kelpchat://<room_id_b32>?r=<relay>#k=<secret>
+```
+
+rather than a `t=` on a `kelp://` link. A second scheme describes itself in a chat preview, and
+an older Kelp simply does not handle it — instead of decoding a room as a bundle and failing
+somewhere confusing. The desktop file gains a second `x-scheme-handler`; `Open a link` routes
+on the scheme.
+
+### B.4 Messages
+
+A message **is an object** (wire spec §2): `Object::seal(chat_key, plaintext, fresh nonce)`,
+the plaintext a canonical CBOR map. Reusing the envelope means `libkelp` is reused whole —
+seal/open, CBOR, the 1 MiB cap — the relay handles opaque blobs, `object_id` gives integrity
+for free, and a replay inside a session is recognised by its id.
+
+```
+message (plaintext CBOR, inside the object envelope)
+  { "v":1, "seq":<uint>, "from":<session id, 16 random bytes>,
+    "n":<display name?>, "t":<text?>, "o":<object_id?> }
+```
+
+- `seq` is per sender and monotonic, for ordering; there is no global clock and no
+  authoritative order, so display is `(arrival, seq)` per sender.
+- `from` is the sender's **session** id (random, per join), not an identity (B.6).
+- `"t"` and `"o"` let one frame carry text, a file, or both.
+
+Transport frames — a new type block, which wire spec §17 already sanctions (unknown types are
+ignored, not fatal, so an old build does nothing rather than breaking):
+
+| Type | Message | Meaning |
+|---|---|---|
+| `0x40` | `ROOM_JOIN` | `{room_id, tok, from, n?}` — authenticate, enter |
+| `0x41` | `ROOM_MSG` | `{b:<object bytes>}` — fanned out to the room |
+| `0x42` | `ROOM_LEAVE` | `{}` — the relay drops the member |
+| `0x43` / `0x44` | `ROOM_PING` / `ROOM_PONG` | liveness, as §9's PING/PONG |
+| `0x7f` | `ERROR` | reused |
+
+There is no acknowledgement, no retransmission queue and no receipt — **fire and forget** —
+because there is nowhere to retry from.
+
+### B.5 The relay's part: rooms, not storage
+
+- A room exists while at least one member is connected and ceases to exist when the last
+  leaves: **memory only, no queue, no cache, no store.** That is compatible with what the relay
+  already is (in-memory tunnel registry; the *cache* is C6 and unbuilt), and it is the whole
+  "stored nowhere" promise — after the fact there is nothing to seize.
+- Fan-out: a `ROOM_MSG` from one member is written to every other connected member of the room.
+- Caps matter more here than for bundles, where a relay needs only quotas: a maximum message
+  size (the envelope's 1 MiB), members per room, messages per second per member and per IP,
+  rooms per relay, and an idle-room lifetime of exactly zero. With no store, a hostile room can
+  burn only CPU and bandwidth, and these bound both.
+- **What the relay can do:** learn the room id, see who is connected and when, see message
+  sizes and timing, refuse to route, drop messages, inject junk (undecryptable without
+  `chat_key`). **What it cannot:** read a message, forge a readable one, or produce a
+  transcript after the fact.
+
+### B.6 What "anonymous" means here — and does not
+
+- **Membership is the link.** No accounts, no roster, no kicks and no revocation: any holder
+  can join, read and write, and removing someone means minting a new room and link.
+- **One shared key means no attribution.** `chat_key` is held by everyone in the room, so any
+  participant can produce a message that decrypts and verifies while claiming any name and any
+  `from`. A display name is a label, not an identity. Making it real needs a per-device
+  ephemeral keypair, exchanged in-band, pinned for the session (trust on first use), with a
+  short out-of-band comparison (a SAS phrase) for the careful — a feature of its own, and one
+  this appendix does not attempt to specify.
+- **No scrollback, no offline delivery.** A joiner sees only what arrives after they join; a
+  message sent to an empty room is lost. Bridging a sleep means the relay holding RAM for N
+  minutes — the smallest possible change, and it is, briefly, storing.
+- **Metadata flows.** The relay learns the room, the members, addresses, sizes and timing; on a
+  LAN-direct path the two peers see each other's IPs (wire spec §18). This is content
+  confidentiality, not participant anonymity, and nothing in Kelp provides the latter.
+- **Forward secrecy is the one cheap upgrade.** An ephemeral ECDH (X25519 is in the OpenSSL 3
+  already linked, and is Harbour-allowed) whose transcript is discarded means a relay that
+  hoarded ciphertext can never read it. Small new crypto in `libkelp`, vector-tested — and
+  optional, because a room that dies with the process has little history to protect.
+
+### B.7 The app side
+
+Room state lives in RAM only: no store, no file, no persisted room id or link, and **no message
+content in `kelp.log` in any build** — a stronger rule than the dev-extras bundle, where a
+*link* may be logged while developing. The app holds `Nemo.KeepAlive` while a room is open,
+exactly as it does while a share is served, so backgrounding does not end the chat; closing the
+app or rebooting does, which is the promise being made.
+
+### B.8 What it would cost, if it ever graduates
+
+A rough shape, not a plan: the scheme and link extension (small); the room frames and a client
+state machine (moderate); relay rooms and fan-out (moderate, and a genuinely new relay
+capability); a Chat page and its lifecycle (moderate); optional key agreement and SAS
+(small–moderate). It depends on C3's tunnel and relay, not on C4. It is not smaller than C4a,
+and it is the only sketched feature that adds a mutable, multi-writer protocol to a system whose
+entire design is single-writer and immutable — which is the real reason it waits.
+
+### B.9 Deliberately undecided
+
+Ordering across senders (any causal or wall-clock claim), attribution (per-device keys, TOFU,
+SAS), the sleep-bridging buffer (if any), whether a room may hold more than two people (a group
+room is this protocol with a bigger fan-out and the same anonymity problems), file transfer
+inside a room, notification behaviour, and whether rooms are a mode of `kelp-relay` or a
+separate binary.
