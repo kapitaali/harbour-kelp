@@ -144,9 +144,11 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell env KELP_DEV_EXTRAS=1 \
 `grep -c KELP_DEV_BUILD src/tests/.build/Makefile`.)
 
 Two of the harnesses under `src/tests/` are tools rather than test suites:
-`run-emu-share.sh` bridges an emulator share to the LAN and can fetch from it,
-and `kelp-probe.py` fetches from a link the way a recipient would without
-printing its key. Both are documented in `PROGRESS-<date>.md` §4.5.
+`run-emu-share.sh` bridges an emulator share to the LAN and can fetch from it — and with
+`--relaunch` it restarts the guest app advertising this host first, which is what makes an
+emulator link reachable at all from another device — and `kelp-probe.py` fetches from a
+link the way a recipient would without printing its key. Both are documented in
+`PROGRESS-<date>.md` §4.5.
 
 ## Checks before committing
 

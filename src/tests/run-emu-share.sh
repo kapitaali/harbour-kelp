@@ -13,21 +13,32 @@
 #   * prints the links the app itself minted, which name this host.
 #
 # The app seals the address it puts in a link (q=), so only the app can name this
-# host in one. Tell it to, when you launch it in the guest:
+# host in one. Either tell it to when you launch it in the guest:
 #
 #   KELP_ADVERTISE_HOST=<this host> KELP_DEBUG_LINK=1 /usr/bin/harbour-kelp
 #
-# then run this with the same address. The forward is left running in the
-# background; the script prints how to stop it.
+# — or let this script do it with --relaunch, which is the same thing without
+# the shell dance: it stops whatever app is running in the guest, starts it
+# again advertising this host, and only reads the log written from that point on
+# (so a link from an earlier run can never be mistaken for a current one). Use
+# --relaunch after the app has been started normally (from the emulator's own
+# launcher, say), and every time it is restarted by hand: the guest's port is
+# ephemeral, and a link is only reachable while an app advertising this host is
+# serving it.
 #
-# The emulator's own port is ephemeral, so run this again after the app restarts.
+# The forward is left running in the background; the script prints how to stop it.
 #
 # Usage:
-#   src/tests/run-emu-share.sh [--host ADDRESS] [--redact] [--qr DIR] [--fetch]
+#   src/tests/run-emu-share.sh [--host ADDRESS] [--relaunch] [--redact]
+#                              [--qr DIR] [--fetch]
 #
 #   --host ADDRESS  an address recipients can reach THIS machine on. Defaults to
 #                   the host's primary LAN IPv4. It has to match the
 #                   KELP_ADVERTISE_HOST the app was launched with.
+#   --relaunch      stop the app in the guest and start it again with this host
+#                   as the address it advertises, then carry on as below. Also
+#                   clears any forward left over from a previous run, whose port
+#                   the restart has just invalidated.
 #   --redact        print links with the #k= fragment removed, for logs or
 #                   screenshots. The fragment is the decryption key.
 #   --qr DIR        also write one PNG QR code per share into DIR. These contain
@@ -52,13 +63,15 @@ HOST=""
 REDACT=0
 QR_DIR=""
 FETCH=0
+RELAUNCH=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --host) HOST="${2:?--host needs an address}"; shift 2 ;;
+        --relaunch) RELAUNCH=1; shift ;;
         --redact) REDACT=1; shift ;;
         --qr) QR_DIR="${2:?--qr needs a directory}"; shift 2 ;;
         --fetch) FETCH=1; shift ;;
-        -h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -72,7 +85,74 @@ if [ -z "$HOST" ]; then
     [ -n "$HOST" ] || { echo "cannot work out this host's address; pass --host" >&2; exit 1; }
 fi
 
-LOG="$($SSH "cat '$DATA_DIR/kelp.log'" 2>/dev/null || true)"
+# --relaunch: the two halves of the recipe above, done here. The app is stopped
+# and started again advertising this host, and the log is read from that point on
+# only — an earlier run's `serving on` line names a port that has just died, and
+# reading it would hand out a link to nothing.
+FRESH_FROM=""
+if [ "$RELAUNCH" = "1" ]; then
+    FRESH_FROM="$($SSH "wc -l < '$DATA_DIR/kelp.log'" 2>/dev/null | tr -d ' ' || true)"
+    case "$FRESH_FROM" in
+        ''|*[!0-9]*) FRESH_FROM=0 ;;
+    esac
+
+    # A forward from an earlier run holds a port the restart has thrown away; it
+    # can only keep a listening socket nobody will use. Matched on this host's
+    # address so no other forward is touched.
+    pkill -f "ssh .*-L $HOST:" 2>/dev/null || true
+
+    echo "stopping the app in the guest"
+    $SSH 'killall harbour-kelp 2>/dev/null' >/dev/null 2>&1 || true
+    i=0
+    while [ "$i" -lt 10 ]; do
+        if [ -z "$($SSH 'ps -o comm | grep harbour-kelp' 2>/dev/null || true)" ]; then
+            break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    if [ -n "$($SSH 'ps -o comm | grep harbour-kelp' 2>/dev/null || true)" ]; then
+        echo "the app is still running in the guest — not relaunching" >&2
+        exit 1
+    fi
+
+    echo "starting it again, advertising $HOST"
+    $SSH "cd /home/defaultuser && XDG_RUNTIME_DIR=/run/user/100000 \
+          DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/100000/dbus/user_bus_socket \
+          WAYLAND_DISPLAY=../../display/wayland-0 QT_QPA_PLATFORM=wayland \
+          KELP_ADVERTISE_HOST=$HOST KELP_DEBUG_LINK=1 \
+          setsid /usr/bin/harbour-kelp >/dev/null 2>&1 </dev/null &" || true
+
+    printf 'waiting for it to serve on %s' "$HOST"
+    SERVING_LINE=""
+    i=0
+    while [ "$i" -lt 30 ]; do
+        SERVING_LINE="$($SSH "tail -n +$((FRESH_FROM + 1)) '$DATA_DIR/kelp.log' \
+                              | grep -a 'KelpServer: serving on' | tail -1" || true)"
+        if [ -n "$SERVING_LINE" ]; then
+            break
+        fi
+        printf '.'
+        sleep 1
+        i=$((i + 1))
+    done
+    echo
+    if [ -z "$SERVING_LINE" ]; then
+        echo "the app is up but serving nothing: it holds no share, or every share" >&2
+        echo "is paused. Its log since the restart:" >&2
+        $SSH "tail -n +$((FRESH_FROM + 1)) '$DATA_DIR/kelp.log'" 2>/dev/null \
+            | sed 's/#k=[^ ]*/#k=<redacted>/g' | tail -12 >&2
+        exit 1
+    fi
+    # Address and port only; the log is still read through the same redaction.
+    printf '%s\n' "$SERVING_LINE" | sed 's/#k=[^ ]*/#k=<redacted>/g'
+fi
+
+if [ -n "$FRESH_FROM" ]; then
+    LOG="$($SSH "tail -n +$((FRESH_FROM + 1)) '$DATA_DIR/kelp.log'" 2>/dev/null || true)"
+else
+    LOG="$($SSH "cat '$DATA_DIR/kelp.log'" 2>/dev/null || true)"
+fi
 
 # The address the app put in its links, e.g. 10.0.2.15:43071 — or this host's
 # address, when it was launched with KELP_ADVERTISE_HOST. Its host part must be
@@ -99,8 +179,9 @@ GUEST_HOST="${BOUND%:*}"
 
 if [ "$SERVING_HOST" != "$HOST" ]; then
     echo "the app is advertising $SERVING_HOST, so its links point there, not at $HOST." >&2
-    echo "restart it in the guest with KELP_ADVERTISE_HOST=$HOST KELP_DEBUG_LINK=1," >&2
-    echo "then run this again with --host $HOST." >&2
+    echo "run this again with --relaunch to start it over advertising $HOST (or restart it" >&2
+    echo "in the guest with KELP_ADVERTISE_HOST=$HOST KELP_DEBUG_LINK=1), then run it" >&2
+    echo "with --host $HOST." >&2
     exit 1
 fi
 
