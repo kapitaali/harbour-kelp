@@ -140,7 +140,7 @@ kelp://<bundle_id_b32>?r=<relay-url>[&r=<relay-url>…][&q=<sealed_hints>]#k=<se
 
 - `bundle_id_b32` — base32, lowercase, unpadded (52 chars).
 - `r` — relay base URL, repeatable (try in order).
-- `q` — the publisher's own location hints, sealed (below).
+- `q` — the publisher's own hints: where it serves from, the label, and its kind (sealed, below).
 - Fragment `k` — the base64url secret. **Fragments are never sent to servers.**
 
 `q` carries the publisher's LAN `host:port` and the share's display label together, so
@@ -151,8 +151,16 @@ q = base64url( nonce(12) ‖ AES-256-GCM ciphertext ‖ tag(16) )
 
   key       = HKDF-SHA256(secret, salt=32 zero bytes, info="kelp/v1/link")
   aad       = bundle_id (32 bytes)
-  plaintext = canonical CBOR map { "l": <host:port>, "n": <label> }   (either may be absent)
+  plaintext = canonical CBOR map { "l": <host:port>, "n": <label>, "p": true }
+                                   (any of them may be absent)
 ```
+
+`l` is where the bundle is served from and `n` is the share's display label. `p` is the
+publisher's **kind**: true means "I shared this as a page", which the recipient's app answers by
+viewing rather than saving (design §5.5). It is a hint on the recipient's flow and nothing more —
+unknown map keys are ignored (§17), so a reader that predates `p` sees an ordinary share, and a
+rewritten client may ignore it. A page share mints `q=` even when it has no address for `l`, so
+the hint survives a relay-only link.
 
 The key is an independent HKDF output of the link's own secret — not the content key and
 not the swarm or relay token — so the fragment is what opens the block, and every intended

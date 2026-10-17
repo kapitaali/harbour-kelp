@@ -339,7 +339,9 @@ opposite and hardly any work is shared beyond that convention.
 
 One more section belongs to this group without being a third trust model: **§5.4** is the
 receive-side door into §5.1 — the same preview, entered from a download that has just finished
-instead of from a share in the list.
+instead of from a share in the list. **§5.5** goes the other way: it is a *kind* the publisher
+declares — "this share is a page" — which changes the recipient's flow from saving to viewing,
+and is the one place a link carries something §5.3 refused to put there.
 
 ### 5.1 Shared-page preview — the app serves the page to the recipient's browser
 
@@ -530,7 +532,10 @@ recipient nothing — the app's file list and *Open* still work, which is what t
 anyway. For §5.2 there is no app to fall back on, so the loader renders a **generated file
 list** of its own (names, sizes, per-file download, optionally a ZIP assembled in the
 browser) when the bundle has no entry document. The convention above decides which page the
-*sender* supplied; the loader's list is the floor beneath it.
+*sender* supplied; the loader's list is the floor beneath it. *(§5.5 later adds one link hint —
+not for "which file is the page", which this section still refuses to put on the wire, but for
+the publisher's **kind**: "I shared this as a page". Contents can decide the first and cannot
+decide the second.)*
 
 ### 5.4 The preview from the receive side — one session, nothing kept
 
@@ -546,7 +551,9 @@ smallest shape that closes it.
 it opens a session against the bundle already in the object store and hands the URL to the
 browser, exactly as the sender's button does. Nothing else changes: no row, no stored key, no
 list entry; the ordinary 30-minute idle session that dies with the app; and no fetch, because
-`KelpClient` already stored every object to verify it (§11 C2b).
+`KelpClient` already stored every object to verify it (§11 C2b). A *webpage* link (§5.5) never
+reaches this panel — it is view-only from the start, with no download to add a button to — so what
+this section offers is every *other* share that happens to contain a page.
 
 **Why not keep it.** §12.13 asks whether a received bundle should become a row (id + key) so it
 can be previewed again, re-downloaded, or seeded. That is a bigger decision — a key this device
@@ -595,6 +602,81 @@ visible action and never a default, the page gets the loopback origin and the CS
 and the session ends with the app. Route B is the route for the same reasons — and here it is the
 recipient's own device, so §12.9's "what if there is no browser?" becomes a recipient-side
 question too.
+
+### 5.5 Webpage shares — a kind the publisher declares, a page the recipient only views
+
+**Why a kind, when §5.3 already finds the page.** §5.3 answers *which file is the page* out of the
+bundle's own contents, and it deliberately added no wire field. It cannot answer a different
+question: *was this shared as a page, or as files?* The folder of a small site and a folder that
+merely happens to contain an `index.html` can be byte-identical, and then their bundle ids are
+identical too — bytes cannot carry an intent. The two want opposite recipient flows, though: files
+are downloaded, a page is looked at. So the publisher declares one, in the link.
+
+**The hint.** `q=`'s sealed map (wire spec §5) gains a third key:
+
+```
+plaintext = canonical CBOR map { "l": <host:port>, "n": <label>, "p": true }
+```
+
+— "I shared this as a page". It rides with the other hints inside the sealed block, so the link
+text still says nothing about the bundle beyond its content address. It is a *hint*, not a switch:
+the wire spec already requires unknown map keys to be ignored (§17), so a reader that predates it
+sees an ordinary share, and a rewritten client can ignore it outright. Nothing about a recipient's
+security turns on it — they hold the key and can decrypt whatever they like. What it buys is that
+the ordinary client does the right thing by default. A page share therefore mints `q=` even when it
+has no address to put in one, so the hint survives a relay-only share.
+
+**What the recipient does with it.** For a link carrying `p`, the Open-link page is a *view*, not a
+*save*:
+
+- No **Save to** and no *Download*. Nothing is written to Downloads, and no folder is chosen.
+- One button — **Open in browser** — fetches the bundle and then serves it to the browser from
+  `127.0.0.1`, exactly as §5.1 does. One listener, the same server.
+- The fetch lands in a **session store held in memory**, not in the app's object store: the page
+  exists only while it is being looked at. The store is dropped when the session ends — the page's
+  requests stop coming, the user leaves the screen, or the app exits — so there is no cleanup step,
+  no destructive deletion, and, the whole point, *nothing of the page is left on the device*.
+- Being memory, there is a ceiling: tens of megabytes, enough for a document-shaped page and not
+  for a gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched
+  and enforced while storing; a bundle over the ceiling is refused with the reason and the way out
+  — ask the sender to share it as a directory. Lazy fetch (§5.1's open item) is what would lift
+  this, because fetching only what the browser asks for needs no whole-bundle copy at all.
+- **KeepAlive** is held while the session is live (the rule §5.4 needs too), because the browser now
+  owns the foreground and the app is only serving it.
+
+**What the publisher's side looks like.** The main page's button becomes **Share…** and opens a page
+with three actions — **Share file**, **Share directory**, **Share webpage** — in place of the old
+pickers and the staging list. Each gesture is the whole share: pick, and the bundle is sealed and
+appears in the list. *Share webpage* picks a folder and insists it holds a page by the §5.3 rule,
+evaluated on the folder's names before anything is sealed; a folder with no HTML is refused there
+and then, with the wording that points at *Share directory*. The staging list goes away with the
+old pickers: it existed so several entries could be sealed in one blocking pass, and one kind per
+gesture leaves nothing for a batch to buy — the cost is that two different kinds can no longer be
+collected in one pass. The §5.3 rule is factored so the filesystem answer and the manifest answer
+cannot drift: one pure chooser over (relative path, is-HTML) pairs, fed from the folder by the app
+and from the manifests by `Kelp::Web::page`.
+
+**What it means for §5.4.** Nothing is lost: §5.4's *Open in browser*, offered after a download,
+stays for a page that arrives inside an ordinary directory share — you still get to look at it,
+for that session. §5.5 is the declared case, where there is no download to add a button to.
+
+**Failure modes, spelled out.**
+
+| Situation | Behaviour |
+|---|---|
+| *Share webpage* picks a folder with no HTML in it | refused before sealing, pointing at *Share directory* |
+| A webpage link's bundle turns out to have no page (a hand-made or dishonest link) | "this link says it is a page, but there is no web page in it" — no save is offered, because the kind was view-only |
+| The link has no `p` (older link, or a directory share) | an ordinary share: save as always, and §5.4 offers the browser afterwards if the bundle holds a page |
+| The link carries `p` but no address and no relay | **Open in browser** cannot start; the reason is the same one the save path already gives |
+| The sender goes offline mid-page | the page's requests fail, as any preview does — and there is nothing saved to fall back on, by design |
+| The page is bigger than the ceiling | refused before fetching, naming the sender-side workaround |
+| The recipient leaves the screen, or closes Kelp | session ends, memory is dropped, the URL is dead; nothing was ever written |
+| The recipient's device has no browser | nothing opens (the emulator); the session exists, so a `curl` from inside proves it (§12.9) |
+
+**Explicit non-goals.** Letting the recipient override the kind — a webpage link is view-only, and a
+sender who wants the files shared has *Share directory*; remembering the page afterwards (no row, no
+key, no objects — §12.13); choosing among several HTML files; and re-seeding a received page. The
+hint is a default, not enforcement: it is not a security boundary and is not defended as one.
 
 ---
 
@@ -831,10 +913,28 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   session is live, not only while a share is served. Nothing is persisted, so §12.13 stays
   open. Verified by fetching a real bundle on the emulator and `curl`-ing the session there
   (no browser to hand it to), then with a real browser on the C2.
+- **C4a.2 — view-only webpage links (§5.5, recipient half).** Not built. For a link carrying
+  `p`, the Open-link page shows no *Save to* and no *Download*: one **Open in browser**, fetching
+  into a session-owned `MemoryStore` and opening the preview on the same single
+  `KelpPreviewServer` — whose `open()` takes the store, so a session becomes a store plus a key,
+  and one listener still serves shares and received pages alike. The store dies with the session,
+  so nothing is left; a ceiling refuses an oversized page before fetching and names the
+  workaround; `KeepAlive` is held while the session is live. Verified on the emulator by fetching
+  a real page link and `curl`-ing the session (and checking the app's store never grew), then
+  with a real browser on the C2.
 - **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
   in-browser decryption of a real bundle.
 - **C5** — UI integration (pages/cover/settings), encryption UX, passphrase links.
+- **C5.1 — share kinds (§5.5, publisher half).** Not built. The main-page button becomes
+  **Share…**; the page it opens carries three actions — *Share file*, *Share directory*, *Share
+  webpage* — each sealing one entry, with the staging list retired. *Share webpage* insists on a
+  §5.3 page, evaluated on the folder's names before sealing, through the one pure chooser the
+  manifest side also uses. A page share puts `p` in the sealed `q=` map (wire spec §5) and a
+  `page` flag in its `shares.json` row, so `republish()` re-mints it on the next launch;
+  `linkInfo` reports it. Verified: sealing a page folder logs the flag and the minted link decodes
+  with `p`; a folder with no HTML is refused; a restored share re-mints the same flag; and a link
+  with no `p` — every link already out there — behaves exactly as it does today.
 - **C6** — Stewards/channels/CID+IPFS export bridge (optional).
 - **C7** — Swarm mode: peer discovery via relay, have/want wire, rarest-first; measure
   origin-offload on a real 5–10 peer swarm (optional, and only if C3 shows the relay is a
@@ -977,7 +1077,9 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    **2026-10-17: the first half is answered without keeping anything** — §5.4 offers the preview
    for the one session a download just finished, so a recipient does see the page, with no key on
    disk and nothing added to the list. What keeping the row would still add: a preview that can be
-   re-opened later, a re-download without the link, and seeding a received bundle.)*
+   re-opened later, a re-download without the link, and seeding a received bundle. And §5.5's
+   webpage links step around the question for the case a publisher can declare: view-only, held in
+   memory for the session, so there is nothing on disk either to keep or to prune.)*
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 
