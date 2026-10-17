@@ -318,23 +318,192 @@ are shared.
 
 ---
 
-## 5. Browser access (recipient with no app)
+## 5. Web access: two trust models
 
-Because the transport is HTTP and objects are content-addressed, a recipient's browser
-gets served by the **relay acting as a gateway**:
+Kelp shares files, but a bundle can also be a **web page**, and a browser is the one place
+the app itself cannot reach. There are two ways to get a bundle into one, and they are not
+two versions of the same idea — they differ in *whose code runs*:
+
+| | §5.1 Shared-page preview | §5.2 The relay gateway |
+|---|---|---|
+| The recipient has | the Kelp app | only a browser |
+| The page's code comes from | the app, shipped in the RPM | the relay, untrusted |
+| Who decrypts | the app | the page, in WebCrypto |
+| Needs | Kelp plus a source (LAN or relay) | a relay, with the publisher's tunnel up |
+
+Both need one shared convention — which file in the bundle is the page, and how a path
+becomes a URL (§5.3) — and both make the app's file list one view of a bundle rather than
+the only one. The earlier "browser viewer + gateway" milestone hid this split; it is now
+**C4a** (preview) and **C4b** (gateway) in §11, because the trust argument for each is
+opposite and hardly any work is shared beyond that convention.
+
+### 5.1 Shared-page preview — the app serves the page to the recipient's browser
+
+**The shape.** The sender shares a bundle containing an entry document — `index.html` and
+whatever it needs. The recipient's app is the only new part: it fetches and decrypts, serves
+the plaintext to `127.0.0.1` on a random port under an unguessable token path, and hands the
+URL to a browser. The page's relative URLs then resolve against the bundle, and the app keeps
+resolving them per object, on demand, over the LAN or the relay — exactly as it already does
+for a file download.
+
+**Why the browser cannot simply talk to the sender.** Not policy: the platform forbids it.
+WebCrypto's `crypto.subtle` exists only in a **secure context** — `https://`, or
+`localhost`/`127.0.0.1` — and the LAN transport is deliberately plain `http://` on a private
+address (§3.1). A page loaded from `http://192.168.x.y:PORT/` on the sender's phone
+therefore has no AES-GCM and no HKDF, and cannot decrypt anything. The two ways out are both
+worse than re-serving: put TLS on the LAN path (a self-signed certificate, a click-through
+warning on every share, and a contradiction of §3.1 for a path whose content is already
+ciphertext), or route through a relay whose certificate is real (§5.2). So the recipient's
+app decrypts — and the browser sees plaintext over loopback. That is why the token, the CSP
+and the lifetime rules below are load-bearing: the loopback origin *is* the security
+boundary.
+
+**What it costs.** Less than it looks. The manifest already carries per-file `mime` (§1.2),
+so `Content-Type` is data the sender supplied rather than a guess at an extension. Objects
+are hash-verified ciphertext, so the server is a resolver — path → chunk list → bytes — with
+the existing `KelpSource` fetching whatever the store lacks. `kelp://` is already a
+registered scheme, so a link clicked in a browser lands in the app. And the background-serving
+work already asked the platform to keep the app alive while it serves (the answer was yes,
+§12.8): a preview needs the same request while a page is live.
+
+**The server.** One `KelpPreviewServer`, one loopback listener, one session per open bundle.
+
+| | |
+|---|---|
+| Bind | `127.0.0.1`, ephemeral port — never `0.0.0.0`, the same rule as the LAN listener (§3.1). |
+| URL space | `http://127.0.0.1:<port>/<session-token>/<path>`, the token 32 random bytes; without it, `404`. The port is not a secret, the token is. |
+| Methods | `GET` and `HEAD`; `Range: bytes=a-b` on a file path. |
+| `Content-Type` | the manifest's `mime`, with a small extension table only for bundles sealed before `mime` was recorded, and `nosniff` so a browser never second-guesses it. |
+| `Range` | With fixed 256 KiB chunks (§1.2) a range is a contiguous object range: byte `a` lives in chunk `a / 256K` at offset `a % 256K`, and an object's plaintext length follows from its ciphertext length. A `<video>` can seek without the file being materialised. **This is the property CDC would break**: content-defined chunks have no closed-form offset, so adopting it (§12.1) means recording per-chunk lengths in the manifest, or fetching to seek. |
+| Unknown path | `404`, including everything not in the manifest; names are re-validated on the way out, so a hostile manifest cannot escape the URL space. |
+| Nothing to serve it | `503` with a short plain-text body — the sender went away — rather than an empty 200 or a hang. |
+| Plaintext at rest | none: objects are decrypted per response, in memory, and never written. |
+
+Every response also carries these headers:
+
+```
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; media-src 'self';
+  style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';
+  connect-src 'self'; frame-ancestors 'none'; base-uri 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+```
+
+The CSP is what makes "the page works offline" true in *any* browser, and `no-store` keeps
+decrypted bytes out of a browser cache; both therefore do their work in either route below,
+while an embedded WebView can also refuse a request outright.
+
+**Two ways to open it, and the recommendation.**
+
+- **Route B — hand the URL to the system browser** (`Qt.openUrlExternally`): tens of lines,
+  and the recipient gets tabs, find, the share menu and their own history for free. The cost
+  is that Kelp becomes a background server for another app, so it must hold the keepalive
+  while a session is live, and the browser is the party making requests — the server's own
+  headers are the only leash.
+- **Route A — an embedded `Sailfish.WebView`** (Harbour-allowed, with
+  `sailfish-components-webview-qt5`): Kelp owns the session, no keepalive is needed, closing
+  the preview ends it, and a request interceptor can refuse anything that is not loopback,
+  which is a stronger guarantee than CSP. The cost is a heavy webengine dependency, and
+  QtWebEngine under Sailjail is unproven here — a spike, not an assumption.
+
+**Recommendation: build the server once — it is the whole feature — ship route B, and treat
+route A as a UI upgrade decided on the device**, where "does handing the browser away feel
+wrong?" has a real answer. Nothing in the server differs between them.
+
+**A preview runs the sender's code, and the design says so.** Today a Kelp link yields inert
+files, opened by apps the recipient chose. A preview runs the *sender's* JavaScript, on the
+recipient's device. So it is a visible choice and never a default:
+
+- *Preview* is a separate action from *Open*, offered only when the bundle has an entry
+  document (§5.3). *Open* keeps meaning "inert files, your apps".
+- The first preview of a bundle asks, in plain words, that this runs code from the sender, on
+  this device, offline. The answer may be remembered **per bundle id** — which is safe
+  precisely because ids are content addresses: the same id is the same immutable bytes
+  (§1.1), so a remembered "trusted" cannot later be swapped for different content. This is
+  the one place the content layer's immutability pays a security dividend for free.
+- No bridge to the app: no `QWebChannel`, no custom scheme handler reaching the store, no
+  engine profile tricks. The page speaks HTTP to the loopback server and nothing else.
+- Offline, enforced by the CSP above. A page that wants the wider network is a separate
+  decision that must not happen by accident.
+- An ephemeral browser profile where the route allows it — no cookies, no local storage — so
+  a page leaves no state behind and two bundles cannot see each other.
+- What it does not protect: the clipboard, the screen, the OS and the CPU. Closing the preview
+  ends the session.
+
+**Failure modes, spelled out.**
+
+| Situation | Behaviour |
+|---|---|
+| No HTML in the bundle | no *Preview* action; the file list and *Open* are unchanged |
+| Several HTML files | `index.html` at the root, else the sole `index.html` anywhere, else a picker of them; the chosen file's folder is the web root |
+| Entry document in a subfolder | that folder is the web root, so its `index.html` is `/` |
+| Sender offline, or the tunnel dropped | the page's requests answer `503`, and the app says why rather than letting the page fail silently |
+| Relay-only bundle | works, slower; the LAN address is preferred whenever the link names one |
+| A big file in the bundle | streamed per object and seekable by `Range`; never assembled in memory first |
+| No browser installed | `openUrlExternally` fails; say so, fall back to the file list |
+| Kelp closed while the browser shows the page | serving ends (a Harbour app cannot outlive itself, §12.8) and the page starts failing; the preview says so before you leave |
+| Two previews at once | one server, one token path per session, one keepalive while any session is live |
+
+**Explicit non-goal: the sender hosting the page for a LAN browser.** Tempting — the sender
+already holds the bytes — but it would serve *decrypted* content over plain HTTP to whoever
+is on the network, with the URL as the only secret, to a recipient who by construction (a
+browser and the link, but no app) is §5.2's problem anyway.
+
+### 5.2 The relay gateway — recipient with no app
+
+The other half. Because the transport is HTTP and objects are content-addressed, a
+recipient's browser is served by the **relay acting as a gateway**:
 
 ```
 https://<relay>/b/<bundle-id>#<secret>
 ```
 
-The relay returns a tiny self-contained **HTML+JS viewer** (also just an object) which:
-fetches the (encrypted) root manifest, decrypts it with the fragment key via **WebCrypto
-AES-GCM**, walks the tree, fetches chunks on demand, verifies each hash, decrypts, and
-offers per-file download or "download all" (assembling a ZIP in-browser). The relay serves
-ciphertext only; **decryption happens client-side** and the key never leaves the fragment.
+The relay returns a tiny self-contained **HTML+JS loader** (itself just an object). The
+loader fetches the encrypted root manifest, decrypts it with the fragment key via
+**WebCrypto AES-GCM**, walks the tree, fetches chunks on demand, verifies every hash,
+decrypts — and then does what §5.1 does, with the same convention: it mounts the sender's own
+entry document (§5.3) and fetches the rest from the same origin. So the page a
+recipient-with-the-app sees and the page a recipient-without-the-app sees are the same page,
+with the relay standing in for the recipient's app. The relay serves ciphertext only;
+**decryption happens client-side** and the key never leaves the fragment. This is the same
+"just send them a link" UX as an IPFS public gateway.
 
-This gives the same "just send them a link" UX as an IPFS public gateway — but the gateway
-is *your* relay and it can't read anything.
+Two caveats belong here rather than in a footnote. First, the loader is served *by the
+relay*, so a **malicious relay can serve a loader that exfiltrates the fragment key**:
+encryption protects against a relay reading, not against one that gets to write the
+recipient's code. That is inherent to browser gateways without a trusted bootstrap, and it
+is precisely why §5.1 exists for recipients who have the app. Second, WebCrypto needs a
+secure context, so the gateway must be HTTPS with a certificate a browser accepts — the
+self-signed certificate the app clicks through (§11, C3.1) is not enough. That also settles
+a C4b detail: the relay must accept ALPN `http/1.1` beside `kelp/1`, since a browser
+negotiates the former.
+
+### 5.3 Which file is the page — the shared convention
+
+Both routes need one answer, and it is deliberately not a new wire field:
+
+- The **entry document** is `index.html` at the bundle root if there is one; otherwise the
+  sole HTML file (`mime` `text/html`, or a `.html`/`.htm` name when `mime` is absent);
+  otherwise the recipient picks from the HTML files present.
+- The **web root** is the folder holding the entry document, and the **URL space** is the
+  bundle's paths relative to it: `/` is the entry document, `/sub/x.png` a file, and `/sub/`
+  serves `sub/index.html` when one exists.
+- A bundle with no HTML is simply not previewable; nothing else about it changes.
+
+`index.html` is the convention of every static site, zip preview and git host; a
+Kelp-specific manifest pointer would be a new field on the wire for no gain. So nothing about
+a link changes: a previewable bundle is an ordinary bundle, the sender only decides to
+include HTML, and the recipient decides to preview it. The app may *label* such a bundle
+("contains a web page") on its detail page, which is also what keeps the confirmation from
+being a surprise.
+
+**A bundle with no page is not a gap in §5.2.** For §5.1 "not previewable" costs the
+recipient nothing — the app's file list and *Open* still work, which is what they were using
+anyway. For §5.2 there is no app to fall back on, so the loader renders a **generated file
+list** of its own (names, sizes, per-file download, optionally a ZIP assembled in the
+browser) when the bundle has no entry document. The convention above decides which page the
+*sender* supplied; the loader's list is the floor beneath it.
 
 ---
 
@@ -363,7 +532,10 @@ convergent addressing).
 **Does not protect against:** the recipient forwarding the link (capability links are
 un-recallable — document it); endpoint compromise; traffic-analysis of *sizes/timing*
 (mitigate with chunk padding, optional); the relay learning *who fetches what bundle id*
-unless you use per-fetch blinded ids or fetch through a steward.
+unless you use per-fetch blinded ids or fetch through a steward; and, once a bundle's page is
+*previewed* (§5.1), **code the recipient did not write** — the sender's JavaScript runs on the
+recipient's device inside the browser sandbox, and Kelp's guarantees end at the bytes it
+serves.
 
 **Revocation:** stop publishing + delete from relays/stewards. Anything already fetched
 cannot be recalled.
@@ -420,6 +592,8 @@ range requests, parallel chunk fetch, and no DHT lookup latency before the first
 - Multi-writer / collaborative mutable filesystems (channels are pointers, not CRDTs).
 - Being able to `ipfs get` a Kelp bundle natively (only via the export bridge).
 - Recalling a link once it's been fetched.
+- The sender hosting a *decrypted* page for a browser on its own LAN (§5.1 says why: the URL
+  would be the only secret, and that recipient has no app by construction).
 
 ---
 
@@ -438,7 +612,10 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
    tunnel client to the relay. (Often confused with "a server"; it is a client.)
 3. **Relay** — separate, self-hostable: WebSocket tunnel endpoint + blob cache + gateway
    front-end + optional steward registry. Not shipped in the app RPM.
-4. **Browser viewer** — one self-contained HTML+JS object (WebCrypto + assemble/ZIP).
+4. **Browser access** — two pieces, one convention (§5.3). For §5.1, a loopback preview
+   server in the app (path → objects, the manifest's MIME, CSP/no-store, `Range`, lazy fetch
+   through `KelpSource`) plus the *Preview* action; for §5.2, one self-contained HTML+JS
+   *loader* object that decrypts in WebCrypto and mounts the sender's own entry document.
 5. **Swarm layer (optional, §3.7)** — relay-as-tracker handoff, bitfield exchange, rarest-first
    scheduler, and the minimal `HAVE/WANT/DATA/REJECT` peer wire. Reuses `libkelp`
    verification untouched (peers trade ciphertext; verification is source-independent).
@@ -546,7 +723,15 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     object fetch, a missing object (404) and a wrong token (401).
     Still open (deliberately): no caching/stewards (C6), no swarm (C7), no TLS on the LAN
     path (only the tunnel), and the relay is a separate binary (`kelp-relay`) the user runs.
-- **C4** — Browser viewer + gateway.
+- **C4a** — Shared-page preview (§5.1): the loopback preview server (token path, path →
+  objects, MIME from the manifest, CSP/no-store, `Range`, `503` when the source fails), lazy
+  fetch through `KelpSource`, the session keepalive, and the *Preview* action with its
+  per-bundle confirmation. Ships with the system-browser hand-off; an embedded
+  `Sailfish.WebView` is a later UI decision (§5.1). Testable off-device: the resolver needs
+  no browser at all, only a sealed bundle, a store, and an HTTP client.
+- **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
+  ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
+  in-browser decryption of a real bundle.
 - **C5** — UI integration (pages/cover/settings), encryption UX, passphrase links.
 - **C6** — Stewards/channels/CID+IPFS export bridge (optional).
 - **C7** — Swarm mode: peer discovery via relay, have/want wire, rarest-first; measure
@@ -649,6 +834,19 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
    the same `republish()` that restores a share at startup. That pair is the
    non-destructive half of the serving controls, and the shape background serving
    needed.
+
+9. **Preview route** — the system browser (recommended: browser affordances for free, no new
+   dependency) or an embedded `Sailfish.WebView` (stronger leash via a request interceptor and
+   no keepalive, but a heavy dependency and QtWebEngine under Sailjail is unproven)? §5.1
+   recommends building the server first and deciding with it on the device.
+10. **Preview trust** — ask before every preview, or ask once per bundle id and remember the
+   answer? *(Recommended: ask once per bundle, rememberable — content addressing makes the
+   decision durable, because the same id is the same immutable bytes; a remembered "trusted"
+   can never be swapped for different content.)*
+11. **A page's network reach** — offline forever, enforced by the CSP in §5.1 *(recommended)*,
+   or an explicit per-preview "let this page use the internet" switch?
+12. **Download-all in the gateway** — a ZIP assembled in the browser (no `CompressionStream`
+   guarantee in the engine; STORE + CRC32 in JS works), or per-file downloads only?
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 

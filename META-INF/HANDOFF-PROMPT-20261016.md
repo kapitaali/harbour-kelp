@@ -187,7 +187,14 @@ Next Move (in this order — 1–3 are done as of this note)
    toggle was considered at the user's suggestion and dropped: an app cannot background itself
    (lipstick exposes no such call, and `/WindowModel` is a read-only model) and the user would
    rather use the real device's swipe.
-8. Only then C4 (browser viewer + gateway) or C7 (swarm).
+8. Only then C4a (shared-page preview — design §5.1), C4b (relay gateway — §5.2) or C7
+   (swarm). C4a is the one the user is interested in next, and the design is now written
+   out in full (`kelp-design.md` §5): why the browser cannot decrypt from the sender (no
+   WebCrypto outside a secure context), the loopback server's URL space and header policy,
+   the system-browser-vs-`Sailfish.WebView` route decision, and why a preview is a
+   confirmation rather than a default. It is also the one piece that is testable entirely
+   off-device — a sealed bundle, a store and an HTTP client, no browser — so the preview
+   server is the natural first step.
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file; and note that *Wi-Fi only* and
 *Allow peer swarm* are still inert placeholders (*Share in background* is now acted on, but
@@ -287,8 +294,9 @@ Known gaps carried forward
   shares.json) exists — it silences one bundle without deleting it. With no service a paused
   share and a running one still differ only while the app is up. There is no Wi-Fi-only,
   low-battery or sleep policy, and the *Share in background* switch is not persisted. No
-  swarm, no relay caching or stewards, no browser
-  gateway. Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
+  swarm, no relay caching or stewards, and nothing that puts a bundle in a browser —
+  neither the app-hosted preview (design §5.1, designed but not built) nor the relay
+  gateway (§5.2). Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
   Symlink skips are only logged. Some diagnostic printf lines remain. The storage clean-up
   runs on the UI thread too, and there is no size cap or LRU — it is a manual action. The
   "who fetched" line is written only after a peer has been quiet for five seconds (flushed

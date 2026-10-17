@@ -21,7 +21,9 @@ files into *Downloads*. If a relay is configured, the same press also opens an
 outbound TLS tunnel to it and puts its address in the link as `r=`, so a
 recipient on a *different* network can fetch through it — the phone never has to
 accept an inbound connection. Still missing: peers helping each other serve
-(the swarm), relay caching/stewards, and a browser gateway.
+(the swarm), relay caching/stewards, previewing a bundle's web page in a browser
+(§5.1 of the design), and the relay gateway that serves a recipient who has no
+app at all (§5.2).
 See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design,
 [`META-INF/kelp-swarm-wire-spec.md`](META-INF/kelp-swarm-wire-spec.md) for the
 swarm wire format, and [`META-INF/BUILD.md`](META-INF/BUILD.md) for how to build
