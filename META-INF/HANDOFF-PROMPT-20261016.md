@@ -187,14 +187,17 @@ Next Move (in this order — 1–3 are done as of this note)
    toggle was considered at the user's suggestion and dropped: an app cannot background itself
    (lipstick exposes no such call, and `/WindowModel` is a read-only model) and the user would
    rather use the real device's swipe.
-8. Only then C4a (shared-page preview — design §5.1), C4b (relay gateway — §5.2) or C7
-   (swarm). C4a is the one the user is interested in next, and the design is now written
-   out in full (`kelp-design.md` §5): why the browser cannot decrypt from the sender (no
-   WebCrypto outside a secure context), the loopback server's URL space and header policy,
-   the system-browser-vs-`Sailfish.WebView` route decision, and why a preview is a
-   confirmation rather than a default. It is also the one piece that is testable entirely
-   off-device — a sealed bundle, a store and an HTTP client, no browser — so the preview
-   server is the natural first step.
+8. **C4a (shared-page preview — design §5.1) — built off-device (§3.20).** `libkelp/kelp_web`
+   (the §5.3 page convention), `src/kelppreviewserver` (the loopback server), the
+   `KelpBundles::pageInfo/previewPage/endPreview` seam and the *Open in browser* button on a
+   bundle's page are in the tree; `tst_kelppreview` (202 checks) plus a new `tst_kelpbundles`
+   section cover all of it, and every suite is green in both bundle modes. Still open: the lazy
+   fetch through `KelpSource` (a preview serves what the store holds; anything else is `503`),
+   the *recipient* side — a bundle fetched from a link is not kept, so §5.1 is reached today
+   through a share this device made (design §12.13) — the per-bundle confirmation (§12.10), and
+   an on-device pass with a real browser. The design also covers the remaining options: C4b
+   (relay gateway — §5.2) and C7 (swarm). An embedded `Sailfish.WebView` in place of the system
+   browser stays a UI decision for later (§12.9).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file; and note that *Wi-Fi only* and
 *Allow peer swarm* are still inert placeholders (*Share in background* is now acted on, but

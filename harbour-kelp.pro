@@ -50,6 +50,7 @@ SOURCES += \
     src/kelpfiles.cpp \
     src/kelplog.cpp \
     src/kelpqr.cpp \
+    src/kelppreviewserver.cpp \
     src/kelpserver.cpp \
     src/kelpsettings.cpp \
     src/kelpshares.cpp \
@@ -66,6 +67,7 @@ HEADERS += \
     src/kelpfiles.h \
     src/kelplog.h \
     src/kelpqr.h \
+    src/kelppreviewserver.h \
     src/kelpserver.h \
     src/kelpsettings.h \
     src/kelpshares.h \

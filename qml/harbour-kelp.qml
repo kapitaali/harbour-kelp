@@ -251,6 +251,18 @@ ApplicationWindow {
     // counter is re-evaluated when it moves. See BundlePage.entry.
     property int sharesRevision: 0
 
+    // Open previews (design §5.1): a bundle's page is served on loopback while the
+    // browser keeps asking for it, so a preview needs the same keep-alive a share
+    // does. Kept in step with the publisher, which also drops a session that has
+    // gone idle on its own.
+    property int previewSessions: 0
+
+    Connections {
+        target: kelpBundles
+
+        onPreviewSessionsChanged: kelp.previewSessions = kelpBundles.previewSessions()
+    }
+
     // Background serving, made deliberate. Sailfish keeps a backgrounded app
     // alive, but the platform is free to end a process it thinks is idle, so
     // while something is really being served — and only then, and only when the
@@ -261,11 +273,12 @@ ApplicationWindow {
     KeepAlive {
         id: keepAlive
 
-        enabled: kelp.seedingEnabled && kelp.servedShares > 0
+        enabled: kelp.seedingEnabled && (kelp.servedShares > 0 || kelp.previewSessions > 0)
         onEnabledChanged: kelpLog.info("KeepAlive: background serving "
                                        + (enabled ? "on" : "off")
                                        + " (setting " + (kelp.seedingEnabled ? "on" : "off")
-                                       + ", " + kelp.servedShares + " served)")
+                                       + ", " + kelp.servedShares + " served, "
+                                       + kelp.previewSessions + " previewing)")
     }
 
     // What the platform thinks Kelp is doing. Logged because the point of

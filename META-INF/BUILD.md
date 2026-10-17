@@ -127,7 +127,8 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh "$PWD/src/tests/run-all-t
 | `src/tests/run-kelpsettings-test.sh` | the persisted preferences, including the dev-extras default from both sides | 24 |
 | `src/tests/run-kelpshares-test.sh` | the persisted share rows | 24 |
 | `src/tests/run-kelpqr-test.sh` | QR encoding, against Python's `qrcode` | 9 |
-| `src/tests/run-kelpbundles-test.sh` | seal, the local-address gate, the link-log gate, storage management, pause/resume | 98 |
+| `src/tests/run-kelpbundles-test.sh` | seal, the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 126 |
+| `src/tests/run-kelppreview-test.sh` | the §5.3 page convention, path → objects, the URL space (`404` vs `503`), `Range`/`HEAD`, the security headers, an expiring session | 202 |
 | `relay/test/run-relay-test.sh` | the relay end to end, publisher and recipient both played | 6 cases |
 
 **Run the suites in both bundle modes.** Two of them check a default that

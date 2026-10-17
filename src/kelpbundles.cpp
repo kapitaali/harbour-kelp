@@ -8,7 +8,9 @@
 
 #include "kelp_crypto.h"
 #include "kelp_link.h"
+#include "kelp_web.h"
 #include "kelpbuild.h"
+#include "kelppreviewserver.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
 #include "kelpstore.h"
@@ -79,6 +81,127 @@ bool liveObjects(KelpObjectStore *store, const QVariantList &shares,
 KelpBundles::KelpBundles(KelpObjectStore *store, KelpServer *server, QObject *parent)
     : QObject(parent), m_store(store), m_server(server)
 {
+}
+
+// ── Preview (design §5.1) ────────────────────────────────────────────────────
+
+void KelpBundles::setPreviewServer(KelpPreviewServer *preview)
+{
+    m_preview = preview;
+    if (m_preview) {
+        // The server drops an idle session by itself; the app has to hear about it
+        // or it would hold the keep-alive request forever.
+        connect(m_preview, &KelpPreviewServer::sessionsChanged,
+                this, &KelpBundles::previewSessionsChanged);
+    }
+}
+
+bool KelpBundles::bundleKey(const QString &bundleId, const QString &secret, QByteArray *id,
+                            QByteArray *key, QString *error) const
+{
+    QString why;
+    if (!Kelp::Link::base32Decode(bundleId, id, &why)) {
+        *error = QStringLiteral("this share has no usable id");
+        return false;
+    }
+
+    QByteArray master;
+    if (!Kelp::Link::base64UrlDecode(secret, &master, &why)
+        || master.size() != Kelp::Crypto::KeySize) {
+        *error = QStringLiteral("this share's stored key is not usable");
+        return false;
+    }
+
+    *key = Kelp::contentKey(master);
+    return true;
+}
+
+QVariantMap KelpBundles::pageInfo(const QString &bundleId, const QString &secret)
+{
+    QVariantMap info;
+    info.insert(QStringLiteral("ok"), false);
+    info.insert(QStringLiteral("hasPage"), false);
+    info.insert(QStringLiteral("entry"), QString());
+
+    QByteArray id;
+    QByteArray key;
+    QString error;
+    if (!bundleKey(bundleId, secret, &id, &key, &error)) {
+        info.insert(QStringLiteral("error"), error);
+        return info;
+    }
+
+    Kelp::Web::Page page;
+    if (!Kelp::Web::page(m_store, key, id, &page, &error)) {
+        // Every file manifest has to be readable to answer this at all, so a share
+        // whose objects are not all here yet has no knowable page. That is an
+        // error, not "no page": the two must not look alike.
+        info.insert(QStringLiteral("error"), error);
+        return info;
+    }
+
+    info.insert(QStringLiteral("ok"), true);
+    info.insert(QStringLiteral("hasPage"), !page.path.isEmpty());
+    info.insert(QStringLiteral("entry"), page.path);
+    info.insert(QStringLiteral("root"), page.root);
+    info.insert(QStringLiteral("candidates"), page.candidates);
+    return info;
+}
+
+QVariantMap KelpBundles::previewPage(const QString &bundleId, const QString &secret,
+                                     const QString &name, const QString &entry)
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("ok"), false);
+
+    if (!m_preview) {
+        result.insert(QStringLiteral("error"),
+                      QStringLiteral("this build cannot serve a preview"));
+        return result;
+    }
+
+    // The listener comes up on the first preview and stays up: binding a loopback
+    // port is cheap, and a second page should not pay for it again.
+    QString error;
+    if (!m_preview->start(&error)) {
+        result.insert(QStringLiteral("error"), error);
+        return result;
+    }
+
+    const KelpPreviewServer::Opened opened = entry.isEmpty()
+        ? m_preview->open(bundleId, secret, name)
+        : m_preview->openEntry(bundleId, secret, name, entry);
+
+    result.insert(QStringLiteral("ok"), opened.ok);
+    result.insert(QStringLiteral("error"), opened.error);
+    result.insert(QStringLiteral("url"), opened.url);
+    result.insert(QStringLiteral("token"), opened.token);
+    result.insert(QStringLiteral("entry"), opened.entry);
+    result.insert(QStringLiteral("candidates"), opened.candidates);
+    if (!opened.ok)
+        return result;
+
+    // The URL is a read capability for the *decrypted* bundle while the session
+    // lives, so it is written down only under the same gate a link is under — and
+    // never in a release build, whatever that gate says.
+    if (linksInLog(m_settings))
+        qInfo() << "KelpBundles: preview served at" << opened.url
+                << "from share" << name;
+
+    emit previewSessionsChanged();
+    return result;
+}
+
+void KelpBundles::endPreview(const QString &token)
+{
+    if (!m_preview || token.isEmpty())
+        return;
+    m_preview->close(token);
+}
+
+int KelpBundles::previewSessions() const
+{
+    return m_preview ? m_preview->sessionCount() : 0;
 }
 
 QVariantMap KelpBundles::storeInfo()

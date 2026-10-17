@@ -18,6 +18,7 @@ HEADERS += \
     $$PWD/kelp_manifest.h \
     $$PWD/kelp_object.h \
     $$PWD/kelp_store.h \
+    $$PWD/kelp_web.h \
     $$PWD/kelp_wire.h
 
 SOURCES += \
@@ -28,6 +29,7 @@ SOURCES += \
     $$PWD/kelp_manifest.cpp \
     $$PWD/kelp_object.cpp \
     $$PWD/kelp_store.cpp \
+    $$PWD/kelp_web.cpp \
     $$PWD/kelp_wire.cpp
 
 LIBS += -lcrypto

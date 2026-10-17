@@ -29,6 +29,7 @@
 #include "kelpfiles.h"
 #include "kelplog.h"
 #include "kelpqr.h"
+#include "kelppreviewserver.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
 #include "kelpshares.h"
@@ -72,10 +73,17 @@ int main(int argc, char *argv[])
     // The listener starts lazily, on the first bundle that is actually shared.
     KelpServer objectServer(&objectStore);
 
+    // The loopback preview (design §5.1): when a browser on *this* device is shown
+    // a page from a bundle this device holds, the app decrypts and serves it on
+    // 127.0.0.1. It binds nothing until a page is actually opened, so a launch that
+    // never previews opens no port at all.
+    KelpPreviewServer previewServer(&objectStore);
+
     KelpBundles kelpBundles(&objectStore, &objectServer);
     // The publisher acts on the log-links preference; hand it the same object
     // the Settings page writes to.
     kelpBundles.setSettings(&kelpSettings);
+    kelpBundles.setPreviewServer(&previewServer);
 
     // The receiving end shares the same object store: an object received for one
     // bundle is verified content like any other, and nothing here can be confused

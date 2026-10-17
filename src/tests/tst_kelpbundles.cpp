@@ -30,6 +30,7 @@
 #include <QStringList>
 #include <QTcpSocket>
 #include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -37,6 +38,7 @@
 #include "kelpbuild.h"
 #include "kelpbundles.h"
 #include "kelplog.h"
+#include "kelppreviewserver.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
 #include "kelpstore.h"
@@ -50,6 +52,7 @@ QString g_section;
 // itself, only the fact that one was about to be written.
 bool g_sawLink = false;
 
+QString show(const QByteArray &value) { return QString::fromLatin1(value.toHex()); }
 QString show(const QString &value) { return value; }
 QString show(int value) { return QString::number(value); }
 QString show(qint64 value) { return QString::number(value); }
@@ -631,6 +634,104 @@ static void testPauseResume()
     QFile::remove(KelpSettings::filePath());
 }
 
+// The preview API: which file a bundle offers a browser, and serving it on
+// loopback (design §5.1, §5.3). The server has its own suite for what it does
+// with a request; this is the seam the UI actually calls.
+static void testPreview()
+{
+    const QString base = KelpLog::dataDirectory() + QStringLiteral("/bundles-test");
+    QDir().mkpath(base + "/preview/site");
+
+    KelpObjectStore store(base + "/preview/objects");
+    QString error;
+    CHECK(store.initialise(&error));
+
+    KelpServer server(&store);
+    KelpBundles bundles(&store, &server);
+    KelpSettings settings;
+    bundles.setSettings(&settings);
+
+    KelpPreviewServer preview(&store);
+    bundles.setPreviewServer(&preview);
+
+    // A folder with a page in it, sealed through the same path the Add page uses.
+    writeFile(base + "/preview/site/index.html",
+              "<!doctype html><title>Kelp</title><p>hello from a sealed bundle</p>\n");
+    writeFile(base + "/preview/site/style.css", "p { color: teal; }\n");
+
+    section("preview: which file is the page");
+    const QVariantMap sealed = bundles.seal(QStringList() << (base + "/preview/site"),
+                                            QStringLiteral("site"));
+    CHECK(sealed.value(QStringLiteral("ok")).toBool());
+    const QString bundleId = sealed.value(QStringLiteral("bundleId")).toString();
+    const QString secret = sealed.value(QStringLiteral("secret")).toString();
+    CHECK(!bundleId.isEmpty());
+    CHECK(!secret.isEmpty());
+
+    // Asked without serving anything, and before any listener exists.
+    CHECK(!preview.isListening());
+    const QVariantMap info = bundles.pageInfo(bundleId, secret);
+    CHECK(info.value(QStringLiteral("ok")).toBool());
+    CHECK(info.value(QStringLiteral("hasPage")).toBool());
+    CHECK_EQ(info.value(QStringLiteral("entry")).toString(), QStringLiteral("site/index.html"));
+
+    // A share whose stored key is unusable has no *knowable* page, which is not
+    // the same as a bundle with no page: the answer must not look like "none".
+    const QVariantMap broken = bundles.pageInfo(bundleId, QStringLiteral("not-a-key"));
+    CHECK(!broken.value(QStringLiteral("ok")).toBool());
+    CHECK(!broken.value(QStringLiteral("error")).toString().isEmpty());
+    CHECK(!broken.value(QStringLiteral("hasPage")).toBool());
+
+    section("preview: serving the page");
+    CHECK_EQ(bundles.previewSessions(), 0);
+    const QVariantMap opened = bundles.previewPage(bundleId, secret,
+                                                   QStringLiteral("site"), QString());
+    CHECK(opened.value(QStringLiteral("ok")).toBool());
+    if (!opened.value(QStringLiteral("ok")).toBool()) {
+        printf("  preview error: %s\n",
+               qPrintable(opened.value(QStringLiteral("error")).toString()));
+        return;
+    }
+    CHECK_EQ(bundles.previewSessions(), 1);
+    CHECK(preview.isListening());
+    CHECK(preview.port() > 0);
+    CHECK_EQ(opened.value(QStringLiteral("entry")).toString(), QStringLiteral("site/index.html"));
+
+    // The URL the UI would hand the browser is the loopback listener this device
+    // is actually running, and the page really comes back through it.
+    const QUrl url(opened.value(QStringLiteral("url")).toString());
+    CHECK_EQ(url.host(), QStringLiteral("127.0.0.1"));
+    CHECK_EQ(url.port(), preview.port());
+    CHECK(url.path().endsWith(QStringLiteral("/")));
+
+    const HttpReply page = httpGet(url.host(), quint16(url.port()), url.path(), QString());
+    CHECK_EQ(page.status, 200);
+    CHECK(page.body.contains("hello from a sealed bundle"));
+
+    // The page's own stylesheet, at the path the page names it by.
+    const HttpReply css = httpGet(url.host(), quint16(url.port()),
+                                  url.path() + QStringLiteral("style.css"), QString());
+    CHECK_EQ(css.status, 200);
+    CHECK_EQ(css.body, QByteArray("p { color: teal; }\n"));
+
+    // A path that is not in the bundle is a 404, and the token is the whole
+    // address: an unknown one is the same 404.
+    const HttpReply missing = httpGet(url.host(), quint16(url.port()),
+                                      url.path() + QStringLiteral("nope.png"), QString());
+    CHECK_EQ(missing.status, 404);
+    const HttpReply stranger = httpGet(url.host(), quint16(url.port()),
+                                       QStringLiteral("/0123456789/"), QString());
+    CHECK_EQ(stranger.status, 404);
+
+    // Ending the session closes the URL at once: the capability is the session.
+    bundles.endPreview(opened.value(QStringLiteral("token")).toString());
+    CHECK_EQ(bundles.previewSessions(), 0);
+    const HttpReply after = httpGet(url.host(), quint16(url.port()), url.path(), QString());
+    CHECK_EQ(after.status, 404);
+
+    QDir(base + "/preview").removeRecursively();
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -646,6 +747,7 @@ int main(int argc, char **argv)
     testStoreManagement();
     testServingVisibility();
     testPauseResume();
+    testPreview();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

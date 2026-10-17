@@ -1,0 +1,151 @@
+#ifndef KELPPREVIEWSERVER_H
+#define KELPPREVIEWSERVER_H
+
+#include <QByteArray>
+#include <QHash>
+#include <QObject>
+#include <QString>
+#include <QStringList>
+
+#include "kelp_manifest.h"
+#include "kelp_store.h"
+
+class QTcpServer;
+class QTcpSocket;
+class QTimer;
+
+/*
+ * The loopback side of a preview (design §5.1).
+ *
+ * A browser can only decrypt inside a *secure context* — https://, or localhost —
+ * and the LAN path is deliberately plain http:// on a private address, so a
+ * recipient's browser cannot fetch an encrypted bundle from the sender and open
+ * it. The recipient's app is what decrypts: it re-serves the bundle as ordinary
+ * web content on 127.0.0.1 and hands that URL to the browser.
+ *
+ * The loopback origin is therefore the security boundary, and this class is most
+ * of it:
+ *
+ *   * it binds 127.0.0.1 only, on an ephemeral port, never every interface;
+ *   * every URL carries a 32-byte random token, so another process on the device
+ *     cannot read the plaintext by guessing an address;
+ *   * every response carries a Content-Security-Policy that keeps the page
+ *     offline and same-origin, no-store so nothing decrypted lands in a browser
+ *     cache, and nosniff so a type cannot be second-guessed;
+ *   * a path that is not in the bundle is a 404 — including ".." and anything
+ *     else that does not name an entry — so the URL space is exactly the bundle;
+ *   * nothing is ever written to disk: a response is decrypted per request, and
+ *     a session is dropped when it has been idle for a while.
+ *
+ * Serving is always *plaintext to loopback*: the browser is the only audience, and
+ * the card is the token in the URL, not the key.
+ */
+class KelpPreviewServer : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit KelpPreviewServer(Kelp::ObjectStore *store, QObject *parent = nullptr);
+    ~KelpPreviewServer() override;
+
+    // Binds 127.0.0.1. Failing is not fatal: without it there is simply no
+    // preview, and a share keeps working.
+    bool start(QString *error);
+    bool isListening() const;
+    int port() const;
+
+    struct Opened {
+        bool ok = false;
+        QString error;
+        QString token;
+        QString url;              // http://127.0.0.1:<port>/<token>/
+        QString entry;            // the page, bundle-relative
+        QString root;             // the directory that is the URL root
+        QStringList candidates;   // every HTML file, when there was a choice
+    };
+
+    // Opens a session for an already-sealed bundle, finding its page (design
+    // §5.3). The bundle id is base32 and the secret base64url — the two strings
+    // the link and shares.json already carry.
+    Opened open(const QString &bundleId, const QString &secret, const QString &name);
+
+    // The same, for a page the recipient picked out of `candidates`.
+    Opened openEntry(const QString &bundleId, const QString &secret, const QString &name,
+                     const QString &entry);
+
+    // Ends a session. Its URL stops answering at once.
+    void close(const QString &token);
+    int sessionCount() const;
+
+    // What this server has done, for the log and for tests.
+    struct Tally {
+        qint64 requests = 0;      // files served
+        qint64 bytes = 0;         // plaintext bytes written
+        qint64 notHeld = 0;       // 503s: the store could not answer yet
+        qint64 refused = 0;       // requests for a token this server does not know
+    };
+    Tally tally() const { return m_tally; }
+
+    // A test affordance: how long a session may sit unused before it is dropped.
+    // Milliseconds.
+    void setIdleTimeout(int ms);
+
+signals:
+    // A session opened or went away, so the app can hold (or release) the request
+    // that keeps it alive while a page is being served.
+    void sessionsChanged();
+
+private slots:
+    void onConnection();
+    void readRequest(QTcpSocket *socket);
+    void sweep();
+
+private:
+    struct Session {
+        QByteArray bundleId;
+        QByteArray key;           // the content key, derived from the secret
+        QString name;             // for the log only
+        QString root;             // bundle-relative directory; "" is the root
+        QString entry;            // the page, relative to `root`
+        qint64 lastMs = 0;
+    };
+
+    // A connection that has not delivered a complete request yet.
+    struct Pending {
+        QByteArray buffer;
+        qint64 accepted = 0;
+    };
+
+    // What a request line turned into.
+    struct Target {
+        int status = 404;
+        QString location;         // a 301's target, when a directory needs its slash
+        QString path;             // bundle-relative path of the file
+        Kelp::Manifest::File file;
+        QByteArray hash;
+    };
+
+    Opened openPath(const QByteArray &id, const QByteArray &key, const QString &name,
+                    const QString &entry);
+
+    void handle(QTcpSocket *socket, const QByteArray &request);
+    Target resolve(Session *session, const QString &urlPath, bool trailingSlash);
+    void serve(QTcpSocket *socket, Session *session, const Target &target,
+               const QByteArray &rangeHeader, bool headOnly);
+    void writeHead(QTcpSocket *socket, int status, const char *reason,
+                   const QByteArray &extraHeaders, bool headOnly);
+    void respond(QTcpSocket *socket, int status, const char *reason,
+                 const char *contentType, const QByteArray &body, bool headOnly,
+                 const QByteArray &extraHeaders = QByteArray());
+    static QByteArray securityHeaders();
+
+    Kelp::ObjectStore *m_store;
+    QTcpServer *m_server;
+    QTimer *m_sweeper;
+    QHash<QTcpSocket *, Pending> m_pending;
+    QHash<QString, Session> m_sessions;
+    Tally m_tally;
+    int m_idleTimeoutMs;
+};
+
+#endif // KELPPREVIEWSERVER_H

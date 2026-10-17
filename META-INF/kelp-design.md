@@ -358,13 +358,15 @@ app decrypts — and the browser sees plaintext over loopback. That is why the t
 and the lifetime rules below are load-bearing: the loopback origin *is* the security
 boundary.
 
-**What it costs.** Less than it looks. The manifest already carries per-file `mime` (§1.2),
-so `Content-Type` is data the sender supplied rather than a guess at an extension. Objects
-are hash-verified ciphertext, so the server is a resolver — path → chunk list → bytes — with
-the existing `KelpSource` fetching whatever the store lacks. `kelp://` is already a
-registered scheme, so a link clicked in a browser lands in the app. And the background-serving
-work already asked the platform to keep the app alive while it serves (the answer was yes,
-§12.8): a preview needs the same request while a page is live.
+**What it costs.** Less than it looks. The manifest can carry a per-file `mime` (§1.2) — in
+practice it never does, because nothing in the app records one, so `Content-Type` comes from the
+extension table — and fixed-size chunking means an object's plaintext length follows from its
+ciphertext length, so a byte range is arithmetic rather than a search. Objects are
+hash-verified ciphertext, so the server is a resolver — path → chunk list → bytes — with the
+existing `KelpSource` fetching whatever the store lacks. `kelp://` is already a registered
+scheme, so a link clicked in a browser lands in the app. And the background-serving work already
+asked the platform to keep the app alive while it serves (the answer was yes, §12.8): a preview
+needs the same request while a page is live.
 
 **The server.** One `KelpPreviewServer`, one loopback listener, one session per open bundle.
 
@@ -373,11 +375,13 @@ work already asked the platform to keep the app alive while it serves (the answe
 | Bind | `127.0.0.1`, ephemeral port — never `0.0.0.0`, the same rule as the LAN listener (§3.1). |
 | URL space | `http://127.0.0.1:<port>/<session-token>/<path>`, the token 32 random bytes; without it, `404`. The port is not a secret, the token is. |
 | Methods | `GET` and `HEAD`; `Range: bytes=a-b` on a file path. |
-| `Content-Type` | the manifest's `mime`, with a small extension table only for bundles sealed before `mime` was recorded, and `nosniff` so a browser never second-guesses it. |
-| `Range` | With fixed 256 KiB chunks (§1.2) a range is a contiguous object range: byte `a` lives in chunk `a / 256K` at offset `a % 256K`, and an object's plaintext length follows from its ciphertext length. A `<video>` can seek without the file being materialised. **This is the property CDC would break**: content-defined chunks have no closed-form offset, so adopting it (§12.1) means recording per-chunk lengths in the manifest, or fetching to seek. |
-| Unknown path | `404`, including everything not in the manifest; names are re-validated on the way out, so a hostile manifest cannot escape the URL space. |
-| Nothing to serve it | `503` with a short plain-text body — the sender went away — rather than an empty 200 or a hang. |
-| Plaintext at rest | none: objects are decrypted per response, in memory, and never written. |
+| `Content-Type` | the manifest's `mime` when the sender recorded one, else a small extension table — with `nosniff`, so a browser never second-guesses the answer. |
+| `Range` | With fixed 256 KiB chunks (§1.2) a range is a contiguous object range: byte `a` lives in chunk `a / 256K` at offset `a % 256K`. `bytes=a-b`, `bytes=a-` and `bytes=-n` are honoured; a multi-range request or a malformed one is ignored and the whole file served (always a valid answer), and a range past the end is `416`. **This is the property CDC would break**: content-defined chunks have no closed-form offset, so adopting it (§12.1) means recording per-chunk lengths in the manifest, or fetching to seek. |
+| A directory | `/sub/` serves `sub/index.html`; `/sub` without the slash is a `301` to `/sub/`, because the page's relative URLs would otherwise resolve against the parent. |
+| Unknown path | `404`, including `..`, a NUL, a file used as a directory, and any path not in the manifests — every name is re-validated against the manifest's own rules on the way out, so the URL space is exactly the bundle. |
+| A bundle not all here | `503`, not `404`: a manifest or data object the store cannot answer means the question has no answer *yet* (“not fetched”), which must not be shown as “no such file in this bundle”. Every object an answer needs is checked before a byte goes out, so a page is never half-served. |
+| Lifetime | A session is dropped after 30 minutes without a request, or when it is closed; the listener dies with the app. A 32-byte token is the whole address, so a stale URL is worthless. |
+| Plaintext at rest | none: objects are decrypted per response, straight to the socket, one chunk at a time, and never written. |
 
 Every response also carries these headers:
 
@@ -393,6 +397,22 @@ Cache-Control: no-store
 The CSP is what makes "the page works offline" true in *any* browser, and `no-store` keeps
 decrypted bytes out of a browser cache; both therefore do their work in either route below,
 while an embedded WebView can also refuse a request outright.
+
+**What is built.** Everything in the table above, plus the §5.3 convention, is in the tree:
+`libkelp/kelp_web.{h,cpp}` (which file is the page; path → file or directory; the chunk range
+behind a byte range; the extension table — manifests only, never a data object) and
+`src/kelppreviewserver.{h,cpp}`. `src/tests/tst_kelppreview.cpp` drives the server over a real
+socket with no browser and no display, and `tst_kelpbundles` covers the app seam; `BUILD.md`
+has the counts. The seam is `KelpBundles::pageInfo/previewPage/endPreview`, and the first UI is
+a **Web page** section on a bundle's own page — shown only when the bundle has one — with
+*Open in browser* (route B below). No menu was added: a labelled section on the page is where
+the design put it, and the whole flow is one button.
+
+**What is not built yet.** The lazy fetch through `KelpSource`, so a preview serves exactly what
+the store already holds and answers `503` for anything else. The *recipient* side: a bundle
+fetched from a link is not kept, so today §5.1 is reached through a share this device made
+(§12.13). And the per-bundle confirmation (§12.10) — deferred until the page being opened is
+someone else's.
 
 **Two ways to open it, and the recommendation.**
 
@@ -436,12 +456,12 @@ recipient's device. So it is a visible choice and never a default:
 | Situation | Behaviour |
 |---|---|
 | No HTML in the bundle | no *Preview* action; the file list and *Open* are unchanged |
-| Several HTML files | `index.html` at the root, else the sole `index.html` anywhere, else a picker of them; the chosen file's folder is the web root |
+| Several HTML files | `index.html` at the root, else the shallowest `index.html`, else a picker of them; the chosen file's folder is the web root (§5.3) |
 | Entry document in a subfolder | that folder is the web root, so its `index.html` is `/` |
 | Sender offline, or the tunnel dropped | the page's requests answer `503`, and the app says why rather than letting the page fail silently |
 | Relay-only bundle | works, slower; the LAN address is preferred whenever the link names one |
 | A big file in the bundle | streamed per object and seekable by `Range`; never assembled in memory first |
-| No browser installed | `openUrlExternally` fails; say so, fall back to the file list |
+| No browser installed | **verified on the emulator: `Qt.openUrlExternally` returns `true` and nothing opens** — Qt 5.6 reports only that the URL was *handed over*, so the app must not treat its result as a promise (the emulator image has no `sailfish-browser` at all). Route B therefore depends on a browser being present, which is an argument for route A beyond UI taste (§12.9) |
 | Kelp closed while the browser shows the page | serving ends (a Harbour app cannot outlive itself, §12.8) and the page starts failing; the preview says so before you leave |
 | Two previews at once | one server, one token path per session, one keepalive while any session is live |
 
@@ -483,9 +503,11 @@ negotiates the former.
 
 Both routes need one answer, and it is deliberately not a new wire field:
 
-- The **entry document** is `index.html` at the bundle root if there is one; otherwise the
-  sole HTML file (`mime` `text/html`, or a `.html`/`.htm` name when `mime` is absent);
-  otherwise the recipient picks from the HTML files present.
+- The **entry document** is `index.html` at the bundle root if there is one; otherwise any
+  `index.html`, the shallowest one; otherwise the sole HTML file; otherwise the recipient picks
+  from the HTML files present. A file is HTML when its recorded `mime` is `text/html` *or* its
+  name ends `.html`/`.htm` — both are the sender's own words, so this is which file to *offer*,
+  not a check.
 - The **web root** is the folder holding the entry document, and the **URL space** is the
   bundle's paths relative to it: `/` is the entry document, `/sub/x.png` a file, and `/sub/`
   serves `sub/index.html` when one exists.
@@ -723,12 +745,15 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     object fetch, a missing object (404) and a wrong token (401).
     Still open (deliberately): no caching/stewards (C6), no swarm (C7), no TLS on the LAN
     path (only the tunnel), and the relay is a separate binary (`kelp-relay`) the user runs.
-- **C4a** — Shared-page preview (§5.1): the loopback preview server (token path, path →
-  objects, MIME from the manifest, CSP/no-store, `Range`, `503` when the source fails), lazy
-  fetch through `KelpSource`, the session keepalive, and the *Preview* action with its
-  per-bundle confirmation. Ships with the system-browser hand-off; an embedded
-  `Sailfish.WebView` is a later UI decision (§5.1). Testable off-device: the resolver needs
-  no browser at all, only a sealed bundle, a store, and an HTTP client.
+- **C4a** — Shared-page preview (§5.1): **built, off-device.** The `Web` convention
+  (`page`/`resolve`/`chunkRange`/`mimeType`, manifests only), the loopback `KelpPreviewServer`
+  (token path, path → objects, `Range`/`HEAD`, the CSP/`no-store`/`nosniff` headers, `404` vs
+  `503`, a 30-minute idle session), the `KelpBundles` seam, and *Open in browser* on a bundle's
+  page. `tst_kelppreview` drives it over a real socket and `tst_kelpbundles` covers the seam;
+  both run without a browser or a display. Still to do: the lazy fetch through `KelpSource`
+  (today a missing object is a `503`), the recipient side once a fetched bundle is kept
+  (§12.13), the per-bundle confirmation (§12.10), and an on-device pass with a real browser.
+  An embedded `Sailfish.WebView` remains a later UI decision (§12.9).
 - **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
   in-browser decryption of a real bundle.
@@ -844,15 +869,30 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
 9. **Preview route** — the system browser (recommended: browser affordances for free, no new
    dependency) or an embedded `Sailfish.WebView` (stronger leash via a request interceptor and
    no keepalive, but a heavy dependency and QtWebEngine under Sailjail is unproven)? §5.1
-   recommends building the server first and deciding with it on the device.
+   recommends building the server first and deciding with it on the device. *(On-device note:
+   the emulator image ships **no browser at all**, and Qt 5.6's `Qt.openUrlExternally` returned
+   `true` while nothing opened — its result says the URL was handed over, not that anything
+   will show it. So route B silently depends on a browser being installed, which the emulator
+   cannot settle; the C2 can.)*
 10. **Preview trust** — ask before every preview, or ask once per bundle id and remember the
    answer? *(Recommended: ask once per bundle, rememberable — content addressing makes the
    decision durable, because the same id is the same immutable bytes; a remembered "trusted"
-   can never be swapped for different content.)*
+   can never be swapped for different content. Deferred by the first cut: what is opened today
+   is the sender's own share, and a prompt over your own content is noise. The prompt belongs
+   with §12.13, when the page is someone else's.)*
 11. **A page's network reach** — offline forever, enforced by the CSP in §5.1 *(recommended)*,
    or an explicit per-preview "let this page use the internet" switch?
 12. **Download-all in the gateway** — a ZIP assembled in the browser (no `CompressionStream`
    guarantee in the engine; STORE + CRC32 in JS works), or per-file downloads only?
+13. **Keeping what a recipient receives** — a bundle fetched from a link is written out as
+   ordinary files in Downloads, and the app keeps neither its objects nor its key past the
+   fetch. So a recipient cannot preview it (§5.1), re-download it, or help seed it, and *the*
+   flow C4a was designed for — "the recipient opens the page" — cannot be tried on a real
+   device. Keeping the row (id + key, in `shares.json` or a received list of its own) is what
+   fixes that, at the cost of holding a key this device never minted and of a bundle list that
+   mixes "shared by me" with "received". *(Leaning: keep received bundles as rows that can be
+   paused and removed and are marked as received, because the alternative is a preview that
+   only ever shows you your own page.)*
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 

@@ -55,8 +55,33 @@ Page {
         ? qsTr("\n\nPeer swarm was requested for this share. It is not implemented yet, so no one is trading these objects with anyone.")
         : ""
 
-    Component.onCompleted: kelpLog.info("BundlePage: index=" + index + " entry="
-                                        + (entry ? "\"" + entry.name + "\"" : "null"))
+    // Which file in this bundle a browser would be shown (design §5.3), asked once
+    // when the page opens: nothing in the link says a bundle carries a page, only
+    // its contents do, and they cannot change under us.
+    property var page: null
+
+    function lookForPage() {
+        page = null
+        if (!bundlePage.entry || !bundlePage.entry.secret || bundlePage.entry.secret.length === 0)
+            return
+        var info = kelpBundles.pageInfo(bundlePage.entry.bundleId, bundlePage.entry.secret)
+        page = info
+        if (!info.ok) {
+            // Not "no page": the bundle's own manifests could not be read, so there
+            // is nothing to say about it yet.
+            kelpLog.warn("BundlePage: cannot look for a page in \""
+                         + bundlePage.entry.name + "\": " + info.error)
+        } else if (info.hasPage) {
+            kelpLog.info("BundlePage: \"" + bundlePage.entry.name + "\" offers a page: "
+                         + info.entry)
+        }
+    }
+
+    Component.onCompleted: {
+        kelpLog.info("BundlePage: index=" + index + " entry="
+                     + (entry ? "\"" + entry.name + "\"" : "null"))
+        lookForPage()
+    }
 
     SilicaFlickable {
         anchors.fill: parent
@@ -225,6 +250,74 @@ Page {
                                 pageStack.pop()
                             })
                         }
+                    }
+                }
+            }
+
+            SectionHeader {
+                visible: bundlePage.page !== null && bundlePage.page.hasPage
+                text: qsTr("Web page")
+            }
+
+            Label {
+                visible: bundlePage.page !== null && bundlePage.page.hasPage
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeSmall
+                text: {
+                    if (bundlePage.page === null || !bundlePage.page.hasPage)
+                        return ""
+                    var text = qsTr("This bundle has a page in it: %1. It opens in this device's browser, which is the only place a page can run — the app decrypts the bundle and serves it to the browser from 127.0.0.1 for as long as the browser keeps asking.")
+                                   .arg(bundlePage.page.entry)
+                    if (bundlePage.page.candidates
+                            && bundlePage.page.candidates.length > 1) {
+                        text += qsTr(" It holds %1 pages; the one above is the one shown.")
+                                    .arg(bundlePage.page.candidates.length)
+                    }
+                    return text
+                }
+            }
+
+            // Wrapped in an Item so the button keeps the page margin inside the
+            // Column (positioners ignore child anchors).
+            Item {
+                visible: bundlePage.page !== null && bundlePage.page.hasPage
+                width: parent.width
+                height: previewButton.height
+
+                Button {
+                    id: previewButton
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                        leftMargin: Theme.horizontalPageMargin
+                        rightMargin: Theme.horizontalPageMargin
+                    }
+                    text: qsTr("Open in browser")
+                    onClicked: {
+                        if (!bundlePage.entry)
+                            return
+                        var opened = kelpBundles.previewPage(bundlePage.entry.bundleId,
+                                                             bundlePage.entry.secret,
+                                                             bundlePage.entry.name,
+                                                             bundlePage.page ? bundlePage.page.entry : "")
+                        if (!opened.ok) {
+                            kelpLog.warn("Preview: \"" + bundlePage.entry.name + "\": "
+                                         + opened.error)
+                            toast.show(opened.error.length > 0
+                                       ? opened.error
+                                       : qsTr("Could not open the page"))
+                            return
+                        }
+                        // Logged without the URL: the address carries the token that
+                        // is the capability (the app writes it to the log only in a
+                        // dev build that asks for links in the log).
+                        kelpLog.info("Preview: serving \"" + opened.entry
+                                     + "\" and handing it to the browser")
+                        Qt.openUrlExternally(opened.url)
+                        toast.show(qsTr("Opening in the browser"))
                     }
                 }
             }

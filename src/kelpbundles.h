@@ -11,6 +11,7 @@
 #include "kelp_link.h"
 
 class KelpObjectStore;
+class KelpPreviewServer;
 class KelpServer;
 class KelpSettings;
 class KelpTunnel;
@@ -92,6 +93,40 @@ public:
     // returned — it never needs to leave the link.
     Q_INVOKABLE QVariantMap linkInfo(const QString &link);
 
+    /*
+     * The loopback preview (design §5.1).
+     *
+     * A browser cannot decrypt from the sender: WebCrypto needs a secure context,
+     * and the LAN path is deliberately plain http:// to a private address. So this
+     * app is what decrypts, and it serves the result to a browser on *this* device
+     * over loopback. The server is optional — without one there is no preview, and
+     * a share behaves exactly as before.
+     */
+    void setPreviewServer(KelpPreviewServer *preview);
+
+    // Which file this bundle offers a browser, without serving anything:
+    // { ok, error, hasPage, entry, root, candidates }. A bundle that does not make
+    // the choice itself leaves `entry` empty and lists every HTML file in
+    // `candidates` — what a picker would show (design §5.3).
+    Q_INVOKABLE QVariantMap pageInfo(const QString &bundleId, const QString &secret);
+
+    // Opens that page for a browser on this device and hands back the URL to give
+    // it: { ok, error, url, token, entry, candidates }. `entry` may name one of
+    // pageInfo's candidates rather than letting the bundle choose.
+    Q_INVOKABLE QVariantMap previewPage(const QString &bundleId, const QString &secret,
+                                        const QString &name, const QString &entry);
+
+    // Ends a preview session; its URL stops answering at once.
+    Q_INVOKABLE void endPreview(const QString &token);
+
+    // How many previews are open, for the cover and the keep-alive policy.
+    Q_INVOKABLE int previewSessions() const;
+
+signals:
+    // A preview opened, closed, or expired. The app holds the device awake while
+    // one is being served, exactly as it does while a share is being served.
+    void previewSessionsChanged();
+
 private:
     bool collect(const QString &path, const QString &name, int depth,
                  Kelp::SourceNode *node, int *fileCount, int *skippedLinks,
@@ -108,9 +143,16 @@ private:
     // whether the caller means it as "gone" or "not right now".
     void stopServing(const QString &bundleId);
 
+    // The bundle id and content key behind a share row — the two things a stored
+    // share has to offer that a link's hints do not. False with a reason if either
+    // is unusable.
+    bool bundleKey(const QString &bundleId, const QString &secret, QByteArray *id,
+                   QByteArray *key, QString *error) const;
+
     KelpObjectStore *m_store;
     KelpServer *m_server;
     KelpSettings *m_settings = nullptr;
+    KelpPreviewServer *m_preview = nullptr;
 
     QStringList m_relays;
     // One outgoing tunnel per shared bundle, keyed by the base32 bundle id.
