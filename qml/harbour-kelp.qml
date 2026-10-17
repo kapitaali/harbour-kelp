@@ -1,5 +1,6 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import Nemo.KeepAlive 1.2
 import "pages"
 import "cover"
 
@@ -16,6 +17,13 @@ ApplicationWindow {
      * NOT stored, though, so restoring re-serves on a fresh address and the row
      * carries the new link.
      */
+    // "Share in background": keep serving while Kelp is not in the foreground,
+    // and ask the platform not to end the process while it is. Sailfish does not
+    // freeze a backgrounded app — the cover view is a live process — so serving
+    // already continues while the cover is up; KeepAlive below is the part that
+    // asks the system not to stop us under memory or power pressure. Closing Kelp
+    // outright still ends serving: a Harbour app cannot ship an always-on service
+    // (that would be a systemd user service, OpenRepos territory — design §12.8).
     property bool seedingEnabled: true
     property bool wifiOnly: true
     property bool swarmEnabled: false
@@ -133,9 +141,6 @@ ApplicationWindow {
         return true
     }
 
-    // The cover's play/pause action: silence every share, or serve them all
-    // again. Returns how many rows changed, so the caller can tell "nothing was
-    // running" from a real pause.
     // Derived counters the cover binds to. They are maintained properties rather
     // than functions the cover calls, because a binding that walks the model with
     // get() re-enters the model while it evaluates and QML reports that as a
@@ -156,6 +161,9 @@ ApplicationWindow {
         pausedShares = paused
     }
 
+    // The cover's play/pause action: silence every share, or serve them all
+    // again. Returns how many rows changed, so the caller can tell "nothing was
+    // running" from a real pause.
     function pauseAllShares() {
         var changed = 0
         for (var i = 0; i < bundlesModel.count; ++i)
@@ -242,6 +250,41 @@ ApplicationWindow {
     // will not notice a setProperty() on its own — a binding that also reads this
     // counter is re-evaluated when it moves. See BundlePage.entry.
     property int sharesRevision: 0
+
+    // Background serving, made deliberate. Sailfish keeps a backgrounded app
+    // alive, but the platform is free to end a process it thinks is idle, so
+    // while something is really being served — and only then, and only when the
+    // user asked for it — Kelp tells the system it has work to finish. An app
+    // with nothing to serve releases the request rather than sitting on it: that
+    // is the whole battery story this version can honestly tell (Wi-Fi and
+    // low-battery policy are still open — design §12.8).
+    KeepAlive {
+        id: keepAlive
+
+        enabled: kelp.seedingEnabled && kelp.servedShares > 0
+        onEnabledChanged: kelpLog.info("KeepAlive: background serving "
+                                       + (enabled ? "on" : "off")
+                                       + " (setting " + (kelp.seedingEnabled ? "on" : "off")
+                                       + ", " + kelp.servedShares + " served)")
+    }
+
+    // What the platform thinks Kelp is doing. Logged because the point of
+    // background serving is what happens when the window is not in front, and
+    // the log is the only place that is visible from a test on this side.
+    function applicationStateName(state) {
+        if (state === Qt.ApplicationActive) return "active"
+        if (state === Qt.ApplicationInactive) return "inactive"
+        if (state === Qt.ApplicationSuspended) return "suspended"
+        if (state === Qt.ApplicationHidden) return "hidden"
+        return String(state)
+    }
+
+    Connections {
+        target: Qt.application
+
+        onStateChanged: kelpLog.info("Kelp: application state = "
+                                     + kelp.applicationStateName(Qt.application.state))
+    }
 
     Component.onCompleted: {
         kelpLog.info("Kelp " + appVersion + " (build " + buildId

@@ -50,21 +50,23 @@ swarm wire format.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
   permission), relay address, *Include my local address in the link*, **Storage**
   (what the object store holds, what the shares need, and a *Remove unused
-  objects* action), *Include links in the log*, and a *Clear log* action. The
-  first three switches are the shape of the intended behaviour and are
-  deliberately not acted on yet — only the LAN path is wired up, and now in both
-  directions. Two switches are real and persisted: *Include my local address in
-  the link* decides whether a link carries this device's address at all (and so
-  whether the bundle is served locally), and *Include links in the log* decides
-  whether a share's `kelp://` link (and so its key) is written to the log. When
-  the address *is* carried it is sealed, not spelled out — see *Serving on the
-  LAN* below.
+  objects* action), *Include links in the log*, and a *Clear log* action. *Share
+  in background* is real: it decides whether Kelp asks the platform not to end it
+  while it serves with the window gone (see *Serving with the window gone* below);
+  closing the app still ends serving. *Wi-Fi only* and *Allow peer swarm* are the
+  shape of the intended behaviour and are deliberately not acted on yet — only the
+  LAN path is wired up, and now in both directions. Two switches are real and
+  persisted: *Include my local address in the link* decides whether a link carries
+  this device's address at all (and so whether the bundle is served locally), and
+  *Include links in the log* decides whether a share's `kelp://` link (and so its
+  key) is written to the log. When the address *is* carried it is sealed, not
+  spelled out — see *Serving on the LAN* below.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
   action pauses *every* share for real, or resumes them all (the same per-share
-  pause/resume the list and Bundle page offer). *Share in background* in Settings
-  remains the one placeholder.
+  pause/resume the list and Bundle page offer), and the icon follows the store's
+  own served/paused counts rather than guessing.
 
 ## Serving and privacy
 
@@ -132,6 +134,35 @@ ephemeral, so a fresh one is chosen at startup and the link is minted again, whi
 is why the app always shows the current link rather than one captured earlier.
 Storing the secret asks for no more trust than the link already does — it is the
 same key — but the file is kept owner-only and is never logged.
+
+## Serving with the window gone
+
+Serving does not stop when Kelp leaves the foreground. Sailfish keeps a
+backgrounded app genuinely running — the cover view is a live process, not a saved
+state — so a share sitting on the cover is still reachable, and a recipient
+fetching then gets exactly what a fetch in the foreground gets. Verified with the
+app on its cover (PROGRESS §3.17).
+
+*Settings → Share in background* makes that deliberate rather than incidental:
+while something is really being served and the switch is on, Kelp holds the
+platform's `Nemo.KeepAlive` request — how an app asks not to be ended under memory
+or power pressure — and with nothing to serve it releases the request rather than
+sitting on it. The switch is not persisted yet, so it comes back on at each launch,
+which is also the useful default.
+
+Two limits are real and worth saying plainly:
+
+- **Closing Kelp ends serving.** Serving is the app's own listeners, and there is
+  no always-on service behind them — a Harbour app cannot ship one (that would be
+  a systemd user service). The old wording promised "keep seeding after the app is
+  closed", which was never true.
+- **There is no Wi-Fi-only or low-battery policy yet.** *Settings → Wi-Fi only* is
+  still the shape of the intended behaviour (design §12.8).
+
+To silence a share without giving up its place in the list, *Pause sharing* from a
+row's menu — or the cover action, which pauses them all — stops serving while
+keeping the row and the objects; *Resume sharing* serves it again, with a freshly
+minted link.
 
 ## Opening a link
 

@@ -118,7 +118,7 @@ Page {
 
             TextSwitch {
                 text: qsTr("Share in background")
-                description: qsTr("Keep seeding after the app is closed")
+                description: qsTr("Keep seeding while Kelp is in the background, and ask the system not to stop it. Closing Kelp still ends serving — there is no always-on service.")
                 checked: settingsPage.store ? settingsPage.store.seedingEnabled : false
                 onCheckedChanged: {
                     if (settingsPage.store && checked !== settingsPage.store.seedingEnabled)

@@ -21,6 +21,10 @@ Source0:    %{name}-%{version}.tar.bz2
 # base-image package) and rpm works the dependency out on its own. libssl is the
 # relay tunnel's TLS 1.3 transport (src/kelptls.cpp) — no Qt-side dependency,
 # because Qt 5.6 cannot do TLS 1.3 or client ALPN.
+#
+# Nemo.KeepAlive (libkeepalive) is the background-serving keepalive, a
+# Harbour-allowed module and another base-image package, so again no explicit
+# Requires.
 Requires:   sailfishsilica-qt5
 
 BuildRequires: pkgconfig(sailfishapp) >= 1.0.2

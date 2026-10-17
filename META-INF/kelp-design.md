@@ -621,15 +621,34 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
    is strict: a share whose manifests cannot be read fails the whole operation, because "not in
    the set" must mean "safe to delete" and an object that merely cannot be accounted for is not
    junk. See §11 and `Kelp::bundleObjects`, `KelpBundles::storeUsage/pruneStore`.)*
-8. **Background serving** — a share currently serves only while the app is in the
-   foreground. Keeping it alive once the window is gone needs a Sailfish
-   background service, plus a policy for Wi-Fi-only, battery and sleep, so it is a
-   design decision rather than just code. It is also what makes a **pause** control
-   necessary: *Stop sharing* is destructive (it deletes the row), so a share can
-   now be paused instead — serving stopped, row and objects kept, `paused`
-   recorded in `shares.json`, resumed with the same `republish()` that restores a
-   share at startup. That pause/resume pair is the non-destructive half of the
-   serving controls, and the shape background serving will need.
+8. **Background serving** — *(partly resolved, 2026-10-17.)* Two questions were
+   hiding under one word.
+
+   *Does serving survive the window going away?* Yes — and it always did. Sailfish
+   keeps a backgrounded app genuinely alive (the cover view is a live process, not
+   a snapshot), so nothing in the app had to change for serving to continue while
+   Kelp sat on its cover. The part worth adding is the *request* not to be ended,
+   and the platform supplies it: `Nemo.KeepAlive`. Kelp holds it exactly while
+   something is really being served and *Share in background* is on, and releases
+   it otherwise. Verified live with the app backgrounded (PROGRESS §3.17).
+
+   *Should it?* is the part that is still design, and it is a **policy**, not a
+   service: what to do off Wi-Fi, below a battery threshold, or while the screen
+   sleeps. None of that is implemented, the switch that gates the keepalive is
+   not persisted, and `wifiOnly` is still a placeholder.
+
+   *And once the app is closed?* Nothing — and nothing can be, from a Harbour app:
+   an always-on seeder is a systemd **user service**, which is OpenRepos territory,
+   off by default even there, and a separate battery/privacy commitment. The
+   Settings label used to promise "keep seeding after the app is closed", which was
+   never true; it now says what is true.
+
+   Pause/resume is the other half of the same picture: *Stop sharing* is
+   destructive (it deletes the row), so a share can be paused instead — serving
+   stopped, row and objects kept, `paused` recorded in `shares.json`, resumed with
+   the same `republish()` that restores a share at startup. That pair is the
+   non-destructive half of the serving controls, and the shape background serving
+   needed.
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 

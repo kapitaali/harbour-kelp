@@ -98,6 +98,14 @@ Current verified state (2026-10-16)
   failed decode (a paused share has no `lan`, and one page read it unguarded), and the cover
   binds to store-maintained `servedShares`/`pausedShares` counters rather than calling
   `ListModel.get()` inside a binding, which QML reported as a binding loop.
+- Serving now survives the window going away, and that is deliberate rather than incidental
+  (design §12.8). Sailfish keeps a backgrounded app alive, so a share already kept serving on
+  the cover; what was added is the `Nemo.KeepAlive` request — held only while something is
+  really being served and *Share in background* is on — plus a log line for
+  `Qt.application.state`. Verified live **with Kelp on its cover**: a recipient-style fetch
+  still answered 200/401 as it should and the publisher wrote its traffic line (PROGRESS
+  §3.17, recipe §4.6). Not done: Wi-Fi-only / low-battery / sleep policy, and persisting the
+  switch. Closing the app still ends serving — a Harbour app cannot ship an always-on service.
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
@@ -154,16 +162,21 @@ Next Move (in this order — 1–3 are done as of this note)
    half is done too (PROGRESS §3.15): KelpTunnel counts objects wanted/served/not-held and
    reports when the asking stops or the tunnel drops, and the relay harness now runs the app
    own tunnel as the publisher — 6/6.
-7. Only then C4 (browser viewer + gateway) or C7 (swarm).
-8. Background serving — the reason pause was just added (user-requested). A share serves
-   only while the app is in the foreground; keeping it alive when the window is gone needs a
-   Sailfish background service plus a Wi-Fi-only/battery/sleep policy, so it is a design
-   decision (kelp-design.md §12.8), not just code. Pause/resume already gives it the
-   non-destructive control it will need.
+7. **Background serving** (the reason pause was added) — **done in-app.** Sailfish keeps a
+   backgrounded app alive, so serving already continued on the cover; what was added is the
+   `Nemo.KeepAlive` request, held only while something is really served and *Share in
+   background* is on, plus a `Qt.application.state` log line. Verified live with the app on
+   its cover (PROGRESS §3.17, recipe §4.6). Still design, not code: Wi-Fi-only / low-battery /
+   sleep policy, and persisting the switch (kelp-design.md §12.8). Serving still ends when the
+   app is *closed* — a Harbour app cannot ship a systemd user service. A bottom `PushUpMenu`
+   toggle was considered at the user's suggestion and dropped: an app cannot background itself
+   (lipstick exposes no such call, and `/WindowModel` is a read-only model) and the user would
+   rather use the real device's swipe.
+8. Only then C4 (browser viewer + gateway) or C7 (swarm).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
-lines with KelpLog calls, so everything lands in the log file; and note that the three
-placeholder Settings switches (Share in background, Wi-Fi only, Allow peer swarm) are still
-inert.
+lines with KelpLog calls, so everything lands in the log file; and note that *Wi-Fi only* and
+*Allow peer swarm* are still inert placeholders (*Share in background* is now acted on, but
+is not persisted).
 
 Relevant files
 - src/kelpfetch.{h,cpp} — KelpSource, LanSource, RelaySource. Bug 1 lives here (create()).
@@ -248,10 +261,12 @@ Important context — build, deploy, debug
 Known gaps carried forward
 - No TLS on the LAN path (deliberate). Shares ARE persisted now, but the address is still
   captured at share time and the port stays ephemeral: a restart remints the link (and a
-  network change within a session is not noticed until the next restart). Serving stops
-  when the app exits — there is no background service, which is why a per-share **pause**
-  (persisted in shares.json) exists: it silences one bundle without deleting it, but with no
-  background service a paused share and a running one differ only while the app is up. No
+  network change within a session is not noticed until the next restart). **Serving survives
+  the window going away** now (KeepAlive, PROGRESS §3.17) but not the app being *closed*:
+  there is no always-on service, which is why a per-share **pause** (persisted in
+  shares.json) exists — it silences one bundle without deleting it. With no service a paused
+  share and a running one still differ only while the app is up. There is no Wi-Fi-only,
+  low-battery or sleep policy, and the *Share in background* switch is not persisted. No
   swarm, no relay caching or stewards, no browser
   gateway. Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
   Symlink skips are only logged. Some diagnostic printf lines remain. The storage clean-up
