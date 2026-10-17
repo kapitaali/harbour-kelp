@@ -22,9 +22,10 @@ outbound TLS tunnel to it and puts its address in the link as `r=`, so a
 recipient on a *different* network can fetch through it — the phone never has to
 accept an inbound connection. Still missing: peers helping each other serve
 (the swarm), relay caching/stewards, and a browser gateway.
-See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design and
+See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design,
 [`META-INF/kelp-swarm-wire-spec.md`](META-INF/kelp-swarm-wire-spec.md) for the
-swarm wire format.
+swarm wire format, and [`META-INF/BUILD.md`](META-INF/BUILD.md) for how to build
+and test.
 
 ## Screens
 
@@ -430,10 +431,16 @@ for.
 
 The app layer above `libkelp` has the same kind of harnesses under `src/tests/`,
 each with a `run-*-test.sh` that builds out of source: `tst_kelpfetch` (the LAN
-request header), `tst_kelpsettings` (the persisted preference), `tst_kelpshares`
-(the persisted rows) and `tst_kelpqr` (QR encoding, pinned against Python's
-`qrcode`). Run them the same way, e.g.
-`build-shell sh "$PWD/src/tests/run-kelpqr-test.sh"`.
+request header), `tst_kelpsettings` (the persisted preferences), `tst_kelpshares`
+(the persisted rows), `tst_kelpqr` (QR encoding, pinned against Python's
+`qrcode`) and `tst_kelpbundles` (seal, the local-address and link-log gates,
+storage, pause/resume). Run them the same way, e.g.
+`build-shell sh "$PWD/src/tests/run-kelpqr-test.sh"`, or run everything — libkelp,
+the app layer and the relay harness — with
+`build-shell sh "$PWD/src/tests/run-all-tests.sh"`. Because a couple of suites
+check a default that follows the build's dev-extras bundle, run that twice, once
+with `KELP_DEV_EXTRAS=1`; [`META-INF/BUILD.md`](META-INF/BUILD.md) is the
+canonical build and test document.
 
 ## Building
 
@@ -441,34 +448,39 @@ qmake-based Sailfish OS project, built with
 [sfdk](https://sailfishos.github.io/sfdk/) or the Sailfish IDE:
 
 ```sh
-sfdk -c target=SailfishOS-5.1.0.11-aarch64 build
+sfdk -c target=SailfishOS-5.1.0.11-aarch64 build    # phone (Jolla C2)
+sfdk -c target=SailfishOS-5.1.0.11-i486    build    # emulator
 ```
+
+**Switching target needs a clean first** (the build is in-source), and the same
+applies when the build's defines change. [`META-INF/BUILD.md`](META-INF/BUILD.md)
+has the whole story: the clean rule, the dev-extras bundle that separates a
+development build from a release, how to run every test suite, and the build
+traps that have actually cost time. Making a release is one line in
+`rpm/harbour-kelp.spec` (`%define kelp_dev_extras 0`); see *Development builds*.
 
 ### Development builds
 
 A build carries the **dev-extras feature bundle**
-([`src/kelpbuild.h`](src/kelpbuild.h)) only when it asks for it:
-`KELP_DEV_EXTRAS=1` in the environment at build time defines `KELP_DEV_BUILD`.
-The RPM spec ([`rpm/harbour-kelp.spec`](rpm/harbour-kelp.spec)) sets it while
-developing, so `sfdk build` gives a dev build; a release sets
-`%define kelp_dev_extras 0`. A build that asks for nothing — a bare `qmake` — is a
-release, so the safe answer is the one you get when nobody said otherwise and
-nothing can ship by a forgotten switch.
+([`src/kelpbuild.h`](src/kelpbuild.h)) only when it asks for it: `KELP_DEV_EXTRAS=1`
+in the environment at build time defines `KELP_DEV_BUILD`, and the RPM spec sets it
+while developing, so `sfdk build` gives a dev build. A release sets
+`%define kelp_dev_extras 0` in [`rpm/harbour-kelp.spec`](rpm/harbour-kelp.spec); a
+build that asks for nothing — a bare `qmake` — is a release, so the safe answer is
+what you get when nobody said otherwise.
 
 The bundle is where conveniences meant for building and testing live together, so
-that one switch turns all of them off at once and the next one cannot quietly ship
-by being forgotten. Today it holds one: writing each share's `kelp://` link — and
-so its key — into the log, and offering the *Include links in the log* switch that
+one switch turns all of them off at once and the next one cannot quietly ship by
+being forgotten. Today it holds one: writing each share's `kelp://` link — and so
+its key — into the log, and offering the *Include links in the log* switch that
 turns that off. In a release build the default is off, the switch is not shown, and
 `KelpBundles` refuses to write a link even if a preference carried over from a dev
 build says otherwise. `KELP_DEBUG_LINK` is part of the same bundle, for the same
-reason.
+reason. Every launch says which build it is:
+`Kelp: build mode — dev extras on|off`.
 
-Every launch says which build it is:
-
-```
-Kelp: build mode — dev extras on
-```
+[`META-INF/BUILD.md`](META-INF/BUILD.md) has the detail, including what to check
+after flipping the switch.
 
 ## Permissions
 

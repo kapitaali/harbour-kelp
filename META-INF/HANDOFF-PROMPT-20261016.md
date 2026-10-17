@@ -12,6 +12,8 @@ Objective
   no test could see. Fix the class, not just the instances.
 
 Read before touching anything
+- META-INF/BUILD.md — the canonical build and test document: targets, the clean
+  rule, the dev-extras dev/release switch, every suite, the build traps.
 - META-INF/PROGRESS-20261016.md — the newest session record: the three bugs with root
   causes, the exact evidence for what was verified, build/deploy/launch recipes, and a
   traps list where every entry cost the previous agent time. Read this first.
@@ -228,10 +230,13 @@ Relevant files
   OpenLink, Settings, About), cover/ (its play/pause action is a real pause-all/resume-all).
 
 Important context — build, deploy, debug
-- Build: sfdk -c target=SailfishOS-5.1.0.11-i486 build (emulator) or
-  target=SailfishOS-5.1.0.11-aarch64 (phone). It compiles in place, so switching target
-  needs a clean first: rm -f harbour-kelp *.o moc_*.cpp Makefile .qmake.stash. The
-  libcrypto.so.1.1 vs .3 linker warning is benign and explained in kelp-design.md.
+- **META-INF/BUILD.md is the canonical build/test document.** Read it before
+  building: the two targets, why switching target (or a defines change) needs a
+  clean, the dev-extras bundle that separates a dev build from a release and how
+  to make a release, every test suite with its expected count, and the build
+  traps. Short form: build with sfdk -c target=SailfishOS-5.1.0.11-i486 build
+  (emulator) or -aarch64 (phone), and run everything, both bundle modes, with
+  build-shell sh "$PWD/src/tests/run-all-tests.sh".
 - Deploy to the emulator: scp the RPM with workdir set to the project dir, then
   ssh ... 'sudo pkcon install-local -y ~/<rpm>'.
 - Launch on the emulator needs the guest environment (XDG_RUNTIME_DIR=/run/user/100000,
