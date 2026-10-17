@@ -8,6 +8,7 @@
 
 #include "kelp_crypto.h"
 #include "kelp_link.h"
+#include "kelpbuild.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
 #include "kelpstore.h"
@@ -18,14 +19,16 @@ namespace {
 // Deep enough for any real folder; there to stop a symlink loop.
 const int kMaxDepth = 64;
 
-// A link is a capability — whoever holds it can read the bundle — so it is never
-// logged by default. It is written only when the user turns on Settings →
-// "Include links in the log" (which is what lets a device with no usable
-// clipboard be handed a link) or when KELP_DEBUG_LINK is set in the environment
-// for a one-off run. The env override stays so existing headless scripts keep
-// working without touching the UI.
+// A link is a capability — whoever holds it can read the bundle — so writing one
+// into the log is a deliberate act, never an accident. It is part of the dev-extras
+// bundle: in a release build it never happens at all, and in a dev build it is on
+// by default (Settings → "Include links in the log" turns it off). KELP_DEBUG_LINK
+// forces it on for a one-off run, so headless scripts keep working without touching
+// the UI. Logging a link makes the log a secret: it holds the key.
 bool linksInLog(const KelpSettings *settings)
 {
+    if (!KelpBuild::devExtras())
+        return false;
     return (settings && settings->includeLinksInLog())
            || !qgetenv("KELP_DEBUG_LINK").isEmpty();
 }

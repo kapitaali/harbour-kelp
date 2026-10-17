@@ -34,8 +34,10 @@ class KelpSettings : public QObject
                    WRITE setIncludeLanAddress NOTIFY includeLanAddressChanged)
 
     // Write each share's kelp:// link into kelp.log so a device with no usable
-    // clipboard (the emulator, a headless box) can be handed one. Off by
-    // default: a link carries the decryption key, and the log is a plain file.
+    // clipboard (the emulator, a phone read over ssh) can be handed one. The
+    // default follows the dev-extras bundle (src/kelpbuild.h): on in a dev build,
+    // off in a release, where the switch is not offered either — a link carries
+    // its bundle's key, so the log is then a secret.
     Q_PROPERTY(bool includeLinksInLog READ includeLinksInLog
                    WRITE setIncludeLinksInLog NOTIFY includeLinksInLogChanged)
 

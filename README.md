@@ -59,8 +59,10 @@ swarm wire format.
   persisted: *Include my local address in the link* decides whether a link carries
   this device's address at all (and so whether the bundle is served locally), and
   *Include links in the log* decides whether a share's `kelp://` link (and so its
-  key) is written to the log. When the address *is* carried it is sealed, not
-  spelled out — see *Serving on the LAN* below.
+  key) is written to the log — part of the dev-extras bundle, so a dev build offers
+  it and has it on by default, while a release build never logs a link and does not
+  offer the switch (see *Development builds* below). When the address *is* carried
+  it is sealed, not spelled out — see *Serving on the LAN* below.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
@@ -358,12 +360,14 @@ kelpLog.info("added " + path + " (" + fileCount + " files)")
 The file rotates to `kelp.log.1` once it passes 512 KB.
 
 There are two ways to get a `kelp://` link written into the log, which is what a
-device with no usable clipboard — a headless box, the emulator over ssh — needs:
+device with no usable clipboard — a headless box, the emulator over ssh — needs.
+Both are part of the **dev-extras bundle**, so they exist in a dev build only: a
+release build never writes a link into the log, because the log is a plain file
+and a link holds the decryption key (see *Development builds*).
 
-- **Settings → *Include links in the log*** — a persisted switch, off by default.
-  When on, every share's link is written to the log and can be read back with
-  `grep`. A link holds the decryption key, and the log is a plain file, so the
-  switch is off unless the user asks for it.
+- **Settings → *Include links in the log*** — a persisted switch, on by default in
+  a dev build and not offered in a release. When on, every share's link is written
+  to the log and can be read back with `grep`.
 - `KELP_DEBUG_LINK=1` in the app's environment — the same effect for a single
   run, without touching the UI. Kept so existing headless scripts keep working.
 
@@ -438,6 +442,32 @@ qmake-based Sailfish OS project, built with
 
 ```sh
 sfdk -c target=SailfishOS-5.1.0.11-aarch64 build
+```
+
+### Development builds
+
+A build carries the **dev-extras feature bundle**
+([`src/kelpbuild.h`](src/kelpbuild.h)) only when it asks for it:
+`KELP_DEV_EXTRAS=1` in the environment at build time defines `KELP_DEV_BUILD`.
+The RPM spec ([`rpm/harbour-kelp.spec`](rpm/harbour-kelp.spec)) sets it while
+developing, so `sfdk build` gives a dev build; a release sets
+`%define kelp_dev_extras 0`. A build that asks for nothing — a bare `qmake` — is a
+release, so the safe answer is the one you get when nobody said otherwise and
+nothing can ship by a forgotten switch.
+
+The bundle is where conveniences meant for building and testing live together, so
+that one switch turns all of them off at once and the next one cannot quietly ship
+by being forgotten. Today it holds one: writing each share's `kelp://` link — and
+so its key — into the log, and offering the *Include links in the log* switch that
+turns that off. In a release build the default is off, the switch is not shown, and
+`KelpBundles` refuses to write a link even if a preference carried over from a dev
+build says otherwise. `KELP_DEBUG_LINK` is part of the same bundle, for the same
+reason.
+
+Every launch says which build it is:
+
+```
+Kelp: build mode — dev extras on
 ```
 
 ## Permissions

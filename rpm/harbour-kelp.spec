@@ -7,6 +7,13 @@ License:    GPL-3.0-only
 URL:        https://github.com/kapitaali/harbour-kelp
 Source0:    %{name}-%{version}.tar.bz2
 
+# The "dev extras" feature bundle (src/kelpbuild.h): conveniences meant for
+# building and testing that must not ship in a release — today, writing each
+# share's kelp:// link, and so that bundle's key, into the log by default. 1 while
+# developing; a release build sets this to 0, which is also what a build outside
+# this spec gets (harbour-kelp.pro). See README, "Development builds".
+%define kelp_dev_extras 1
+
 # The UI uses Sailfish.Pickers (FilePickerPage / FolderPickerPage) from
 # sailfish-components-pickers-qt5. Deliberately no Requires for it: the Harbour
 # validator rejects the package name and it is a base-image package, so it is
@@ -52,6 +59,9 @@ than that are not built yet.
 # Hand the git-derived version to the app so the About page shows the real
 # thing (APP_VERSION survives qmake untouched via the environment).
 export APP_VERSION=%{version}
+# The dev-extras bundle travels the same way: qmake reads the environment and
+# turns a non-zero value into the KELP_DEV_BUILD define (harbour-kelp.pro).
+export KELP_DEV_EXTRAS=%{kelp_dev_extras}
 %qmake5 harbour-kelp.pro
 %make_build
 

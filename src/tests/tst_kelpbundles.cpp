@@ -1,5 +1,5 @@
 /*
- * kelpbundles unit test — the "Include my local address in the link" gate.
+ * kelpbundles unit test — the two gates that decide what leaves this device.
  *
  * A link is handed to whoever the user sends it to (and to whoever they forward
  * it to), so the publisher must be able to withhold this device's local address.
@@ -10,6 +10,10 @@
  * The subtle case is a listener that is *already* up from an earlier share: the
  * address must still be withheld from the next link, so the gate has to be on
  * what goes into the link, not merely on whether a socket exists.
+ *
+ * The other gate is the log: a link carries the decryption key, so writing one
+ * into the log is a deliberate act — the user's switch in a dev build, never in a
+ * release whatever the switch says (src/kelpbuild.h).
  */
 
 #include <stdio.h>
@@ -30,6 +34,7 @@
 #include <QVariantMap>
 
 #include "kelp_link.h"
+#include "kelpbuild.h"
 #include "kelpbundles.h"
 #include "kelplog.h"
 #include "kelpserver.h"
@@ -41,6 +46,9 @@ namespace {
 int g_checks = 0;
 int g_failures = 0;
 QString g_section;
+// Set by the message handler the link-log section installs; never holds the link
+// itself, only the fact that one was about to be written.
+bool g_sawLink = false;
 
 QString show(const QString &value) { return value; }
 QString show(int value) { return QString::number(value); }
@@ -265,6 +273,45 @@ static void testPublish()
         CHECK(server.isListening());
         CHECK_EQ(off.value(QStringLiteral("lan")).toString(), QString());
         CHECK(!linkNamesLan(off.value(QStringLiteral("link")).toString()));
+    }
+
+    // A link carries the decryption key, so writing one into the log is a
+    // deliberate act: the user's switch decides it in a dev build, and a release
+    // build never does it, whatever the switch says. The log is a Qt message
+    // stream (KelpLog chains to it), so a message handler sees exactly what would
+    // have been written — and, because it replaces the default handler, keeps the
+    // link out of this test's own output.
+    section("a link reaches the log only when the build allows it");
+    {
+        QDir().mkpath(base + "/d");
+        KelpObjectStore store(base + "/d/objects");
+        QString error;
+        CHECK(store.initialise(&error));
+
+        KelpServer server(&store);
+        KelpBundles bundles(&store, &server);
+        KelpSettings settings;
+        bundles.setSettings(&settings);
+
+        // The one-off environment override is not part of this contract.
+        qunsetenv("KELP_DEBUG_LINK");
+        qInstallMessageHandler([](QtMsgType, const QMessageLogContext &, const QString &message) {
+            if (message.startsWith(QStringLiteral("KelpBundles: link")))
+                g_sawLink = true;
+        });
+
+        settings.setIncludeLinksInLog(true);
+        const QVariantMap on = sealOne(bundles, base + "/d", "on");
+        CHECK(on.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(g_sawLink, KelpBuild::devExtras());
+
+        g_sawLink = false;
+        settings.setIncludeLinksInLog(false);
+        const QVariantMap off = sealOne(bundles, base + "/d", "off");
+        CHECK(off.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(g_sawLink, false);
+
+        qInstallMessageHandler(nullptr);
     }
 
     QDir(base).removeRecursively();

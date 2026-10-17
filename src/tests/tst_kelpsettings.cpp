@@ -1,11 +1,14 @@
 /*
  * kelpsettings unit test — the preference has to survive a restart.
  *
- * The whole point of the "Include links in the log" switch is that it persists:
- * a link carries the decryption key, so it is off by default, and a device with
- * no usable clipboard turns it on once and keeps it on across launches. A
- * preference that silently fails to be stored — or stored somewhere the sandbox
- * hides — would look identical to a working one until the next restart.
+ * The "Include links in the log" switch persists, and its default follows the
+ * dev-extras bundle (src/kelpbuild.h): on in a dev build, so a device with no
+ * usable clipboard can be handed a link, and off in a release, where the switch
+ * is not offered at all. Either way a preference that silently failed to be
+ * stored — or was stored somewhere the sandbox hides — would look identical to a
+ * working one until the next restart, which is what this test is for. Run it once
+ * per build mode (the `.pro` follows `KELP_DEV_EXTRAS`, as the app does): the
+ * default it checks is the build's, so both answers are covered.
  *
  * QStandardPaths test mode redirects the app data directory to a throwaway
  * location, so this reads and writes a real file without touching the user's.
@@ -19,6 +22,7 @@
 #include <QStandardPaths>
 #include <QString>
 
+#include "kelpbuild.h"
 #include "kelplog.h"
 #include "kelpsettings.h"
 
@@ -78,7 +82,10 @@ void testSettings()
     section("defaults");
     {
         KelpSettings settings;
-        CHECK_EQ(settings.includeLinksInLog(), false);
+        // The default follows the build's dev-extras bundle: on in a dev build
+        // (so a link can be read back where there is no clipboard), off in a
+        // release, where the switch is not offered either.
+        CHECK_EQ(settings.includeLinksInLog(), KelpBuild::devExtras());
         // The local address is exposed unless the user opts out: it is what the
         // same-network fast path needs.
         CHECK_EQ(settings.includeLanAddress(), true);
@@ -96,13 +103,17 @@ void testSettings()
         QObject::connect(&settings, &KelpSettings::includeLinksInLogChanged,
                          [&changes]() { ++changes; });
 
-        settings.setIncludeLinksInLog(true);
+        // Toggle *away* from whatever the build's default is, so this exercises
+        // the write path in a dev build and a release build alike.
+        const bool other = !settings.includeLinksInLog();
+        settings.setIncludeLinksInLog(other);
         CHECK_EQ(changes, 1);
-        CHECK_EQ(settings.includeLinksInLog(), true);
+        CHECK_EQ(settings.includeLinksInLog(), other);
         CHECK(QFile::exists(path));
-        CHECK(readFile(path).contains("include_links=true"));
+        CHECK(readFile(path).contains(QByteArray("include_links=")
+                                      + (other ? "true" : "false")));
 
-        settings.setIncludeLinksInLog(true);   // already true: no signal, no write
+        settings.setIncludeLinksInLog(other);   // unchanged: no signal, no write
         CHECK_EQ(changes, 1);
     }
 
@@ -111,15 +122,17 @@ void testSettings()
     section("survives a restart");
     {
         KelpSettings settings;
-        CHECK_EQ(settings.includeLinksInLog(), true);
+        CHECK_EQ(settings.includeLinksInLog(), !KelpBuild::devExtras());
 
-        settings.setIncludeLinksInLog(false);
-        CHECK_EQ(settings.includeLinksInLog(), false);
-        CHECK(readFile(path).contains("include_links=false"));
+        const bool bundleDefault = KelpBuild::devExtras();
+        settings.setIncludeLinksInLog(bundleDefault);
+        CHECK_EQ(settings.includeLinksInLog(), bundleDefault);
+        CHECK(readFile(path).contains(QByteArray("include_links=")
+                                      + (bundleDefault ? "true" : "false")));
     }
     {
         KelpSettings settings;
-        CHECK_EQ(settings.includeLinksInLog(), false);
+        CHECK_EQ(settings.includeLinksInLog(), KelpBuild::devExtras());
     }
 
     section("local address");

@@ -20,9 +20,11 @@
 #include <QQuickView>
 #include <QScopedPointer>
 #include <QStandardPaths>
+#include <QVariantMap>
 #include <QDebug>
 
 #include "kelpbundles.h"
+#include "kelpbuild.h"
 #include "kelpclient.h"
 #include "kelpfiles.h"
 #include "kelplog.h"
@@ -98,6 +100,16 @@ int main(int argc, char *argv[])
 
     QQmlContext *context = view->rootContext();
     context->setContextProperty("initialLink", initialLink);
+
+    // The dev-extras bundle (src/kelpbuild.h) as one object, so QML asks by name
+    // and a feature added to the bundle needs no new context property. Also logged
+    // once: which extras a build carries is otherwise invisible, and "is this the
+    // build I think it is" is exactly what a test wants to know.
+    QVariantMap features;
+    features.insert(QStringLiteral("devExtras"), KelpBuild::devExtras());
+    context->setContextProperty("kelpFeatures", features);
+    qInfo() << "Kelp: build mode — dev extras" << (KelpBuild::devExtras() ? "on" : "off");
+
     context->setContextProperty("kelpFiles", &kelpFiles);
     context->setContextProperty("kelpLog", &kelpLog);
     context->setContextProperty("kelpSettings", &kelpSettings);

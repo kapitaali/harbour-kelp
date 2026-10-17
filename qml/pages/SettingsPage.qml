@@ -214,7 +214,11 @@ Page {
 
             TextSwitch {
                 text: qsTr("Include links in the log")
-                description: qsTr("Write each share's kelp:// link to the log file. A link holds the key to that bundle, so anyone able to read the log can open it. Leave this off unless you need it — it is the only way to read a link off a device with no usable clipboard.")
+                // Part of the dev-extras bundle (src/kelpbuild.h): a release build
+                // never logs a link and does not offer this, so the switch is not
+                // shown where it could not work.
+                visible: kelpFeatures.devExtras
+                description: qsTr("Write each share's kelp:// link to the log file. On by default, because a link you cannot get at is a share you cannot hand on — it is the only way to read one off a device with no usable clipboard. A link holds the key to that bundle, so the log is then a secret: turn this off, and clear the log, before showing it to anyone.")
                 checked: kelpSettings.includeLinksInLog
                 onCheckedChanged: {
                     if (checked !== kelpSettings.includeLinksInLog)

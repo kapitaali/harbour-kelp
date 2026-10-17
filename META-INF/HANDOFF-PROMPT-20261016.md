@@ -63,7 +63,7 @@ Current verified state (2026-10-16)
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
 - libkelp: 345 checks, 0 failures. App-layer harnesses: tst_kelpfetch 37, tst_kelpsettings
-  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 93 (all 0 failures). Relay harness: 6/6
+  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 98 (all 0 failures). Relay harness: 6/6
   ALL PASS, now against the app's own tunnel.
 - A link no longer spells out the publisher's address: encode() seals the address and label
   into q= (AES-256-GCM under HKDF(secret, "kelp/v1/link"), bundle id as AAD); decode() still
@@ -106,6 +106,17 @@ Current verified state (2026-10-16)
   still answered 200/401 as it should and the publisher wrote its traffic line (PROGRESS
   §3.17, recipe §4.6). Not done: Wi-Fi-only / low-battery / sleep policy, and persisting the
   switch. Closing the app still ends serving — a Harbour app cannot ship an always-on service.
+- Links are logged by default **while developing, never in a release**: the user asked for one
+  and then asked for the better shape — put it in a feature bundle that a release build turns
+  off. That is src/kelpbuild.{h,cpp} (`KelpBuild::devExtras()`), a build-time value that is off
+  unless `KELP_DEV_EXTRAS=1` asks for it; the spec sets it while developing
+  (`%define kelp_dev_extras 1`) and a release sets 0 (README, *Development builds*). QML sees it
+  as the `kelpFeatures` context property so the *Include links in the log* switch is simply not
+  shown in a release, and `KelpBundles::linksInLog()` refuses in a release whatever the
+  preference or KELP_DEBUG_LINK says — a release build never writes a link (and so a key) into
+  the log. Every launch says which build it is: `Kelp: build mode — dev extras on|off`. Verified
+  live in both modes on the same share, plus both modes of tst_kelpsettings and tst_kelpbundles
+  (PROGRESS §3.18).
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
@@ -131,7 +142,9 @@ Next Move (in this order — 1–3 are done as of this note)
    only written to kelp.log when the app is launched with KELP_DEBUG_LINK=1, which makes
    the emulator (no usable clipboard) need a shell launch to get a link at all.
    **Done** — src/kelpsettings.{h,cpp}, switch under Settings -> Diagnostics,
-   KELP_DEBUG_LINK kept as a one-run override.
+   KELP_DEBUG_LINK kept as a one-run override. *(Default superseded in PROGRESS §3.18: it
+   is now the build's dev-extras bundle — on while developing, off and not offered in a
+   release, which never writes a link at all.)*
 3. Make a share survive reality: shared rows are not persisted, so a restart silently
    drops the share; and the link's address is captured at share time, so a network change
    makes it stale with no indication to the user.
@@ -228,7 +241,9 @@ Important context — build, deploy, debug
 - Log: ~/.local/share/harbour.kelp/harbour-kelp/kelp.log — <OrganizationName>/<ApplicationName>,
   i.e. exactly what Sailjail provisions, and the same path sandboxed or not. Rotates at
   512 KB. Read a link back out with: grep -o 'kelp://[^ ]*' <log> | tail -1
-- KELP_DEBUG_LINK=1 writes the link to the log when a bundle is shared.
+- KELP_DEBUG_LINK=1 writes the link to the log when a bundle is shared (dev builds only:
+  a release build never writes a link, §3.18). Which build this is is in the log's first
+  lines — `Kelp: build mode — dev extras on|off`.
   KELP_INITIAL_LINK=<kelp://...> (or the link as an argument) opens Open a link prefilled
   at startup.
 - libkelp tests: sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh libkelp/tests/run-tests.sh

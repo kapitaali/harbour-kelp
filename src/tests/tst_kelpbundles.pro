@@ -8,6 +8,10 @@ QT -= gui
 CONFIG += console c++11
 CONFIG -= app_bundle
 
+# The dev-extras bundle switch, so a bundle test build agrees with the app about
+# whether a link may be written to the log (src/kelpbuild.h).
+include(../../src/kelpbuild.pri)
+
 INCLUDEPATH += $$PWD $$PWD/../../src
 # No $$PWD/../.. (the project root): the app builds in-source, so a stale
 # generated .moc/.cpp there could shadow this build's. See tst_kelpfetch.pro.
@@ -18,6 +22,7 @@ LIBS += -lssl
 
 SOURCES += tst_kelpbundles.cpp \
     ../../src/kelpbundles.cpp \
+    ../../src/kelpbuild.cpp \
     ../../src/kelpfetch.cpp \
     ../../src/kelplog.cpp \
     ../../src/kelpserver.cpp \
@@ -28,6 +33,7 @@ SOURCES += tst_kelpbundles.cpp \
 
 HEADERS += \
     ../../src/kelpbundles.h \
+    ../../src/kelpbuild.h \
     ../../src/kelpfetch.h \
     ../../src/kelplog.h \
     ../../src/kelpserver.h \

@@ -15,10 +15,17 @@ isEmpty(APP_VERSION): APP_VERSION = $$getenv(APP_VERSION)
 isEmpty(APP_VERSION): APP_VERSION = dev
 DEFINES += APP_VERSION=\\\"$$APP_VERSION\\\"
 
-# make cannot see -D flag changes, so bump main()'s timestamp to pick up the
-# current defines on incremental builds. Switching build targets needs a clean
-# on top of that (the SDK builds in-source): sfdk build-shell make distclean.
-_version_touch = $$system(touch $$PWD/src/harbour-kelp.cpp)
+# The "dev extras" feature bundle (src/kelpbuild.h): conveniences for building and
+# testing that must not ship, today logging each share's link in the clear by
+# default. The switch lives in a .pri the tests share.
+include($$PWD/src/kelpbuild.pri)
+
+# make cannot see -D flag changes, so bump the timestamp of every file whose
+# compilation depends on a define (main(), and the dev-extras bundle in
+# src/kelpbuild.h) to pick up the current defines on incremental builds.
+# Switching build targets needs a clean on top of that (the SDK builds
+# in-source): sfdk build-shell make distclean.
+_version_touch = $$system(touch $$PWD/src/harbour-kelp.cpp $$PWD/src/kelpbuild.cpp $$PWD/src/kelpsettings.cpp $$PWD/src/kelpbundles.cpp)
 
 # The QML engine, the content layer (libkelp, see libkelp/libkelp.pri) and the
 # small helpers around it. Qt5Network is both ends of the LAN-direct path: the
@@ -37,6 +44,7 @@ include(libkelp/libkelp.pri)
 SOURCES += \
     src/harbour-kelp.cpp \
     src/kelpbundles.cpp \
+    src/kelpbuild.cpp \
     src/kelpclient.cpp \
     src/kelpfetch.cpp \
     src/kelpfiles.cpp \
@@ -52,6 +60,7 @@ SOURCES += \
 
 HEADERS += \
     src/kelpbundles.h \
+    src/kelpbuild.h \
     src/kelpclient.h \
     src/kelpfetch.h \
     src/kelpfiles.h \

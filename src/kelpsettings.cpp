@@ -1,5 +1,6 @@
 #include "kelpsettings.h"
 
+#include "kelpbuild.h"
 #include "kelplog.h"
 
 namespace {
@@ -41,7 +42,14 @@ void KelpSettings::setIncludeLanAddress(bool on)
 
 bool KelpSettings::includeLinksInLog() const
 {
-    return m_settings.value(QString::fromLatin1(kIncludeLinksInLogKey), false).toBool();
+    // The default follows the dev-extras bundle (src/kelpbuild.h): on in a dev
+    // build, off in a release. The bundle's guarantee is enforced where the link
+    // would actually be written (KelpBundles), so even a preference carried over
+    // from a dev build cannot make a release log a link; here the setting is
+    // simply a setting, and the switch that changes it is only offered in a build
+    // where it can work (SettingsPage).
+    return m_settings.value(QString::fromLatin1(kIncludeLinksInLogKey),
+                            KelpBuild::devExtras()).toBool();
 }
 
 void KelpSettings::setIncludeLinksInLog(bool on)
