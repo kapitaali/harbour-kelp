@@ -19,13 +19,14 @@ namespace Link {
  * fragment is never sent to a server, which is what makes the link a capability
  * rather than a request.
  *
- * `q=` is the publisher's location hints — its own host:port and the share's
- * label — sealed with AES-256-GCM under HKDF(secret, "kelp/v1/link"). The link
- * text therefore does not say where the bundle is served from to anything that
- * sees it without the fragment; the recipient, which holds the fragment, decrypts
- * it and dials it. A link minted before this carries the same two hints in the
- * clear as `l=` and `n=`, and decode still accepts them, so links already out
- * there keep working.
+ * `q=` is the publisher's location hints — its own host:port, the share's
+ * label, and whether the share is a page — sealed with AES-256-GCM under
+ * HKDF(secret, "kelp/v1/link"). The link text therefore does not say where the
+ * bundle is served from, nor what kind of thing it is, to anything that sees it
+ * without the fragment; the recipient, which holds the fragment, decrypts it and
+ * dials it. A link minted before this carries the same hints in the clear as
+ * `l=` and `n=`, and decode still accepts them, so links already out there keep
+ * working.
  */
 
 struct Bundle {
@@ -34,8 +35,12 @@ struct Bundle {
     QStringList relays;     // tried in order
     QString lan;            // publisher host:port (direct fast path)
     QString name;           // optional label
+    // The publisher shared this as a webpage (design §5.5): a recipient should
+    // open it in a browser and leave nothing behind, not unpack it. A hint, not
+    // enforcement — the bundle is an ordinary bundle either way.
+    bool page;
 
-    Bundle() {}
+    Bundle() : page(false) {}
 };
 
 QString encode(const Bundle &bundle);

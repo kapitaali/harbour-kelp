@@ -19,7 +19,7 @@ Page {
 
     // A share the user silenced. It is still in the list and still holds its
     // objects, but nothing is served and it has no live link.
-    property bool paused: entry ? entry.state === "paused" : false
+    property bool paused: entry ? entry.shareState === "paused" : false
 
     // The link, decoded rather than string-split, so the page shows what a
     // recipient's client would see in it.
@@ -56,8 +56,9 @@ Page {
         : ""
 
     // Which file in this bundle a browser would be shown (design §5.3), asked once
-    // when the page opens: nothing in the link says a bundle carries a page, only
-    // its contents do, and they cannot change under us.
+    // when the page opens. Which file that is cannot change under us, so it is
+    // asked once; the *kind* of share is the publisher's own hint (design §5.5),
+    // carried in the link as an encrypted `q=`, and `entry.page` is that hint.
     property var page: null
 
     function lookForPage() {
@@ -122,7 +123,7 @@ Page {
                 label: qsTr("Status")
                 value: bundlePage.paused
                        ? qsTr("Paused")
-                       : ((bundlePage.entry && bundlePage.entry.state === "seeding")
+                       : ((bundlePage.entry && bundlePage.entry.shareState === "seeding")
                           ? qsTr("Seeding") : qsTr("Offline"))
             }
             DetailItem {
@@ -256,7 +257,9 @@ Page {
 
             SectionHeader {
                 visible: bundlePage.page !== null && bundlePage.page.hasPage
-                text: qsTr("Web page")
+                text: (bundlePage.entry && bundlePage.entry.page === true)
+                      ? qsTr("Web page — shared as one")
+                      : qsTr("Web page")
             }
 
             Label {
@@ -271,6 +274,9 @@ Page {
                         return ""
                     var text = qsTr("This bundle has a page in it: %1. It opens in this device's browser, which is the only place a page can run — the app decrypts the bundle and serves it to the browser from 127.0.0.1 for as long as the browser keeps asking.")
                                    .arg(bundlePage.page.entry)
+                    if (bundlePage.entry && bundlePage.entry.page === true) {
+                        text += qsTr(" The link says this share is a webpage, so a recipient that understands it is invited to open the page rather than keep a copy.")
+                    }
                     if (bundlePage.page.candidates
                             && bundlePage.page.candidates.length > 1) {
                         text += qsTr(" It holds %1 pages; the one above is the one shown.")

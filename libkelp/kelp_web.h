@@ -33,6 +33,25 @@ struct Page {
     Page() {}
 };
 
+// Whether a *name* is HTML by the convention's rule (design §5.3): it ends
+// ".html" or ".htm". The manifest side also counts a sender-recorded `mime`,
+// which a folder on disk has no equivalent of, so this is only the name half —
+// shared so that a folder checked before sealing and the preview of the bundle
+// it becomes answer the same question the same way.
+bool isHtmlName(const QString &name);
+
+// The entry document chosen out of a bundle's HTML files (design §5.3):
+// "index.html" at the bundle root, else the shallowest "index.html", else the
+// only HTML file there is, else nothing. `htmlPaths` are bundle-relative and may
+// arrive in any order; `rootOut` is the chosen file's directory — what should
+// become "/" — and is empty when there is no page.
+//
+// This is the one copy of the rule. page() feeds it the names a bundle's
+// manifests hold; the app feeds it the names in a folder before sealing that
+// folder as a webpage (design §5.5), so what a sender is told about their folder
+// and what a recipient's preview later finds cannot drift apart.
+QString chooseEntry(const QStringList &htmlPaths, QString *rootOut);
+
 // Finds the page (design §5.3): "index.html" at the bundle root; else an
 // "index.html" anywhere, the shallowest one; else the only HTML file there is;
 // else nothing, with every HTML file in `candidates` for a picker.

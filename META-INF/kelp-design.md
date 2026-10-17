@@ -639,17 +639,17 @@ has no address to put in one, so the hint survives a relay-only share.
 - Being memory, there is a ceiling: tens of megabytes, enough for a document-shaped page and not
   for a gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched
   and enforced while storing; a bundle over the ceiling is refused with the reason and the way out
-  — ask the sender to share it as a directory. Lazy fetch (§5.1's open item) is what would lift
+  — ask the sender to share it as a folder. Lazy fetch (§5.1's open item) is what would lift
   this, because fetching only what the browser asks for needs no whole-bundle copy at all.
 - **KeepAlive** is held while the session is live (the rule §5.4 needs too), because the browser now
   owns the foreground and the app is only serving it.
 
 **What the publisher's side looks like.** The main page's button becomes **Share…** and opens a page
-with three actions — **Share file**, **Share directory**, **Share webpage** — in place of the old
+with three actions — **Share file**, **Share folder**, **Share webpage** — in place of the old
 pickers and the staging list. Each gesture is the whole share: pick, and the bundle is sealed and
 appears in the list. *Share webpage* picks a folder and insists it holds a page by the §5.3 rule,
 evaluated on the folder's names before anything is sealed; a folder with no HTML is refused there
-and then, with the wording that points at *Share directory*. The staging list goes away with the
+and then, with the wording that points at *Share folder*. The staging list goes away with the
 old pickers: it existed so several entries could be sealed in one blocking pass, and one kind per
 gesture leaves nothing for a batch to buy — the cost is that two different kinds can no longer be
 collected in one pass. The §5.3 rule is factored so the filesystem answer and the manifest answer
@@ -664,7 +664,7 @@ for that session. §5.5 is the declared case, where there is no download to add 
 
 | Situation | Behaviour |
 |---|---|
-| *Share webpage* picks a folder with no HTML in it | refused before sealing, pointing at *Share directory* |
+| *Share webpage* picks a folder with no HTML in it | refused before sealing, pointing at *Share folder* |
 | A webpage link's bundle turns out to have no page (a hand-made or dishonest link) | "this link says it is a page, but there is no web page in it" — no save is offered, because the kind was view-only |
 | The link has no `p` (older link, or a directory share) | an ordinary share: save as always, and §5.4 offers the browser afterwards if the bundle holds a page |
 | The link carries `p` but no address and no relay | **Open in browser** cannot start; the reason is the same one the save path already gives |
@@ -674,7 +674,7 @@ for that session. §5.5 is the declared case, where there is no download to add 
 | The recipient's device has no browser | nothing opens (the emulator); the session exists, so a `curl` from inside proves it (§12.9) |
 
 **Explicit non-goals.** Letting the recipient override the kind — a webpage link is view-only, and a
-sender who wants the files shared has *Share directory*; remembering the page afterwards (no row, no
+sender who wants the files shared has *Share folder*; remembering the page afterwards (no row, no
 key, no objects — §12.13); choosing among several HTML files; and re-seeding a received page. The
 hint is a default, not enforcement: it is not a security boundary and is not defended as one.
 
@@ -926,15 +926,20 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
   in-browser decryption of a real bundle.
 - **C5** — UI integration (pages/cover/settings), encryption UX, passphrase links.
-- **C5.1 — share kinds (§5.5, publisher half).** Not built. The main-page button becomes
-  **Share…**; the page it opens carries three actions — *Share file*, *Share directory*, *Share
-  webpage* — each sealing one entry, with the staging list retired. *Share webpage* insists on a
-  §5.3 page, evaluated on the folder's names before sealing, through the one pure chooser the
-  manifest side also uses. A page share puts `p` in the sealed `q=` map (wire spec §5) and a
-  `page` flag in its `shares.json` row, so `republish()` re-mints it on the next launch;
-  `linkInfo` reports it. Verified: sealing a page folder logs the flag and the minted link decodes
-  with `p`; a folder with no HTML is refused; a restored share re-mints the same flag; and a link
-  with no `p` — every link already out there — behaves exactly as it does today.
+- **C5.1 — share kinds (§5.5, publisher half).** **Built and verified on the emulator.** The
+  main-page button is **Share…**; the page it opens carries three actions — *Share file*, *Share
+  folder*, *Share webpage* — each sealing one entry, with the staging list retired. *Share webpage*
+  insists on a §5.3 page, evaluated on the folder's names before sealing, through the one pure
+  chooser the manifest side also uses (`Kelp::Web::chooseEntry`, shared with `KelpFiles::pageEntry`).
+  A page share puts `p` in the sealed `q=` map (wire spec §5) and a `page` flag in its `shares.json`
+  row, so `republish()` re-mints it on the next launch; `linkInfo` reports it. Verified: sealing a page
+  folder logs the flag and the minted link decodes with `p` (including a page-only link with no
+  address at all); a folder with no HTML is refused with the wording that points at *Share folder*; a
+  share that survives a restart comes back as a webpage share (`page: true` in `shares.json`, and the
+  restored link decodes with `p`); and a link with no `p` — every link already out there — behaves
+  exactly as it does today. The same pass caught two bugs: `saveShares()` was not persisting the flag
+  at all, and the list's `state` role was being shadowed by `Item::state`, so every row read
+  "Offline" and a paused share never offered *Resume sharing* (the role is now `shareState`).
 - **C6** — Stewards/channels/CID+IPFS export bridge (optional).
 - **C7** — Swarm mode: peer discovery via relay, have/want wire, rarest-first; measure
   origin-offload on a real 5–10 peer swarm (optional, and only if C3 shows the relay is a

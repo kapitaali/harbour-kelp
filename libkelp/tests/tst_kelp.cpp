@@ -24,6 +24,7 @@
 #include "kelp_manifest.h"
 #include "kelp_object.h"
 #include "kelp_store.h"
+#include "kelp_web.h"
 #include "kelp_wire.h"
 
 using namespace Kelp;
@@ -276,6 +277,11 @@ void testCborEncoding()
     CHECK_EQ(Cbor::encodeText(QStringLiteral("a")), hex("6161"));
     CHECK_EQ(Cbor::encodeText(QStringLiteral("IETF")), hex("6449455446"));
 
+    // Booleans: the only simple values Kelp accepts, for the publisher's sealed
+    // hints (design §5.5).
+    CHECK_EQ(Cbor::encodeBool(false), hex("f4"));
+    CHECK_EQ(Cbor::encodeBool(true), hex("f5"));
+
     QVector<QByteArray> items;
     items << Cbor::encodeUnsigned(1) << Cbor::encodeUnsigned(2) << Cbor::encodeUnsigned(3);
     CHECK_EQ(Cbor::encodeArray(items), hex("83010203"));
@@ -345,6 +351,18 @@ void testCborDecoding()
         CHECK_EQ(version->unsignedValue, quint64(1));
     if (type)
         CHECK_EQ(type->text, QStringLiteral("d"));
+
+    // The two booleans decode; every other simple value is still refused, and the
+    // shortest form is the only accepted one (f8 14 is simple 20 in two bytes).
+    CHECK(Cbor::decode(hex("f5"), &value, &error));
+    CHECK(value.type == Cbor::Value::Bool);
+    CHECK_EQ(value.boolValue, true);
+    CHECK(Cbor::decode(hex("f4"), &value, &error));
+    CHECK_EQ(value.boolValue, false);
+    CHECK(!Cbor::decode(hex("f6"), &value, &error));              // null
+    CHECK(!Cbor::decode(hex("f7"), &value, &error));              // undefined
+    CHECK(!Cbor::decode(hex("f820"), &value, &error));            // simple value 32
+    CHECK(!Cbor::decode(hex("f814"), &value, &error));            // 20, not shortest
 
     // Every one of these is illegal in canonical CBOR.
     CHECK(!Cbor::decode(hex("1800"), &value, &error));            // non-shortest 0
@@ -724,6 +742,78 @@ void testLink()
                             + foreignBlob + QStringLiteral("#k=")
                             + Link::base64UrlEncode(bundle.secret),
                         &parsed, &error));
+
+    // The publisher's kind (design §5.5): a webpage share says so *inside* the
+    // sealed block, so the link text still says nothing about what it is, and the
+    // hint survives a link that has no address and no label of its own.
+    Link::Bundle pageShare;
+    pageShare.bundleId = testHash("page-bundle");
+    pageShare.secret = testHash("page-secret");
+    pageShare.page = true;
+    CHECK_EQ(pageShare.lan, QString());
+    CHECK_EQ(pageShare.name, QString());
+
+    const QString pageLink = Link::encode(pageShare);
+    CHECK(pageLink.contains(QStringLiteral("?q=")));   // minted for the kind alone
+    Link::Bundle pageParsed;
+    error.clear();
+    CHECK(Link::decode(pageLink, &pageParsed, &error));
+    CHECK_EQ(pageParsed.page, true);
+    CHECK(pageParsed.lan.isEmpty());
+    CHECK(pageParsed.name.isEmpty());
+    CHECK(pageParsed.relays.isEmpty());
+
+    // An ordinary share does not carry the hint, and says nothing extra at all.
+    Link::Bundle plainShare = pageShare;
+    plainShare.page = false;
+    CHECK(!Link::encode(plainShare).contains(QLatin1Char('?')));
+    Link::Bundle plainParsed;
+    CHECK(Link::decode(Link::encode(plainShare), &plainParsed, &error));
+    CHECK_EQ(plainParsed.page, false);
+
+    // A block from a *newer* publisher, carrying a hint this build has never
+    // heard of, still opens: unknown keys are ignored (wire spec §17), which is
+    // what lets the sealed map grow without breaking links already out there.
+    QByteArray pageKey;
+    CHECK(Crypto::hkdfSha256(pageShare.secret, QByteArray(Crypto::Sha256Size, '\0'),
+                             QByteArrayLiteral("kelp/v1/link"), Crypto::KeySize,
+                             &pageKey));
+    QVector<CborPair> future;
+    future.append(pair("l", Cbor::encodeText(QStringLiteral("192.168.1.9:1234"))));
+    future.append(pair("p", Cbor::encodeBool(true)));
+    future.append(pair("z", Cbor::encodeText(QStringLiteral("invented later"))));
+    const QByteArray wrapped = Cbor::encodeMap(future);
+    CHECK(!wrapped.isEmpty());
+    const QByteArray futureNonce = Crypto::randomBytes(Crypto::NonceSize);
+    QByteArray futureSealed;
+    CHECK(Crypto::aes256GcmEncrypt(pageKey, futureNonce, wrapped, pageShare.bundleId,
+                                   &futureSealed));
+    const QString futureLink = QStringLiteral("kelp://")
+        + QString::fromLatin1(Link::base32Encode(pageShare.bundleId))
+        + QStringLiteral("?q=") + Link::base64UrlEncode(futureNonce + futureSealed)
+        + QStringLiteral("#k=") + Link::base64UrlEncode(pageShare.secret);
+    Link::Bundle futureParsed;
+    error.clear();
+    CHECK(Link::decode(futureLink, &futureParsed, &error));
+    CHECK_EQ(futureParsed.page, true);
+    CHECK_EQ(futureParsed.lan, QStringLiteral("192.168.1.9:1234"));
+
+    // A hint of the wrong type is a malformed block, not something to guess at.
+    QVector<CborPair> wrongType;
+    wrongType.append(pair("p", Cbor::encodeText(QStringLiteral("yes"))));
+    const QByteArray badPayload = Cbor::encodeMap(wrongType);
+    const QByteArray badNonce = Crypto::randomBytes(Crypto::NonceSize);
+    QByteArray badSealed;
+    CHECK(Crypto::aes256GcmEncrypt(pageKey, badNonce, badPayload, pageShare.bundleId,
+                                   &badSealed));
+    error.clear();
+    CHECK(!Link::decode(QStringLiteral("kelp://")
+                            + QString::fromLatin1(Link::base32Encode(pageShare.bundleId))
+                            + QStringLiteral("?q=")
+                            + Link::base64UrlEncode(badNonce + badSealed)
+                            + QStringLiteral("#k=")
+                            + Link::base64UrlEncode(pageShare.secret),
+                        &futureParsed, &error));
 }
 
 void testBundleRoundTrip()
@@ -1315,10 +1405,73 @@ void testWire()
 
 } // namespace
 
+/*
+ * The page convention, as a pure function (design §5.3, §5.5).
+ *
+ * Which file in a bundle is "the page" is one rule, and both halves of a webpage
+ * share ask it: the preview, from a bundle's manifests, and the app, from the
+ * names in a folder before it seals that folder. These checks pin the rule for
+ * the second caller, where a wrong answer is a share the sender is told is a page
+ * and a recipient then cannot open.
+ */
+void testWebChooser()
+{
+    section("which file is the page");
+
+    QString root;
+
+    CHECK_EQ(Web::chooseEntry(QStringList(), &root), QString());
+    CHECK_EQ(root, QString());
+
+    CHECK(Web::isHtmlName(QStringLiteral("index.html")));
+    CHECK(Web::isHtmlName(QStringLiteral("About.HTM")));
+    CHECK(!Web::isHtmlName(QStringLiteral("index.html.bak")));
+    CHECK(!Web::isHtmlName(QStringLiteral("notes.txt")));
+    CHECK(!Web::isHtmlName(QStringLiteral("html")));
+
+    // "index.html" at the root wins over anything deeper.
+    root = QStringLiteral("unset");
+    CHECK_EQ(Web::chooseEntry(QStringList() << QStringLiteral("deep/index.html")
+                                            << QStringLiteral("index.html"), &root),
+             QStringLiteral("index.html"));
+    CHECK_EQ(root, QString());
+
+    // Case is ignored when looking, but the answer names the file that is really
+    // there: the entry is resolved by name, so a made-up "index.html" would be a
+    // page nobody could open.
+    CHECK_EQ(Web::chooseEntry(QStringList() << QStringLiteral("INDEX.HTML"), &root),
+             QStringLiteral("INDEX.HTML"));
+    CHECK_EQ(root, QString());
+
+    // Otherwise the shallowest index.html.
+    CHECK_EQ(Web::chooseEntry(QStringList() << QStringLiteral("a/b/c/index.html")
+                                            << QStringLiteral("a/index.html")
+                                            << QStringLiteral("other.html"), &root),
+             QStringLiteral("a/index.html"));
+    CHECK_EQ(root, QStringLiteral("a"));
+
+    // No index.html anywhere: the only HTML file, if there is exactly one.
+    CHECK_EQ(Web::chooseEntry(QStringList() << QStringLiteral("site/about.html"), &root),
+             QStringLiteral("site/about.html"));
+    CHECK_EQ(root, QStringLiteral("site"));
+
+    // Several HTML files and no index.html is a choice for the recipient to make,
+    // so nothing is chosen — the caller shows the candidates instead.
+    CHECK_EQ(Web::chooseEntry(QStringList() << QStringLiteral("b.html")
+                                            << QStringLiteral("a.html"), &root),
+             QString());
+    CHECK_EQ(root, QString());
+
+    // The order the names arrive in cannot change the answer.
+    QStringList shuffled;
+    shuffled << QStringLiteral("z.html") << QStringLiteral("index.html")
+             << QStringLiteral("a.html");
+    CHECK_EQ(Web::chooseEntry(shuffled, &root), QStringLiteral("index.html"));
+}
+
 int main()
 {
     printf("libkelp unit tests\n");
-
     testCborEncoding();
     testManifestVectors();
     testCborDecoding();
@@ -1327,6 +1480,7 @@ int main()
     testObjectEnvelope();
     testStoreContract();
     testLink();
+    testWebChooser();
     testBundleRoundTrip();
     testMissingObjects();
     testBundleObjects();

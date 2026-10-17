@@ -47,7 +47,8 @@ ApplicationWindow {
         kelpLog.info("addBundle: name=\"" + info.name + "\" kind=" + info.kind
                      + " files=" + info.files + " size=" + info.size
                      + " path=" + info.path + " objects=" + info.objects
-                     + " lan=" + info.lan + " swarm=" + (info.swarm === true))
+                     + " lan=" + info.lan + " swarm=" + (info.swarm === true)
+                     + " page=" + (info.page === true))
         bundlesModel.append({
             "name": info.name,
             "kind": info.kind,
@@ -56,10 +57,14 @@ ApplicationWindow {
             "bytes": info.bytes,
             "path": info.path,
             "swarm": info.swarm === true,
+            "page": info.page === true,
             // "Seeding" only means something when there is an address to serve
             // on: that is the difference between a link that works and one that
-            // does not.
-            "state": (info.lan && info.lan.length > 0) ? "seeding" : "offline",
+            // does not. The role is `shareState`, not `state`: a delegate is an
+            // Item, and Item already has a `state` property of its own, which
+            // shadows the role and is always "" — so a row read that way never
+            // said "Seeding" and a paused share never offered to resume.
+            "shareState": (info.lan && info.lan.length > 0) ? "seeding" : "offline",
             "lan": info.lan ? info.lan : "",
             "link": info.link,
             "bundleId": info.bundleId,
@@ -74,7 +79,10 @@ ApplicationWindow {
     // itself is not saved: it embeds an address that goes stale the moment the
     // app exits, so it is reminted by restoreShares() instead. `paused` IS saved,
     // though — a share the user silenced should stay silent, not come back
-    // serving itself at the next launch.
+    // serving itself at the next launch. `page` is saved for the same reason: a
+    // webpage share is a webpage share however many times the app restarts
+    // (design §5.5), and the flag is what restoreShares() feeds back to
+    // republish().
     function saveShares() {
         var rows = []
         for (var i = 0; i < bundlesModel.count; ++i) {
@@ -87,8 +95,9 @@ ApplicationWindow {
                 "bytes": row.bytes,
                 "path": row.path,
                 "swarm": row.swarm,
+                "page": row.page === true,
                 "objects": row.objects,
-                "paused": row.state === "paused",
+                "paused": row.shareState === "paused",
                 "bundleId": row.bundleId,
                 "secret": row.secret
             })
@@ -107,11 +116,11 @@ ApplicationWindow {
         if (!bundlesModel || index < 0 || index >= bundlesModel.count)
             return false
         var row = bundlesModel.get(index)
-        if (row.state === "paused")
+        if (row.shareState === "paused")
             return false
         kelpLog.info("pauseShare: pausing \"" + row.name + "\"")
         kelpBundles.pause(row.bundleId)
-        bundlesModel.setProperty(index, "state", "paused")
+        bundlesModel.setProperty(index, "shareState", "paused")
         bundlesModel.setProperty(index, "lan", "")
         bundlesModel.setProperty(index, "link", "")
         saveShares()
@@ -125,15 +134,16 @@ ApplicationWindow {
         if (!bundlesModel || index < 0 || index >= bundlesModel.count)
             return false
         var row = bundlesModel.get(index)
-        if (row.state !== "paused")
+        if (row.shareState !== "paused")
             return false
         var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
-                                              row.objects, row.files, row.bytes)
+                                              row.objects, row.files, row.bytes,
+                                              row.page === true)
         if (!published.ok) {
             kelpLog.warn("resumeShare: cannot resume \"" + row.name + "\": " + published.error)
             return false
         }
-        bundlesModel.setProperty(index, "state",
+        bundlesModel.setProperty(index, "shareState",
                                  (published.lan && published.lan.length > 0) ? "seeding" : "offline")
         bundlesModel.setProperty(index, "lan", published.lan ? published.lan : "")
         bundlesModel.setProperty(index, "link", published.link)
@@ -155,7 +165,7 @@ ApplicationWindow {
         for (var i = 0; i < bundlesModel.count; ++i) {
             var row = bundlesModel.get(i)
             if (row.lan.length > 0) ++served
-            if (row.state === "paused") ++paused
+            if (row.shareState === "paused") ++paused
         }
         servedShares = served
         pausedShares = paused
@@ -199,7 +209,8 @@ ApplicationWindow {
                     "bytes": row.bytes,
                     "path": row.path,
                     "swarm": row.swarm === true,
-                    "state": "paused",
+                    "page": row.page === true,
+                    "shareState": "paused",
                     "lan": "",
                     "link": "",
                     "bundleId": row.bundleId,
@@ -209,7 +220,8 @@ ApplicationWindow {
                 continue
             }
             var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
-                                                  row.objects, row.files, row.bytes)
+                                                  row.objects, row.files, row.bytes,
+                                                  row.page === true)
             if (!published.ok) {
                 kelpLog.warn("restoreShares: dropping \"" + row.name + "\": " + published.error)
                 continue
@@ -222,7 +234,8 @@ ApplicationWindow {
                 "bytes": row.bytes,
                 "path": row.path,
                 "swarm": row.swarm === true,
-                "state": (published.lan && published.lan.length > 0) ? "seeding" : "offline",
+                "page": row.page === true,
+                "shareState": (published.lan && published.lan.length > 0) ? "seeding" : "offline",
                 "lan": published.lan ? published.lan : "",
                 "link": published.link,
                 "bundleId": row.bundleId,

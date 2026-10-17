@@ -122,12 +122,12 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh "$PWD/src/tests/run-all-t
 
 | Suite | What it pins | Checks |
 |---|---|---|
-| `libkelp/tests/run-tests.sh` | RFC 5869 + GCM vectors, wire-spec §16 manifest/object vectors, the whole seal→open round trip, corrupt-object refusal | 345 |
+| `libkelp/tests/run-tests.sh` | RFC 5869 + GCM vectors, wire-spec §16 manifest/object vectors, the whole seal→open round trip, corrupt-object refusal, the §5.3 page chooser | 393 |
 | `src/tests/run-kelpfetch-test.sh` | the LAN request header, base64url swarm token, the reachability rule | 37 |
 | `src/tests/run-kelpsettings-test.sh` | the persisted preferences, including the dev-extras default from both sides | 24 |
 | `src/tests/run-kelpshares-test.sh` | the persisted share rows | 24 |
 | `src/tests/run-kelpqr-test.sh` | QR encoding, against Python's `qrcode` | 9 |
-| `src/tests/run-kelpbundles-test.sh` | seal, the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 126 |
+| `src/tests/run-kelpbundles-test.sh` | seal, webpage shares (`page` in the row and `p` in the link), the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 159 |
 | `src/tests/run-kelppreview-test.sh` | the §5.3 page convention, path → objects, the URL space (`404` vs `503`), `Range`/`HEAD`, the security headers, an expiring session | 202 |
 | `relay/test/run-relay-test.sh` | the relay end to end, publisher and recipient both played | 6 cases |
 
@@ -237,3 +237,22 @@ line in the README.
 - **Sailfish's Qt is 5.6**, not 5.15: no `QAbstractSocket::errorOccurred`, no
   `QOverload`, and nothing else from 5.7+. Check the header rather than the
   docs when an API "should" exist.
+- **Stop the app with `killall harbour-kelp`, then check.** `pkill -f
+  /usr/bin/harbour-kelp` over ssh matches the *remote shell's own command line*
+  and kills the shell with the app (ssh exits 255 and prints nothing), while
+  BusyBox's `pgrep -x`/`pkill -x` did not match the app here — so a
+  "stopped" that was never checked left two app instances writing one log and one
+  `shares.json`. `ps -o pid,comm | grep harbour` is the check (there must be one).
+- **A QML delegate reads model roles by name, and an `Item` property wins.** In a
+  `ListItem` delegate an unqualified `state` is `Item::state` (always `""`), not
+  the model's `state` role — the share list said "Offline" for every row and a
+  paused share could not be resumed until the role was renamed `shareState`. The
+  same class of miss: a delegate binding to a role a *row* lacks throws
+  `ReferenceError: <role> is not defined`, so every `ListModel.append()` must
+  carry every key the delegate reads (`PROGRESS-<date>.md` §2.6).
+- **Photograph a page from inside the app.** `pageStack.grabToImage()` (Qt 5.6
+  `saveToFile` takes a plain path, not a `file://` URL) is the only way to see a
+  page on this host — the emulator window is not capturable and `/dev/fb0` is not
+  what the compositor draws. Such an image has no ambience wallpaper behind it, so
+  theme-*primary* text (near-white) is invisible on white: read it for layout and
+  wording, not for colour.

@@ -24,6 +24,7 @@ SOURCES += tst_kelpbundles.cpp \
     ../../src/kelpbundles.cpp \
     ../../src/kelpbuild.cpp \
     ../../src/kelpfetch.cpp \
+    ../../src/kelpfiles.cpp \
     ../../src/kelplog.cpp \
     ../../src/kelppreviewserver.cpp \
     ../../src/kelpserver.cpp \
@@ -36,6 +37,7 @@ HEADERS += \
     ../../src/kelpbundles.h \
     ../../src/kelpbuild.h \
     ../../src/kelpfetch.h \
+    ../../src/kelpfiles.h \
     ../../src/kelplog.h \
     ../../src/kelppreviewserver.h \
     ../../src/kelpserver.h \

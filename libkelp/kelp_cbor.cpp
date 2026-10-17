@@ -202,8 +202,23 @@ private:
             return true;
         }
 
-        default: // 6 = tag, 7 = simple value / float
-            *error = QStringLiteral("unsupported CBOR major type (tag, simple value or float)");
+        case 6: // tag — nothing Kelp uses is tagged
+            *error = QStringLiteral("unsupported CBOR major type (tag)");
+            return false;
+
+        case 7: // simple value: the two booleans are the only ones we accept
+            if (argument == 20 || argument == 21) {
+                out->type = Value::Bool;
+                out->boolValue = (argument == 21);
+                return true;
+            }
+            *error = QStringLiteral("unsupported CBOR simple value or float");
+            return false;
+
+        default:
+            // Unreachable: readHead takes the major type from the top three bits,
+            // so it is always one of the eight cases above.
+            *error = QStringLiteral("unsupported CBOR major type");
             return false;
         }
     }
@@ -246,6 +261,11 @@ QByteArray encodeText(const QString &value)
     appendHead(&out, 3, quint64(utf8.size()));
     out.append(utf8);
     return out;
+}
+
+QByteArray encodeBool(bool value)
+{
+    return QByteArray(1, char(value ? 0xF5 : 0xF4));
 }
 
 QByteArray encodeArray(const QVector<QByteArray> &items)

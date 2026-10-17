@@ -37,6 +37,7 @@
 #include "kelp_link.h"
 #include "kelpbuild.h"
 #include "kelpbundles.h"
+#include "kelpfiles.h"
 #include "kelplog.h"
 #include "kelppreviewserver.h"
 #include "kelpserver.h"
@@ -180,7 +181,7 @@ static QVariantMap sealOne(KelpBundles &bundles, const QString &dir, const QStri
 {
     const QString file = writeFile(dir + QStringLiteral("/") + name + QStringLiteral(".txt"),
                                    (name + QStringLiteral(": some bytes\n")).toUtf8());
-    return bundles.seal(QStringList() << file, name);
+    return bundles.seal(QStringList() << file, name, false);
 }
 
 static void testPublish()
@@ -623,7 +624,8 @@ static void testPauseResume()
             bundleIdText, sealed.value(QStringLiteral("secret")).toString(),
             QStringLiteral("pausable"), objects,
             sealed.value(QStringLiteral("fileCount")).toInt(),
-            sealed.value(QStringLiteral("totalBytes")).toLongLong());
+            sealed.value(QStringLiteral("totalBytes")).toLongLong(),
+            false);
         CHECK(resumed.value(QStringLiteral("ok")).toBool());
         CHECK(!resumed.value(QStringLiteral("lan")).toString().isEmpty());
         CHECK(linkNamesLan(resumed.value(QStringLiteral("link")).toString()));
@@ -661,7 +663,7 @@ static void testPreview()
 
     section("preview: which file is the page");
     const QVariantMap sealed = bundles.seal(QStringList() << (base + "/preview/site"),
-                                            QStringLiteral("site"));
+                                            QStringLiteral("site"), false);
     CHECK(sealed.value(QStringLiteral("ok")).toBool());
     const QString bundleId = sealed.value(QStringLiteral("bundleId")).toString();
     const QString secret = sealed.value(QStringLiteral("secret")).toString();
@@ -732,6 +734,144 @@ static void testPreview()
     QDir(base + "/preview").removeRecursively();
 }
 
+/*
+ * Webpage shares (design §5.5): a publisher's declared kind, and the check made
+ * before a folder can be declared one. The kind rides sealed in the link's `q=`
+ * block, so it costs the link text nothing and survives a link that has no
+ * address at all; the check is the preview's own rule (§5.3) applied to names, so
+ * a folder the app calls a webpage is one a recipient's preview can find.
+ */
+static void testWebpageShare()
+{
+    QFile::remove(KelpSettings::filePath());
+
+    const QString base = KelpLog::dataDirectory() + QStringLiteral("/bundles-test");
+    QDir().mkpath(base + "/web/site/pages");
+    QDir().mkpath(base + "/web/plain");
+
+    KelpObjectStore store(base + "/web/objects");
+    QString error;
+    CHECK(store.initialise(&error));
+
+    KelpServer server(&store);
+    KelpBundles bundles(&store, &server);
+    KelpSettings settings;
+    bundles.setSettings(&settings);
+
+    KelpFiles files;
+
+    writeFile(base + "/web/site/index.html", "<!doctype html><title>site</title>\n");
+    writeFile(base + "/web/site/pages/about.html", "<p>about</p>\n");
+    writeFile(base + "/web/plain/notes.txt", "no page here\n");
+
+    section("a folder is checked before it can be called a webpage");
+    {
+        const QVariantMap good = files.pageEntry(base + "/web/site");
+        CHECK(good.value(QStringLiteral("ok")).toBool());
+        CHECK(good.value(QStringLiteral("hasPage")).toBool());
+        CHECK_EQ(good.value(QStringLiteral("entry")).toString(),
+                 QStringLiteral("index.html"));
+        CHECK_EQ(good.value(QStringLiteral("candidates")).toStringList().size(), 2);
+
+        const QVariantMap none = files.pageEntry(base + "/web/plain");
+        CHECK(none.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(none.value(QStringLiteral("hasPage")).toBool(), false);
+
+        // A folder that is not there, and a file where a folder belongs: the
+        // question could not be answered, which is not the same as "no page".
+        const QVariantMap missing = files.pageEntry(base + "/web/nothing");
+        CHECK_EQ(missing.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(!missing.value(QStringLiteral("error")).toString().isEmpty());
+        const QVariantMap notAFolder = files.pageEntry(base + "/web/site/index.html");
+        CHECK_EQ(notAFolder.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(!notAFolder.value(QStringLiteral("error")).toString().isEmpty());
+    }
+
+    section("a webpage share says so in the link");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("site"), true);
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(sealed.value(QStringLiteral("page")).toBool(), true);
+
+        const QVariantMap info =
+            bundles.linkInfo(sealed.value(QStringLiteral("link")).toString());
+        CHECK(info.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(info.value(QStringLiteral("page")).toBool(), true);
+        CHECK(!info.value(QStringLiteral("lan")).toString().isEmpty());
+
+        // The sealed bundle's own page is the folder's, one level down: sealing
+        // puts the picked entry under its own name.
+        const QVariantMap page = bundles.pageInfo(
+            sealed.value(QStringLiteral("bundleId")).toString(),
+            sealed.value(QStringLiteral("secret")).toString());
+        CHECK(page.value(QStringLiteral("hasPage")).toBool());
+        CHECK_EQ(page.value(QStringLiteral("entry")).toString(),
+                 QStringLiteral("site/index.html"));
+
+        // A page share with no address and no label: the `q=` block is minted for
+        // the kind alone, so "this is a page" survives a relay-only link.
+        settings.setIncludeLanAddress(false);
+        const QVariantMap bare = bundles.seal(QStringList() << (base + "/web/site"),
+                                              QString(), true);
+        CHECK(bare.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(bare.value(QStringLiteral("lan")).toString(), QString());
+        Kelp::Link::Bundle parsed;
+        CHECK(Kelp::Link::decode(bare.value(QStringLiteral("link")).toString(),
+                                 &parsed, &error));
+        CHECK_EQ(parsed.lan, QString());
+        CHECK_EQ(parsed.name, QString());
+        CHECK_EQ(parsed.page, true);
+        settings.setIncludeLanAddress(true);
+    }
+
+    section("an ordinary share is not called a webpage");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("site-as-files"), false);
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(sealed.value(QStringLiteral("page")).toBool(), false);
+        const QVariantMap info =
+            bundles.linkInfo(sealed.value(QStringLiteral("link")).toString());
+        CHECK_EQ(info.value(QStringLiteral("page")).toBool(), false);
+
+        // It still holds a page — that is a fact about its contents, and the
+        // recipient-side offer to open it (design §5.4) rests on it.
+        const QVariantMap page = bundles.pageInfo(
+            sealed.value(QStringLiteral("bundleId")).toString(),
+            sealed.value(QStringLiteral("secret")).toString());
+        CHECK(page.value(QStringLiteral("hasPage")).toBool());
+    }
+
+    section("a restored webpage share is still a webpage share");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("web-restored"), true);
+        const QVariantMap again = bundles.republish(
+            sealed.value(QStringLiteral("bundleId")).toString(),
+            sealed.value(QStringLiteral("secret")).toString(),
+            QStringLiteral("web-restored"),
+            sealed.value(QStringLiteral("objectCount")).toInt(),
+            sealed.value(QStringLiteral("fileCount")).toInt(),
+            sealed.value(QStringLiteral("totalBytes")).toLongLong(), true);
+        CHECK(again.value(QStringLiteral("ok")).toBool());
+        CHECK(linkNamesLan(again.value(QStringLiteral("link")).toString()));
+        const QVariantMap info =
+            bundles.linkInfo(again.value(QStringLiteral("link")).toString());
+        CHECK_EQ(info.value(QStringLiteral("page")).toBool(), true);
+    }
+
+    section("a link that cannot be read still answers the question");
+    {
+        const QVariantMap info = bundles.linkInfo(QStringLiteral("https://example.invalid/"));
+        CHECK_EQ(info.value(QStringLiteral("ok")).toBool(), false);
+        CHECK_EQ(info.value(QStringLiteral("page")).toBool(), false);
+    }
+
+    QDir(base + "/web").removeRecursively();
+    QFile::remove(KelpSettings::filePath());
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -748,6 +888,7 @@ int main(int argc, char **argv)
     testServingVisibility();
     testPauseResume();
     testPreview();
+    testWebpageShare();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

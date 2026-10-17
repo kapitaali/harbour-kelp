@@ -12,19 +12,23 @@ see ciphertext.
 Current state: **a bundle can be shared from the phone and opened on another
 device — on the same Wi-Fi, or across networks through a relay.** `libkelp`
 chunks, manifests, seals, hashes, verifies and reassembles bundles, with unit
-tests and pinned vectors; the app uses it for real in both directions. Pressing
-*Start sharing* seals every selected entry into on-device objects, starts a
-listener on this device's LAN address and produces a `kelp://` link carrying that
-address; pasting that link into *Open a link* on another device fetches the
-objects, checks each one against its address, decrypts the bundle and writes the
-files into *Downloads*. If a relay is configured, the same press also opens an
-outbound TLS tunnel to it and puts its address in the link as `r=`, so a
-recipient on a *different* network can fetch through it — the phone never has to
-accept an inbound connection. Still missing: peers helping each other serve
-(the swarm), relay caching/stewards, previewing a bundle's web page in a browser
-(§5.1 of the design), and the relay gateway that serves a recipient who has no
-app at all (§5.2). Also sketched there, and deliberately *not* planned before a
-release: anonymous ephemeral chat (Appendix B) — parked, not a milestone.
+tests and pinned vectors; the app uses it for real in both directions. *Share…*
+offers a file, a folder, or a webpage — the folder holding a site — and choosing
+one seals it into on-device objects, starts a listener on this device's LAN
+address and produces a `kelp://` link carrying that address; pasting that link
+into *Open a link* on another device fetches the objects, checks each one against
+its address, decrypts the bundle and writes the files into *Downloads*. A webpage
+share also *says* it is a page, inside the link and under the key, so the link
+text still reveals nothing — that hint is what will let a recipient open the page
+in a browser and keep nothing (design §5.5); the receiving half of that is not
+built yet. If a relay is configured, the same press also opens an outbound TLS
+tunnel to it and puts its address in the link as `r=`, so a recipient on a
+*different* network can fetch through it — the phone never has to accept an
+inbound connection. Still missing: peers helping each other serve (the swarm),
+relay caching/stewards, the relay gateway that serves a recipient who has no app
+at all (§5.2), and the receiving half of webpage shares. Also sketched there, and
+deliberately *not* planned before a release: anonymous ephemeral chat
+(Appendix B) — parked, not a milestone.
 See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design,
 [`META-INF/kelp-swarm-wire-spec.md`](META-INF/kelp-swarm-wire-spec.md) for the
 swarm wire format, and [`META-INF/BUILD.md`](META-INF/BUILD.md) for how to build
@@ -34,7 +38,7 @@ and test.
 
 - **Bundles** — list of shared bundles, each showing whether it is being served and
   the address it is served on. The list is remembered: sealed shares are restored
-  and served again at the next launch. Pull down for *Add files or folder*,
+  and served again at the next launch. Pull down for *Share…*,
   *Open a link*, *Settings*, *About*; long-press a row for *Open*, *Copy link*,
   *Pause sharing* (or *Resume sharing* on a paused row), *Stop sharing*.
 - **Bundle** — details (files, size, location, object count, the address it is
@@ -43,10 +47,13 @@ and test.
   scannable code for the other device — a note saying who can reach it,
   *Pause sharing* (silence it without forgetting it; resuming mints a fresh
   link), and *Stop sharing* — which stops serving **and** deletes the row.
-- **Add** — pick real files (each tap adds to the selection) or a whole folder.
-  Sizes and file counts are read from disk; long-press a picked row to remove it.
-  Nothing is sealed until *Start sharing*. Also carries the per-share *Let peers
-  help serve this bundle* choice.
+- **Share** — three buttons, one kind each: a file, a folder, or a webpage (the
+  folder that holds a site). One choice seals one thing into one bundle with its
+  own link, so sharing three files means choosing three times. *Share webpage…*
+  first checks the chosen folder really holds a page — by the same rule that finds
+  a page in a bundle (design §5.3) — and refuses a folder that holds none instead
+  of sharing something a recipient could not open. Also carries the per-share *Let
+  peers help serve what I share here* choice.
 - **Open a link** — paste a `kelp://` link and download the bundle. The link is
   explained before anything happens (name, content address, where it will be
   fetched from), you pick the folder to save into, and the download reports
@@ -258,6 +265,8 @@ libkelp/
   kelp_bundle.{h,cpp}    seal a tree, open a tree, plan a fetch, list every object
                          a bundle is made of, store what arrives, derive the keys
   kelp_link.{h,cpp}      encode/decode a kelp:// link, base32 and base64url
+  kelp_web.{h,cpp}       the page convention: which file in a bundle is its page,
+                         how a URL path maps onto it, MIME types, byte ranges
   tests/                 unit tests with pinned vectors
 ```
 
@@ -274,6 +283,8 @@ src/
                          holds the link (wire spec §7.2)
   kelpshares.{h,cpp}     KelpShares: the shared-bundle rows on disk, so a restart
                          restores and re-serves them (owner-only JSON)
+  kelpfiles.{h,cpp}      KelpFiles: which file in a folder is its page (the same
+                         rule the preview uses), and sizes in words
   kelpfetch.{h,cpp}      KelpSource and its two implementations: the LAN fast path
                          and the relay tunnel, behind one interface
   kelpclient.{h,cpp}     KelpClient, the other end: fetches a link, verifies what
@@ -285,20 +296,26 @@ src/
 
 The relay itself is a separate program in `relay/`, not part of the app package.
 
-`KelpBundles::seal(paths, name)` is what *Start sharing* calls: it snapshots the
-paths into a `SourceNode` tree (counting files, skipping symlinks), picks a fresh
-random master secret, seals into the store, publishes the bundle on the LAN and
-returns the link, bundle id, key, object count, file count, total bytes and the
-address it is being served on. Sealing is synchronous on the UI thread, so a large
-folder freezes the window while it works — a worker thread is a known TODO.
-Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log. Re-sharing
-the same folder writes new objects because every seal uses fresh nonces.
+`KelpBundles::seal(paths, name, page)` is what the *Share* page calls: it
+snapshots the paths into a `SourceNode` tree (counting files, skipping symlinks),
+picks a fresh random master secret, seals into the store, publishes the bundle on
+the LAN and returns the link, bundle id, key, object count, file count, total
+bytes, the address it is being served on and whether it was declared a webpage
+(`page`). The folder check that decides whether a folder *can* be declared one is
+`KelpFiles::pageEntry`, which applies the same `Kelp::Web::chooseEntry` rule the
+preview does, so the two cannot disagree. Sealing is synchronous on the UI thread,
+so a large folder freezes the window while it works — a worker thread is a known
+TODO. Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log.
+Re-sharing the same folder writes new objects because every seal uses fresh
+nonces.
 
-`KelpBundles::republish(bundleId, secret, name, objects, files, bytes)` is the
-restore path: it serves a bundle again from the saved row — the objects are
+`KelpBundles::republish(bundleId, secret, name, objects, files, bytes, page)` is
+the restore path: it serves a bundle again from the saved row — the objects are
 already in the store, and the link is minted afresh because the LAN port is
-ephemeral. `seal()` and `republish()` share one `publish()` helper, so a freshly
-sealed bundle and a restored one get the same LAN address and relay treatment.
+ephemeral. The `page` flag comes from the row, so a restored webpage share is
+still a webpage share. `seal()` and `republish()` share one `publish()` helper, so
+a freshly sealed bundle and a restored one get the same LAN address and relay
+treatment.
 
 Nothing is deleted automatically: seals and fetches both add objects, so Settings →
 **Storage** shows what is there and offers **Remove unused objects**. *Unused* has
@@ -488,9 +505,9 @@ after flipping the switch.
 ## Permissions
 
 The app requests `UserDirs` (see `harbour-kelp.desktop`) so the pickers can read
-your files, the Add page can measure them, and a download can be written into
-*Downloads*, and `Internet` because sharing serves objects over the network and
-opening a link fetches them. `Internet` is the permission that lifts the network
+your files and a sealed share can be measured and named, and a download can be
+written into *Downloads*, and `Internet` because sharing serves objects over the
+network and opening a link fetches them. `Internet` is the permission that lifts the network
 sandbox (`protocol inet,inet6,netlink`); there is no separate local-network
 permission on Sailfish. The first launch after install therefore shows the usual
 one-time permission prompt.

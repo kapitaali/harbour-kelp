@@ -343,7 +343,7 @@ void KelpBundles::stopServing(const QString &bundleId)
 
 QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secretText,
                                    const QString &name, int objects, int files,
-                                   quint64 bytes)
+                                   quint64 bytes, bool page)
 {
     QVariantMap result;
     result.insert(QStringLiteral("ok"), false);
@@ -362,7 +362,8 @@ QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secre
         return result;
     }
 
-    const Kelp::Link::Bundle link = publish(rootId, secret, name, objects, files, bytes);
+    const Kelp::Link::Bundle link =
+        publish(rootId, secret, name, objects, files, bytes, page);
     const QString linkText = Kelp::Link::encode(link);
 
     qInfo() << "KelpBundles: restored" << name << "->" << objects << "objects,"
@@ -399,6 +400,7 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
         info.insert(QStringLiteral("relays"), QStringList());
         info.insert(QStringLiteral("lan"), QString());
         info.insert(QStringLiteral("name"), QString());
+        info.insert(QStringLiteral("page"), false);
         return info;
     }
 
@@ -408,6 +410,7 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
     info.insert(QStringLiteral("relays"), parsed.relays);
     info.insert(QStringLiteral("lan"), parsed.lan);
     info.insert(QStringLiteral("name"), parsed.name);
+    info.insert(QStringLiteral("page"), parsed.page);
     return info;
 }
 
@@ -457,7 +460,7 @@ bool KelpBundles::collect(const QString &path, const QString &name, int depth,
     return true;
 }
 
-QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
+QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, bool page)
 {
     QVariantMap result;
     result.insert(QStringLiteral("ok"), false);
@@ -513,13 +516,14 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
 
     const Kelp::Link::Bundle link =
         publish(sealed.rootId, secret, name, sealed.objectCount, sealed.fileCount,
-                sealed.totalBytes);
+                sealed.totalBytes, page);
 
     const QString linkText = Kelp::Link::encode(link);
 
-    qInfo() << "KelpBundles: sealed" << name << "->" << sealed.objectCount << "objects,"
-            << sealed.fileCount << "files," << sealed.totalBytes << "bytes in"
-            << timer.elapsed() << "ms";
+    const QString label = page ? name + QStringLiteral(" (webpage)") : name;
+    qInfo() << "KelpBundles: sealed" << label << "->"
+            << sealed.objectCount << "objects," << sealed.fileCount << "files,"
+            << sealed.totalBytes << "bytes in" << timer.elapsed() << "ms";
 
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("link"), linkText);
@@ -536,17 +540,19 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name)
     result.insert(QStringLiteral("totalBytes"), sealed.totalBytes);
     result.insert(QStringLiteral("skippedLinks"), skippedLinks);
     result.insert(QStringLiteral("lan"), link.lan);
+    result.insert(QStringLiteral("page"), page);
     return result;
 }
 
 Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArray &secret,
                                         const QString &name, int objects, int files,
-                                        quint64 bytes)
+                                        quint64 bytes, bool page)
 {
     Kelp::Link::Bundle link;
     link.bundleId = rootId;
     link.secret = secret;
     link.name = name;
+    link.page = page;
 
     // Publish on the LAN before minting the link, so `l=` is in it. Failing to
     // listen is not fatal: the objects are sealed either way, the link simply

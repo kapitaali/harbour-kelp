@@ -49,15 +49,22 @@ public:
 
     // Returns { ok, error, link, bundleId, secret, objectCount, fileCount,
     //           totalBytes, skippedLinks, lan, relay }.
-    Q_INVOKABLE QVariantMap seal(const QStringList &paths, const QString &name);
+    //
+    // `page` says the thing being shared is a *webpage* (design §5.5): the link
+    // then tells the recipient to open it in a browser and leave nothing behind,
+    // and validation that it really holds a page is the caller's job
+    // (KelpFiles::pageEntry), because only it can look at the folder.
+    Q_INVOKABLE QVariantMap seal(const QStringList &paths, const QString &name,
+                                 bool page);
 
     // Serves a bundle that was shared in an earlier run — the objects and the
     // key are unchanged, only the address is minted afresh, because the LAN port
     // is ephemeral and will have moved. Restores the saved share list at startup
-    // (see KelpShares). Returns { ok, error, link, lan, relay }.
+    // (see KelpShares). `page` is the row's own flag, so a restored webpage share
+    // is still a webpage share. Returns { ok, error, link, lan, relay }.
     Q_INVOKABLE QVariantMap republish(const QString &bundleId, const QString &secret,
                                       const QString &name, int objects, int files,
-                                      quint64 bytes);
+                                      quint64 bytes, bool page);
 
     // Stops serving a bundle. The objects stay on disk; nothing else can fetch
     // them until they are shared again. This is the delete path — the caller
@@ -89,8 +96,10 @@ public:
 
     // Breaks a kelp:// link into the parts the UI explains: the content address
     // and the hints saying where to fetch it. Returns
-    // { ok, error, bundleId, relays, lan, name }. The key is deliberately not
-    // returned — it never needs to leave the link.
+    // { ok, error, bundleId, relays, lan, name, page }. `page` is the publisher's
+    // "open this in a browser" hint (design §5.5) and is false for every link
+    // minted before it existed. The key is deliberately not returned — it never
+    // needs to leave the link.
     Q_INVOKABLE QVariantMap linkInfo(const QString &link);
 
     /*
@@ -136,7 +145,8 @@ private:
     // added as `l=` and any relays as `r=`. Shared by seal() and republish(), so
     // a freshly sealed bundle and a restored one are published the same way.
     Kelp::Link::Bundle publish(const QByteArray &rootId, const QByteArray &secret,
-                               const QString &name, int objects, int files, quint64 bytes);
+                               const QString &name, int objects, int files, quint64 bytes,
+                               bool page);
 
     // Takes a bundle out of service on both paths — the relay tunnel first, then
     // the LAN listener. Shared by unshare() and pause(), which differ only in

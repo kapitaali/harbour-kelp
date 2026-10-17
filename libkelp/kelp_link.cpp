@@ -30,9 +30,9 @@ QByteArray linkKey(const QByteArray &secret)
     return out;
 }
 
-// {l: address, n: label} as canonical CBOR, sealed into nonce || ciphertext ||
-// tag and base64url'd. Returns an empty string when there is nothing to seal or
-// the secret cannot key the seal.
+// {l: address, n: label, p: is-a-page} as canonical CBOR, sealed into
+// nonce || ciphertext || tag and base64url'd. Returns an empty string when there
+// is nothing to seal or the secret cannot key the seal.
 QString sealLocations(const Bundle &bundle)
 {
     const QByteArray key = linkKey(bundle.secret);
@@ -46,6 +46,12 @@ QString sealLocations(const Bundle &bundle)
     if (!bundle.name.isEmpty())
         entries.append(qMakePair(Cbor::encodeText(QStringLiteral("n")),
                                  Cbor::encodeText(bundle.name)));
+    // Sent as `true` only, never `false`: absence means "an ordinary share", so
+    // a page share is still a page share when a relay is the only way to reach
+    // it (no address to seal, but the block is minted anyway).
+    if (bundle.page)
+        entries.append(qMakePair(Cbor::encodeText(QStringLiteral("p")),
+                                 Cbor::encodeBool(true)));
     const QByteArray payload = Cbor::encodeMap(entries);
     if (payload.isEmpty())
         return QString();
@@ -64,7 +70,8 @@ QString sealLocations(const Bundle &bundle)
 }
 
 bool openLocations(const QByteArray &secret, const QByteArray &bundleId,
-                   const QString &blob, QString *lan, QString *name, QString *error)
+                   const QString &blob, QString *lan, QString *name, bool *page,
+                   QString *error)
 {
     QByteArray raw;
     if (!base64UrlDecode(blob, &raw, error))
@@ -108,6 +115,13 @@ bool openLocations(const QByteArray &secret, const QByteArray &bundleId,
             return false;
         }
         *name = n->text;
+    }
+    if (const Cbor::Value *p = value.member("p")) {
+        if (p->type != Cbor::Value::Bool) {
+            *error = QStringLiteral("the link's page hint is not a boolean");
+            return false;
+        }
+        *page = p->boolValue;
     }
     return true;
 }
@@ -255,18 +269,20 @@ QString encode(const Bundle &bundle)
                      + QString::fromLatin1(QUrl::toPercentEncoding(bundle.relays.at(i))));
     }
 
-    // The address and the label are the link's only plaintext metadata, so they
-    // go into one opaque `q=` block. A reader without the fragment then sees a
-    // bundle id, some relay names, and random-looking bytes — not where the
-    // bundle is being served from.
-    if (!bundle.lan.isEmpty() || !bundle.name.isEmpty()) {
+    // The address, the label and whether this is a page are the link's only
+    // plaintext metadata, so they go into one opaque `q=` block. A reader without
+    // the fragment then sees a bundle id, some relay names, and random-looking
+    // bytes — not where the bundle is being served from, nor what it is.
+    if (!bundle.lan.isEmpty() || !bundle.name.isEmpty() || bundle.page) {
         const QString sealed = sealLocations(bundle);
         if (!sealed.isEmpty()) {
             query.append(QStringLiteral("q=") + sealed);
         } else {
             // No usable secret to seal under — an internal-invariant breach
             // (decode would reject such a link anyway). Keep the address rather
-            // than mint a link that reaches nothing.
+            // than mint a link that reaches nothing; the page hint cannot be
+            // carried in the clear, so such a link would read as an ordinary
+            // share, which is the safe way to fail.
             if (!bundle.lan.isEmpty())
                 query.append(QStringLiteral("l=")
                              + QString::fromLatin1(QUrl::toPercentEncoding(bundle.lan)));
@@ -368,7 +384,7 @@ bool decode(const QString &text, Bundle *out, QString *error)
     // recipient needs the address in it to reach the publisher at all.
     if (!sealedLocations.isEmpty()
         && !openLocations(bundle.secret, bundle.bundleId, sealedLocations,
-                          &bundle.lan, &bundle.name, error))
+                          &bundle.lan, &bundle.name, &bundle.page, error))
         return false;
 
     *out = bundle;

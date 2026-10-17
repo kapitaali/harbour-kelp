@@ -68,8 +68,7 @@ bool isHtml(const QString &name, const QString &mime)
 {
     if (mime.startsWith(QLatin1String("text/html"), Qt::CaseInsensitive))
         return true;
-    return name.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)
-        || name.endsWith(QLatin1String(".htm"), Qt::CaseInsensitive);
+    return isHtmlName(name);
 }
 
 QString joined(const QString &prefix, const QString &name)
@@ -127,6 +126,51 @@ QString directoryOf(const QString &path)
 
 } // namespace
 
+bool isHtmlName(const QString &name)
+{
+    return name.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)
+        || name.endsWith(QLatin1String(".htm"), Qt::CaseInsensitive);
+}
+
+QString chooseEntry(const QStringList &htmlPaths, QString *rootOut)
+{
+    QStringList html = htmlPaths;
+    html.sort();
+
+    // "index.html" at the bundle root, then any other index.html (the shallowest),
+    // then the only HTML file there is. Anything else is a choice the recipient
+    // makes, so it is left to them.
+    //
+    // The root test is case-insensitive but the entry is the path that actually
+    // matched, not the literal "index.html": a bundle whose root file is named
+    // "Index.HTML" would otherwise be told it has a page that resolve() can
+    // never find, which is worse than not offering it.
+    QString best;
+    for (int i = 0; i < html.size(); ++i) {
+        if (html.at(i).compare(QLatin1String("index.html"), Qt::CaseInsensitive) == 0) {
+            best = html.at(i);
+            break;
+        }
+    }
+
+    if (best.isEmpty()) {
+        QStringList indexes;
+        for (int i = 0; i < html.size(); ++i) {
+            if (QFileInfo(html.at(i)).fileName().compare(QLatin1String("index.html"),
+                                                         Qt::CaseInsensitive) == 0)
+                indexes.append(html.at(i));
+        }
+        if (!indexes.isEmpty())
+            best = shallowest(indexes);
+        else if (html.size() == 1)
+            best = html.at(0);
+    }
+
+    if (rootOut)
+        *rootOut = best.isEmpty() ? QString() : directoryOf(best);
+    return best;
+}
+
 bool page(ObjectStore *store, const QByteArray &key, const QByteArray &rootId,
           Page *page, QString *error)
 {
@@ -141,27 +185,7 @@ bool page(ObjectStore *store, const QByteArray &key, const QByteArray &rootId,
     html.sort();
     page->candidates = html;
 
-    // "index.html" at the bundle root, then any other index.html (the shallowest),
-    // then the only HTML file there is. Anything else is a choice the recipient
-    // makes, so it is left to them.
-    QString best;
-    if (html.contains(QLatin1String("index.html"), Qt::CaseInsensitive)) {
-        best = QLatin1String("index.html");
-    } else {
-        QStringList indexes;
-        for (int i = 0; i < html.size(); ++i) {
-            if (QFileInfo(html.at(i)).fileName().compare(QLatin1String("index.html"),
-                                                         Qt::CaseInsensitive) == 0)
-                indexes.append(html.at(i));
-        }
-        if (!indexes.isEmpty())
-            best = shallowest(indexes);
-        else if (html.size() == 1)
-            best = html.at(0);
-    }
-
-    page->path = best;
-    page->root = best.isEmpty() ? QString() : directoryOf(best);
+    page->path = chooseEntry(html, &page->root);
     return true;
 }
 

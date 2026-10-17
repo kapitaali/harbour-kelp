@@ -25,9 +25,9 @@ Page {
 
         PullDownMenu {
             MenuItem {
-                text: qsTr("Add files or folder…")
+                text: qsTr("Share…")
                 onClicked: {
-                    kelpLog.info("BundlesPage: opening Add page")
+                    kelpLog.info("BundlesPage: opening Share page")
                     pageStack.push(Qt.resolvedUrl("AddPage.qml"),
                                    { store: bundlesPage.store })
                 }
@@ -78,8 +78,9 @@ Page {
                     truncationMode: TruncationMode.Elide
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
-                    text: (kind === "folder" ? qsTr("%1 files").arg(files)
-                                             : qsTr("%1 file").arg(files))
+                    text: (page === true ? qsTr("Web page") + " · " : "")
+                          + (kind === "folder" ? qsTr("%1 files").arg(files)
+                                               : qsTr("%1 file").arg(files))
                           + " · " + size
                 }
             }
@@ -99,9 +100,9 @@ Page {
 
                 Label {
                     anchors.right: parent.right
-                    text: state === "seeding" ? qsTr("Seeding")
-                          : (state === "paused" ? qsTr("Paused") : qsTr("Offline"))
-                    color: state === "seeding" ? Theme.highlightColor : Theme.secondaryColor
+                    text: shareState === "seeding" ? qsTr("Seeding")
+                          : (shareState === "paused" ? qsTr("Paused") : qsTr("Offline"))
+                    color: shareState === "seeding" ? Theme.highlightColor : Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                 }
 
@@ -127,9 +128,9 @@ Page {
                     }
                 }
                 MenuItem {
-                    text: state === "paused" ? qsTr("Resume sharing") : qsTr("Pause sharing")
+                    text: shareState === "paused" ? qsTr("Resume sharing") : qsTr("Pause sharing")
                     onClicked: {
-                        if (state === "paused")
+                        if (shareState === "paused")
                             bundlesPage.store.resumeShare(index)
                         else
                             bundlesPage.store.pauseShare(index)
@@ -162,7 +163,7 @@ Page {
         ViewPlaceholder {
             enabled: listView.count === 0
             text: qsTr("No shared bundles")
-            hintText: qsTr("Pull down to add real files or a folder")
+            hintText: qsTr("Pull down to share a file, a folder, or a webpage")
         }
 
         VerticalScrollDecorator {}
