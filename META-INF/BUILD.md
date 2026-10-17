@@ -174,6 +174,12 @@ ssh -p 2223 -i $KEY defaultuser@127.0.0.1 \
     'sudo pkcon install-local -y ~/harbour-kelp-0.1.0-1.i486.rpm; rm -f ~/harbour-kelp-0.1.0-1.i486.rpm'
 ```
 
+Phone (Jolla C2, aarch64) — the same install on the device: copy
+`RPMS/SailfishOS-5.1.0.11-aarch64/harbour-kelp-0.1.0-1.aarch64.rpm` over (USB or `scp`), then
+`devel-su pkcon install-local -y ~/harbour-kelp-0.1.0-1.aarch64.rpm`, with **developer mode** on.
+The log is `~/.local/share/harbour.kelp/harbour-kelp/kelp.log`, the same path as in the guest.
+`PROGRESS-<date>.md` §4.7 is the recipe for trying the preview there.
+
 Then launch it with the guest's Wayland/DBus environment (an app launched
 without it exits immediately), and read the log to see which build it is and
 whether it is clean:
