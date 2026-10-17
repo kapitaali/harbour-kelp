@@ -99,7 +99,8 @@ Page {
 
                 Label {
                     anchors.right: parent.right
-                    text: state === "seeding" ? qsTr("Seeding") : qsTr("Offline")
+                    text: state === "seeding" ? qsTr("Seeding")
+                          : (state === "paused" ? qsTr("Paused") : qsTr("Offline"))
                     color: state === "seeding" ? Theme.highlightColor : Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                 }
@@ -123,6 +124,15 @@ Page {
                     onClicked: {
                         Clipboard.text = link
                         toast.show(qsTr("Link copied"))
+                    }
+                }
+                MenuItem {
+                    text: state === "paused" ? qsTr("Resume sharing") : qsTr("Pause sharing")
+                    onClicked: {
+                        if (state === "paused")
+                            bundlesPage.store.resumeShare(index)
+                        else
+                            bundlesPage.store.pauseShare(index)
                     }
                 }
                 MenuItem {

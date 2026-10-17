@@ -59,8 +59,15 @@ public:
                                       quint64 bytes);
 
     // Stops serving a bundle. The objects stay on disk; nothing else can fetch
-    // them until they are shared again.
+    // them until they are shared again. This is the delete path — the caller
+    // drops the row too — but the serving stop is also what pause() needs.
     Q_INVOKABLE void unshare(const QString &bundleId);
+
+    // Stops serving a bundle without forgetting it: the objects stay on disk and
+    // the share keeps its identity, so republish() brings it back. This is the
+    // non-destructive half of unshare(), for a share the user wants to silence
+    // for a while (already handed-out links stop working until it is resumed).
+    Q_INVOKABLE void pause(const QString &bundleId);
 
     // Returns { ok, path, objects, bytes, serving } for the About page.
     Q_INVOKABLE QVariantMap storeInfo();
@@ -95,6 +102,11 @@ private:
     // a freshly sealed bundle and a restored one are published the same way.
     Kelp::Link::Bundle publish(const QByteArray &rootId, const QByteArray &secret,
                                const QString &name, int objects, int files, quint64 bytes);
+
+    // Takes a bundle out of service on both paths — the relay tunnel first, then
+    // the LAN listener. Shared by unshare() and pause(), which differ only in
+    // whether the caller means it as "gone" or "not right now".
+    void stopServing(const QString &bundleId);
 
     KelpObjectStore *m_store;
     KelpServer *m_server;

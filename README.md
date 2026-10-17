@@ -32,12 +32,13 @@ swarm wire format.
   the address it is served on. The list is remembered: sealed shares are restored
   and served again at the next launch. Pull down for *Add files or folder*,
   *Open a link*, *Settings*, *About*; long-press a row for *Open*, *Copy link*,
-  *Stop sharing*.
+  *Pause sharing* (or *Resume sharing* on a paused row), *Stop sharing*.
 - **Bundle** — details (files, size, location, object count, the address it is
   served on, encryption), the real `kelp://` link laid out in its three parts
   (identity · where · key), *Show QR code* — the whole link, key and all, as a
-  scannable code for the other device — a note saying who can reach it, and
-  *Stop sharing* — which stops serving, not just listing.
+  scannable code for the other device — a note saying who can reach it,
+  *Pause sharing* (silence it without forgetting it; resuming mints a fresh
+  link), and *Stop sharing* — which stops serving **and** deletes the row.
 - **Add** — pick real files (each tap adds to the selection) or a whole folder.
   Sizes and file counts are read from disk; long-press a picked row to remove it.
   Nothing is sealed until *Start sharing*. Also carries the per-share *Let peers
@@ -61,8 +62,9 @@ swarm wire format.
 - **About** — version, build id, the log file path, the object store's path,
   object count and disk usage, and the address bundles are served on.
 - **Cover** — bundle count and how many are actually being served; the play/pause
-  action toggles *background seeding*, which is one of the placeholders and does
-  nothing yet.
+  action pauses *every* share for real, or resumes them all (the same per-share
+  pause/resume the list and Bundle page offer). *Share in background* in Settings
+  remains the one placeholder.
 
 ## Serving and privacy
 
@@ -276,7 +278,11 @@ ordinary files in *Downloads*.
 
 Serving is one listener for the whole app, started the first time anything is
 shared and told which bundles are currently published; `unshare()` (called by
-*Stop sharing*) takes one back out without disturbing the others. It is
+*Stop sharing*, and by *Pause sharing* through `pause()`) takes one back out
+without disturbing the others. **Pause** stops serving but keeps the row and the
+objects, and records that in `shares.json`, so a silenced share stays silent
+until it is resumed — resuming is `republish()`, the same call that restores a
+share at startup, and it mints a fresh link. It is
 content-agnostic: it reads objects out of the store and never decrypts anything.
 
 Fetching uses that same store, so an object that arrived over the network is

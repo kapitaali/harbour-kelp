@@ -21,9 +21,9 @@ Read before touching anything
   §16 pinned vectors.
 - README.md — current state, screens, how to debug.
 - META-INF/ipfs-fileshare-PLAN.md — parked, separate name. Leave it as-is.
-- The repo IS a git repository now (git init was done on 2026-10-16; commits d85d0ab,
-  3b5c4fe, fbbf829, 94feab3). Commit your work as you go, and keep the dated
-  PROGRESS-<date>.md notes up to date — they are also the history.
+- The repo IS a git repository now (git init was done on 2026-10-16). Check `git log` for
+  where things stand. Commit your work as you go, and keep the dated PROGRESS-<date>.md
+  notes up to date — they are also the history.
 
 Requirements
 - Keep planning docs as loose .md files under harbour-kelp/META-INF/.
@@ -63,7 +63,7 @@ Current verified state (2026-10-16)
 - Shares persist: a restart restores the rows and re-serves them on a fresh LAN port;
   a second instance fetched through the restored link and the file was byte-identical.
 - libkelp: 345 checks, 0 failures. App-layer harnesses: tst_kelpfetch 37, tst_kelpsettings
-  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 79 (all 0 failures). Relay harness: 6/6
+  24, tst_kelpshares 24, tst_kelpqr 9, tst_kelpbundles 93 (all 0 failures). Relay harness: 6/6
   ALL PASS, now against the app's own tunnel.
 - A link no longer spells out the publisher's address: encode() seals the address and label
   into q= (AES-256-GCM under HKDF(secret, "kelp/v1/link"), bundle id as AAD); decode() still
@@ -86,6 +86,15 @@ Current verified state (2026-10-16)
   KelpTunnel: line when the asking stops or the tunnel drops. The relay harness now runs the
   app's own KelpTunnel as the publisher instead of a hand-written stand-in, so the relay is
   tested against the code the device runs: 6/6, with the tally pinned (PROGRESS §3.15).
+- A share can be **paused and resumed**, not only deleted (user-requested: "background
+  serving needs a pause function to supplement the stop/delete function"). Pause stops
+  serving on both paths but keeps the row and objects; `paused` is written to shares.json so
+  it stays paused across a restart; resume is `republish()`. `unshare()` and `pause()` share
+  a private `stopServing()`; the store owns `pauseShare()`/`resumeShare()` so the list menu
+  and the Bundle page agree, and the cover's play/pause action is a real pause-all/resume-all.
+  tst_kelpbundles 93 checks (was 79), verified live for both
+  restore paths (PROGRESS §3.16); the cover action itself was built but not yet run (the
+  emulator VM was down and VirtualBox would not start under the host's loaded KVM modules).
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
@@ -143,8 +152,15 @@ Next Move (in this order — 1–3 are done as of this note)
    reports when the asking stops or the tunnel drops, and the relay harness now runs the app
    own tunnel as the publisher — 6/6.
 7. Only then C4 (browser viewer + gateway) or C7 (swarm).
+8. Background serving — the reason pause was just added (user-requested). A share serves
+   only while the app is in the foreground; keeping it alive when the window is gone needs a
+   Sailfish background service plus a Wi-Fi-only/battery/sleep policy, so it is a design
+   decision (kelp-design.md §12.8), not just code. Pause/resume already gives it the
+   non-destructive control it will need.
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
-lines with KelpLog calls, so everything lands in the log file.
+lines with KelpLog calls, so everything lands in the log file; and note that the three
+placeholder Settings switches (Share in background, Wi-Fi only, Allow peer swarm) are still
+inert.
 
 Relevant files
 - src/kelpfetch.{h,cpp} — KelpSource, LanSource, RelaySource. Bug 1 lives here (create()).
@@ -154,8 +170,9 @@ Relevant files
 - src/tests/kelp-probe.py — fetch from a link the way a recipient would (deriving the token
   with HKDF-SHA256, kelp/v1/swarm) without ever printing the link; exit status 0 only if
   every check passed. run-emu-share.sh --fetch drives it through the forward.
-- src/kelpbundles.{h,cpp} — seal()/republish()/unshare()/storeInfo()/storeUsage()/
-  pruneStore()/linkInfo(); the link logging gate and the shared publish() helper.
+- src/kelpbundles.{h,cpp} — seal()/republish()/unshare()/pause()/storeInfo()/storeUsage()/
+  pruneStore()/linkInfo(); unshare() and pause() share the private stopServing(); the link
+  logging gate and the shared publish() helper.
 - src/kelpshares.{h,cpp} — the shared rows on disk (owner-only shares.json), so a restart
   restores and re-serves them.
 - src/kelpqr.{h,cpp} — the QML-painted QR item for a share link; src/qrcodegen.{hpp,cpp} is
@@ -176,8 +193,10 @@ Relevant files
   (LAN header), tst_kelpsettings (persisted preference), tst_kelpshares (persisted rows),
   tst_kelpqr (QR encoding, pinned against Python's qrcode), each with its run-*-test.sh.
 - relay/ — kelp-relay, a separate binary; relay/test/run-relay-test.sh is its harness.
-- qml/ — harbour-kelp.qml (page stack, addBundle) and pages/ (Bundles, Add, Bundle,
-  OpenLink, Settings, About).
+- qml/ — harbour-kelp.qml (page stack, addBundle, and the share controls the pages
+  share: pauseShare/resumeShare/pauseAllShares/resumeAllShares, plus a sharesRevision
+  counter that makes pages re-read a row changed in place), pages/ (Bundles, Add, Bundle,
+  OpenLink, Settings, About), cover/ (its play/pause action is a real pause-all/resume-all).
 
 Important context — build, deploy, debug
 - Build: sfdk -c target=SailfishOS-5.1.0.11-i486 build (emulator) or
@@ -227,7 +246,10 @@ Known gaps carried forward
 - No TLS on the LAN path (deliberate). Shares ARE persisted now, but the address is still
   captured at share time and the port stays ephemeral: a restart remints the link (and a
   network change within a session is not noticed until the next restart). Serving stops
-  when the app exits. No swarm, no relay caching or stewards, no browser
+  when the app exits — there is no background service, which is why a per-share **pause**
+  (persisted in shares.json) exists: it silences one bundle without deleting it, but with no
+  background service a paused share and a running one differ only while the app is up. No
+  swarm, no relay caching or stewards, no browser
   gateway. Sealing is synchronous on the UI thread. open() holds the whole tree in memory.
   Symlink skips are only logged. Some diagnostic printf lines remain. The storage clean-up
   runs on the UI thread too, and there is no size cap or LRU — it is a manual action. The

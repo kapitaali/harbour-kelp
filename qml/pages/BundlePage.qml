@@ -11,8 +11,15 @@ Page {
     property int index
 
     // ListModel.get() returns a snapshot object; read it once and guard, since
-    // the row can disappear if sharing is stopped elsewhere.
-    property var entry: (store && index >= 0) ? store.bundlesModel.get(index) : null
+    // the row can disappear if sharing is stopped elsewhere. The dependence on
+    // `store.sharesRevision` is what makes this re-read after a pause or resume:
+    // a setProperty() on the model does not refresh a plain get() by itself.
+    property var entry: (store && index >= 0 && store.sharesRevision >= 0)
+                        ? store.bundlesModel.get(index) : null
+
+    // A share the user silenced. It is still in the list and still holds its
+    // objects, but nothing is served and it has no live link.
+    property bool paused: entry ? entry.state === "paused" : false
 
     // The link, decoded rather than string-split, so the page shows what a
     // recipient's client would see in it.
@@ -88,8 +95,10 @@ Page {
             DetailItem {
                 width: parent.width
                 label: qsTr("Status")
-                value: (bundlePage.entry && bundlePage.entry.state === "seeding")
-                       ? qsTr("Seeding") : qsTr("Offline")
+                value: bundlePage.paused
+                       ? qsTr("Paused")
+                       : ((bundlePage.entry && bundlePage.entry.state === "seeding")
+                          ? qsTr("Seeding") : qsTr("Offline"))
             }
             DetailItem {
                 width: parent.width
@@ -104,8 +113,18 @@ Page {
 
             SectionHeader { text: qsTr("Share link") }
 
+            Label {
+                visible: bundlePage.paused
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                text: qsTr("This share is paused, so there is no link to send. Resume it to serve the objects again — resuming mints a fresh link, because the address is only good while the bundle is being served.")
+            }
+
             TextArea {
                 id: linkArea
+                visible: !bundlePage.paused
                 width: parent.width
                 readOnly: true
                 text: bundlePage.entry ? bundlePage.entry.link : ""
@@ -117,6 +136,7 @@ Page {
             // which one is missing — the middle one, until the relay lands and a
             // link works away from the local network too.
             Label {
+                visible: !bundlePage.paused
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 wrapMode: Text.Wrap
@@ -131,6 +151,7 @@ Page {
             }
 
             Label {
+                visible: !bundlePage.paused
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 wrapMode: Text.Wrap
@@ -158,6 +179,7 @@ Page {
                     Button {
                         width: parent.width
                         text: qsTr("Copy link")
+                        enabled: !bundlePage.paused
                         onClicked: {
                             if (bundlePage.entry) {
                                 Clipboard.text = bundlePage.entry.link
@@ -168,7 +190,22 @@ Page {
                     Button {
                         width: parent.width
                         text: qsTr("Show QR code")
+                        enabled: !bundlePage.paused
                         onClicked: qrDialog.open()
+                    }
+                    Button {
+                        width: parent.width
+                        text: bundlePage.paused ? qsTr("Resume sharing")
+                                                : qsTr("Pause sharing")
+                        onClicked: {
+                            if (bundlePage.paused) {
+                                if (bundlePage.store.resumeShare(bundlePage.index))
+                                    toast.show(qsTr("Sharing resumed"))
+                            } else {
+                                if (bundlePage.store.pauseShare(bundlePage.index))
+                                    toast.show(qsTr("Sharing paused"))
+                            }
+                        }
                     }
                     Button {
                         width: parent.width
@@ -200,10 +237,12 @@ Page {
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
-                text: (bundlePage.entry && bundlePage.linkParts
-                      && bundlePage.linkParts.lan.length > 0
-                      ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. Nothing is reachable from outside the local network yet — that is what the relay will add.")
-                      : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device."))
+                text: bundlePage.paused
+                      ? qsTr("This share is paused. It stays in the list and its objects stay in the store, but nothing is served, so any link handed out earlier will not work until you resume it.")
+                      : (bundlePage.entry && bundlePage.linkParts
+                         && bundlePage.linkParts.lan.length > 0
+                         ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network needs the relay.")
+                         : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device."))
                       + bundlePage.swarmNote
             }
         }

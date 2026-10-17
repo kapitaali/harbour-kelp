@@ -621,6 +621,15 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
    is strict: a share whose manifests cannot be read fails the whole operation, because "not in
    the set" must mean "safe to delete" and an object that merely cannot be accounted for is not
    junk. See §11 and `Kelp::bundleObjects`, `KelpBundles::storeUsage/pruneStore`.)*
+8. **Background serving** — a share currently serves only while the app is in the
+   foreground. Keeping it alive once the window is gone needs a Sailfish
+   background service, plus a policy for Wi-Fi-only, battery and sleep, so it is a
+   design decision rather than just code. It is also what makes a **pause** control
+   necessary: *Stop sharing* is destructive (it deletes the row), so a share can
+   now be paused instead — serving stopped, row and objects kept, `paused`
+   recorded in `shares.json`, resumed with the same `republish()` that restores a
+   share at startup. That pause/resume pair is the non-destructive half of the
+   serving controls, and the shape background serving will need.
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 

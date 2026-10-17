@@ -183,6 +183,18 @@ void KelpBundles::setRelays(const QStringList &relays)
 
 void KelpBundles::unshare(const QString &bundleId)
 {
+    stopServing(bundleId);
+    qInfo() << "KelpBundles: no longer serving" << bundleId;
+}
+
+void KelpBundles::pause(const QString &bundleId)
+{
+    stopServing(bundleId);
+    qInfo() << "KelpBundles: paused" << bundleId << "- objects kept";
+}
+
+void KelpBundles::stopServing(const QString &bundleId)
+{
     // The relay tunnel goes first: it is the one that reaches off-network, and
     // stopping it is what makes "Stop sharing" mean stopped everywhere.
     if (m_tunnels.contains(bundleId)) {
@@ -197,11 +209,10 @@ void KelpBundles::unshare(const QString &bundleId)
     QByteArray id;
     QString error;
     if (!Kelp::Link::base32Decode(bundleId, &id, &error)) {
-        qWarning() << "KelpBundles: cannot unshare" << bundleId << ":" << error;
+        qWarning() << "KelpBundles: cannot stop serving" << bundleId << ":" << error;
         return;
     }
     m_server->unshare(id);
-    qInfo() << "KelpBundles: no longer serving" << bundleId;
 }
 
 QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secretText,

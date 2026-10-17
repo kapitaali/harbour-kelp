@@ -500,6 +500,90 @@ static void testServingVisibility()
     QFile::remove(KelpSettings::filePath());
 }
 
+/*
+ * Pause and resume (user-requested): a share can be silenced without being
+ * deleted. These checks drive the real listener, so "paused" is proved by a
+ * recipient's request being refused, not by a flag the app keeps to itself — and
+ * "resumed" by the same request working again.
+ */
+static void testPauseResume()
+{
+    QFile::remove(KelpSettings::filePath());
+
+    const QString base = KelpLog::dataDirectory() + QStringLiteral("/pause-test");
+    QDir().mkpath(base + "/a");
+
+    KelpObjectStore store(base + "/a/objects");
+    QString error;
+    CHECK(store.initialise(&error));
+
+    KelpServer server(&store);
+    KelpBundles bundles(&store, &server);
+    KelpSettings settings;
+    bundles.setSettings(&settings);
+
+    const QVariantMap sealed = sealOne(bundles, base + "/a", "pausable");
+    CHECK(sealed.value(QStringLiteral("ok")).toBool());
+    const QString bundleIdText = sealed.value(QStringLiteral("bundleId")).toString();
+    const int objects = sealed.value(QStringLiteral("objectCount")).toInt();
+
+    QByteArray rootId;
+    QString why;
+    CHECK(Kelp::Link::base32Decode(bundleIdText, &rootId, &why));
+
+    QByteArray secret;
+    CHECK(Kelp::Link::base64UrlDecode(sealed.value(QStringLiteral("secret")).toString(),
+                                      &secret, &why));
+    const QString token = Kelp::Link::base64UrlEncode(Kelp::swarmToken(secret));
+
+    const QString lan = server.lanAddress();
+    const int colon = lan.lastIndexOf(QLatin1Char(':'));
+    CHECK(colon > 0);
+    const QString host = lan.left(colon);
+    const quint16 port = quint16(lan.mid(colon + 1).toUInt());
+    const QString infoPath = QStringLiteral("/v1/bundle/%1/info").arg(bundleIdText);
+
+    QVariantMap row;
+    row.insert(QStringLiteral("bundleId"), bundleIdText);
+    row.insert(QStringLiteral("secret"), sealed.value(QStringLiteral("secret")));
+    QVariantList shares;
+    shares << row;
+
+    section("pause: a fetch is refused, the objects stay");
+    {
+        CHECK_EQ(httpGet(host, port, infoPath, token).status, 200);
+
+        bundles.pause(bundleIdText);
+
+        // A recipient now gets the same 401 it would get for a bundle that was
+        // never here — pausing gives nothing away.
+        CHECK_EQ(httpGet(host, port, infoPath, token).status, 401);
+
+        // Nothing was thrown away, so the share can be read back and served again.
+        CHECK(store.contains(rootId));
+        CHECK_EQ(store.objectCount(), objects);
+        // A paused share is not "gone" for storage purposes: its objects are still
+        // in use, so a clean-up must leave them alone.
+        CHECK_EQ(bundles.storeUsage(shares).value(QStringLiteral("unusedObjects")).toInt(), 0);
+    }
+
+    section("resume: serving again on a fresh link");
+    {
+        const QVariantMap resumed = bundles.republish(
+            bundleIdText, sealed.value(QStringLiteral("secret")).toString(),
+            QStringLiteral("pausable"), objects,
+            sealed.value(QStringLiteral("fileCount")).toInt(),
+            sealed.value(QStringLiteral("totalBytes")).toLongLong());
+        CHECK(resumed.value(QStringLiteral("ok")).toBool());
+        CHECK(!resumed.value(QStringLiteral("lan")).toString().isEmpty());
+        CHECK(linkNamesLan(resumed.value(QStringLiteral("link")).toString()));
+        CHECK_EQ(httpGet(host, port, infoPath, token).status, 200);
+    }
+
+    QDir(base).removeRecursively();
+    QFile::remove(KelpSettings::filePath());
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -514,6 +598,7 @@ int main(int argc, char **argv)
     testPublish();
     testStoreManagement();
     testServingVisibility();
+    testPauseResume();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
