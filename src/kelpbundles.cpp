@@ -266,6 +266,13 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
     QString error;
     if (!Kelp::Link::decode(link, &parsed, &error)) {
         info.insert(QStringLiteral("error"), error);
+        // The fields consumers read are inserted even on failure, so a binding
+        // that re-evaluates mid-change never reads undefined — an unshareable
+        // link has a defined (empty) "where", not a missing one.
+        info.insert(QStringLiteral("bundleId"), QString());
+        info.insert(QStringLiteral("relays"), QStringList());
+        info.insert(QStringLiteral("lan"), QString());
+        info.insert(QStringLiteral("name"), QString());
         return info;
     }
 

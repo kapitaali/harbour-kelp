@@ -88,6 +88,7 @@ ApplicationWindow {
         kelpLog.info("saveShares: writing " + rows.length + " row(s)")
         kelpShares.save(rows)
         sharesRevision++     // a row may have changed in place; pages re-read it
+        updateShareCounters()
     }
 
     // Silences a share without forgetting it: stop serving (LAN and relay), keep
@@ -135,6 +136,26 @@ ApplicationWindow {
     // The cover's play/pause action: silence every share, or serve them all
     // again. Returns how many rows changed, so the caller can tell "nothing was
     // running" from a real pause.
+    // Derived counters the cover binds to. They are maintained properties rather
+    // than functions the cover calls, because a binding that walks the model with
+    // get() re-enters the model while it evaluates and QML reports that as a
+    // binding loop (seen live on the cover, §3.16). Every row change funnels
+    // through saveShares() or restoreShares(), which is where they are refreshed.
+    property int servedShares: 0
+    property int pausedShares: 0
+
+    function updateShareCounters() {
+        var served = 0
+        var paused = 0
+        for (var i = 0; i < bundlesModel.count; ++i) {
+            var row = bundlesModel.get(i)
+            if (row.lan.length > 0) ++served
+            if (row.state === "paused") ++paused
+        }
+        servedShares = served
+        pausedShares = paused
+    }
+
     function pauseAllShares() {
         var changed = 0
         for (var i = 0; i < bundlesModel.count; ++i)
@@ -201,6 +222,7 @@ ApplicationWindow {
                 "objects": row.objects
             })
         }
+        updateShareCounters()
     }
 
     // Starts empty on purpose: add real files or folders from the Add page and

@@ -239,7 +239,8 @@ Page {
                 font.pixelSize: Theme.fontSizeSmall
                 text: bundlePage.paused
                       ? qsTr("This share is paused. It stays in the list and its objects stay in the store, but nothing is served, so any link handed out earlier will not work until you resume it.")
-                      : (bundlePage.entry && bundlePage.linkParts
+                      : (bundlePage.entry && bundlePage.linkParts && bundlePage.linkParts.ok
+                         && bundlePage.linkParts.lan
                          && bundlePage.linkParts.lan.length > 0
                          ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network needs the relay.")
                          : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device."))

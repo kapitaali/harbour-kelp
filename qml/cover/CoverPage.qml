@@ -6,32 +6,6 @@ CoverBackground {
 
     property var store
 
-    // How many bundles really are being served, rather than how many there are:
-    // a paused row has no address, so it is not counted here.
-    function servedCount() {
-        if (!cover.store)
-            return 0
-        var served = 0
-        var model = cover.store.bundlesModel
-        for (var i = 0; i < model.count; ++i)
-            if (model.get(i).lan.length > 0)
-                served++
-        return served
-    }
-
-    // True while at least one share is not paused — i.e. the pause action has
-    // something to silence. The revision read keeps callers of this live, since a
-    // setProperty() on the model does not re-evaluate a plain get() by itself.
-    function anyActive() {
-        if (!cover.store)
-            return false
-        var model = cover.store.bundlesModel
-        for (var i = 0; i < model.count; ++i)
-            if (model.get(i).state !== "paused")
-                return true
-        return false
-    }
-
     Column {
         anchors.centerIn: parent
         spacing: Theme.paddingSmall
@@ -52,12 +26,17 @@ CoverBackground {
                   : qsTr("No bundles yet")
         }
 
+        // The store maintains these counters (see harbour-kelp.qml); the cover
+        // only reads them. Walking the model with get() from inside a binding
+        // re-enters the model while it evaluates, which QML reports as a binding
+        // loop — that is why this is not a function call of its own.
         Label {
             anchors.horizontalCenter: parent.horizontalCenter
-            color: cover.servedCount() > 0 ? Theme.highlightColor : Theme.secondaryColor
+            color: (cover.store && cover.store.servedShares > 0)
+                   ? Theme.highlightColor : Theme.secondaryColor
             font.pixelSize: Theme.fontSizeExtraSmall
-            text: cover.servedCount() > 0
-                  ? qsTr("%n bundle(s) served", "", cover.servedCount())
+            text: (cover.store && cover.store.servedShares > 0)
+                  ? qsTr("%n bundle(s) served", "", cover.store.servedShares)
                   : qsTr("Nothing is being served")
         }
     }
@@ -65,14 +44,16 @@ CoverBackground {
     CoverActionList {
         CoverAction {
             // One action for the whole app: pause every share, or serve them all
-            // again. The revision read makes the icon follow the real state.
-            iconSource: (cover.store && cover.store.sharesRevision >= 0 && cover.anyActive())
+            // again — the same per-share pause/resume the list and Bundle page
+            // offer. Something is active while at least one row is not paused.
+            iconSource: (cover.store
+                         && cover.store.bundlesModel.count - cover.store.pausedShares > 0)
                         ? "image://theme/icon-m-pause"
                         : "image://theme/icon-m-play"
             onTriggered: {
                 if (!cover.store)
                     return
-                if (cover.anyActive())
+                if (cover.store.bundlesModel.count - cover.store.pausedShares > 0)
                     cover.store.pauseAllShares()
                 else
                     cover.store.resumeAllShares()

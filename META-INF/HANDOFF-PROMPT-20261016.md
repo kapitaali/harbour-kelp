@@ -92,9 +92,12 @@ Current verified state (2026-10-16)
   it stays paused across a restart; resume is `republish()`. `unshare()` and `pause()` share
   a private `stopServing()`; the store owns `pauseShare()`/`resumeShare()` so the list menu
   and the Bundle page agree, and the cover's play/pause action is a real pause-all/resume-all.
-  tst_kelpbundles 93 checks (was 79), verified live for both
-  restore paths (PROGRESS §3.16); the cover action itself was built but not yet run (the
-  emulator VM was down and VirtualBox would not start under the host's loaded KVM modules).
+  tst_kelpbundles 93 checks (was 79), verified live end to end on the emulator — both restore
+  paths, the Bundle page's pause/resume, and the cover action — with a clean log (PROGRESS
+  §3.16). Two live-found fixes came out of it: `linkInfo()` inserts empty defaults even on a
+  failed decode (a paused share has no `lan`, and one page read it unguarded), and the cover
+  binds to store-maintained `servedShares`/`pausedShares` counters rather than calling
+  `ListModel.get()` inside a binding, which QML reported as a binding loop.
 - A share's link can be shown as a QR code on the Bundle page (user-requested): the encoder
   is vendored Nayuki qrcodegen (MIT, src/qrcodegen.*), the item is src/kelpqr.*, and the
   rendered code was verified by scanning it with a real decoder (PROGRESS §3.8).
