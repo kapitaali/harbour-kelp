@@ -337,6 +337,10 @@ the only one. The earlier "browser viewer + gateway" milestone hid this split; i
 **C4a** (preview) and **C4b** (gateway) in §11, because the trust argument for each is
 opposite and hardly any work is shared beyond that convention.
 
+One more section belongs to this group without being a third trust model: **§5.4** is the
+receive-side door into §5.1 — the same preview, entered from a download that has just finished
+instead of from a share in the list.
+
 ### 5.1 Shared-page preview — the app serves the page to the recipient's browser
 
 **The shape.** The sender shares a bundle containing an entry document — `index.html` and
@@ -409,10 +413,11 @@ a **Web page** section on a bundle's own page — shown only when the bundle has
 the design put it, and the whole flow is one button.
 
 **What is not built yet.** The lazy fetch through `KelpSource`, so a preview serves exactly what
-the store already holds and answers `503` for anything else. The *recipient* side: a bundle
-fetched from a link is not kept, so today §5.1 is reached through a share this device made
-(§12.13). And the per-bundle confirmation (§12.10) — deferred until the page being opened is
-someone else's.
+the store already holds and answers `503` for anything else. The per-bundle confirmation
+(§12.10) — deferred until the page being opened is someone else's. The *recipient* side is no
+longer blocked on a kept bundle: §5.4 opens the preview for the session a download just finished,
+and keeping a received bundle (§12.13) is what would make that preview re-openable and the bundle
+seedable.
 
 **Two ways to open it, and the recommendation.**
 
@@ -526,6 +531,70 @@ anyway. For §5.2 there is no app to fall back on, so the loader renders a **gen
 list** of its own (names, sizes, per-file download, optionally a ZIP assembled in the
 browser) when the bundle has no entry document. The convention above decides which page the
 *sender* supplied; the loader's list is the floor beneath it.
+
+### 5.4 The preview from the receive side — one session, nothing kept
+
+**The gap.** §5.1 was designed for a recipient — "the recipient opens the page" — but the only
+door into it is a bundle *this device shares*: **Web page** lives on `BundlePage`, and that page
+is reached from the bundle list, which is `shares.json`. A bundle fetched from a link is written
+out as ordinary files and then forgotten — no row, no kept key — so the person the feature exists
+for never sees the page. This is the receive-side half of §5.1, and it is deliberately the
+smallest shape that closes it.
+
+**The shape.** When a download finishes, the Open-link page's Done panel gains one button —
+**Open in browser** — shown when the bundle just fetched has an entry document (§5.3). Pressing
+it opens a session against the bundle already in the object store and hands the URL to the
+browser, exactly as the sender's button does. Nothing else changes: no row, no stored key, no
+list entry; the ordinary 30-minute idle session that dies with the app; and no fetch, because
+`KelpClient` already stored every object to verify it (§11 C2b).
+
+**Why not keep it.** §12.13 asks whether a received bundle should become a row (id + key) so it
+can be previewed again, re-downloaded, or seeded. That is a bigger decision — a key this device
+never minted, held on disk; a list that mixes "shared by me" with "received" — and it is not
+needed to answer the question this exists for: *does the recipient see the page?* What the
+ephemeral button gives up is stated plainly: the URL dies with the app, the bundle is findable
+again only through the link, and a received bundle can be neither re-shared nor seeded.
+
+**How the app knows there is a page.** The §5.3 convention, asked once when the fetch reaches
+*done* and never in a binding — the rule `BundlePage` already follows. The seam is the existing
+pair `KelpBundles::pageInfo(bundleId, secret)` and `previewPage(...)`, which take exactly the two
+strings a link carries and care nothing about where the consumer came from. So `KelpClient` grows
+two read-only properties, `bundleId` and `secret`, filled from the decoded link and cleared by
+`reset()`; the page asks and opens through the same calls the bundle page uses. No new C++ in the
+preview path, one listener, one server. The key is not newly exposed by this — the Open-link page
+already holds the whole link, fragment included, and redacts it before anything is logged — and
+the rule is unchanged: the secret never reaches the log, the store, or the screen.
+
+**One thing the receive side needs that the send side did not: the keepalive.** `Nemo.KeepAlive`
+is held today only while *Share in background* is on and something is being served. A recipient
+turned that switch on for nobody and has nothing in the list being served, so the request not to
+be ended would not be made — while the party in the foreground is the browser, not the app. The
+condition becomes: held while **any preview session is live**, or while serving is on and a share
+is unpaused. §12.8 already noted a preview needs this; this is where it lands.
+
+| Situation | Behaviour |
+|---|---|
+| The bundle just downloaded has no HTML | no button; the Done panel is exactly what it was |
+| The fetch failed or was cancelled | no button: there is no complete bundle to serve |
+| Several HTML files | §5.3's choice is served, and a line says how many pages the bundle holds; no picker, matching the sender's own page |
+| A single-file bundle that is a page | works: the entry document is the file, the web root is the bundle root |
+| The page wants a CDN | blocked by the same CSP; offline is the design (§12.11), and this button does not change it |
+| Kelp closed, or the session times out | the URL stops answering; the download sits untouched in Downloads |
+| Objects pruned mid-session | the page answers `503`, as any preview does for what the store cannot answer |
+| The emulator, which has no browser | `Qt.openUrlExternally` returns `true` and nothing opens; the session still exists, so a `curl` from inside the guest is the proof, and this is how it is verified |
+
+**Explicit non-goals of this shape.** Keeping the row (id + key), which is what would make a
+preview re-openable and a received bundle seedable; a remembered per-bundle consent — every
+preview here is a fresh, explicit press, so there is nothing to remember, and §12.10's prompt
+stays parked until a received bundle *is* kept; a page picker; and serving a received bundle to
+anyone else.
+
+**On trust, one line.** This is the first door through which a page someone *else* wrote reaches
+the preview's code path, and the answer is the one §5.1 already had: the button is a distinct,
+visible action and never a default, the page gets the loopback origin and the CSP with no network,
+and the session ends with the app. Route B is the route for the same reasons — and here it is the
+recipient's own device, so §12.9's "what if there is no browser?" becomes a recipient-side
+question too.
 
 ---
 
@@ -751,9 +820,17 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   `503`, a 30-minute idle session), the `KelpBundles` seam, and *Open in browser* on a bundle's
   page. `tst_kelppreview` drives it over a real socket and `tst_kelpbundles` covers the seam;
   both run without a browser or a display. Still to do: the lazy fetch through `KelpSource`
-  (today a missing object is a `503`), the recipient side once a fetched bundle is kept
-  (§12.13), the per-bundle confirmation (§12.10), and an on-device pass with a real browser.
-  An embedded `Sailfish.WebView` remains a later UI decision (§12.9).
+  (today a missing object is a `503`), the receive side, now **C4a.1** below, the per-bundle
+  confirmation (§12.10), and an on-device pass with a real browser. An embedded
+  `Sailfish.WebView` remains a later UI decision (§12.9).
+- **C4a.1 — the preview from the receive side (§5.4).** Not built. One **Open in browser**
+  button on the Open-link page's Done panel, offered when the bundle just fetched has an entry
+  document (§5.3) and served by the same `KelpPreviewServer` through
+  `pageInfo`/`previewPage`; `KelpClient` exposes the two strings that seam takes
+  (`bundleId`, `secret`) and clears them on `reset()`; `KeepAlive` is held while any preview
+  session is live, not only while a share is served. Nothing is persisted, so §12.13 stays
+  open. Verified by fetching a real bundle on the emulator and `curl`-ing the session there
+  (no browser to hand it to), then with a real browser on the C2.
 - **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
   in-browser decryption of a real bundle.
@@ -879,20 +956,28 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    decision durable, because the same id is the same immutable bytes; a remembered "trusted"
    can never be swapped for different content. Deferred by the first cut: what is opened today
    is the sender's own share, and a prompt over your own content is noise. The prompt belongs
-   with §12.13, when the page is someone else's.)*
+   with §12.13, when the page is someone else's. **Still parked after §5.4:** fetching someone
+   else's bundle and pressing *Open in browser* is a fresh, explicit choice every time, and
+   nothing is remembered for a prompt to be about; the prompt is for the day a received bundle
+   is kept.)*
 11. **A page's network reach** — offline forever, enforced by the CSP in §5.1 *(recommended)*,
    or an explicit per-preview "let this page use the internet" switch?
 12. **Download-all in the gateway** — a ZIP assembled in the browser (no `CompressionStream`
    guarantee in the engine; STORE + CRC32 in JS works), or per-file downloads only?
 13. **Keeping what a recipient receives** — a bundle fetched from a link is written out as
-   ordinary files in Downloads, and the app keeps neither its objects nor its key past the
-   fetch. So a recipient cannot preview it (§5.1), re-download it, or help seed it, and *the*
-   flow C4a was designed for — "the recipient opens the page" — cannot be tried on a real
-   device. Keeping the row (id + key, in `shares.json` or a received list of its own) is what
-   fixes that, at the cost of holding a key this device never minted and of a bundle list that
-   mixes "shared by me" with "received". *(Leaning: keep received bundles as rows that can be
-   paused and removed and are marked as received, because the alternative is a preview that
-   only ever shows you your own page.)*
+   ordinary files in Downloads, and the app keeps no key and no record of it: its objects are
+   stored while it is verified (§11 C2b), but nothing points at them once the fetch ends, so
+   they fall to *Remove unused objects* (§12.7). So a recipient cannot preview the bundle
+   (§5.1), re-download it, or help seed it, and *the* flow C4a was designed for — "the recipient
+   opens the page" — cannot be tried on a real device. Keeping the row (id + key, in
+   `shares.json` or a received list of its own) is what would fix that, at the cost of holding a
+   key this device never minted and of a bundle list that mixes "shared by me" with "received".
+   *(Leaning: keep received bundles as rows that can be paused and removed and are marked as
+   received, because the alternative is a preview that only ever shows you your own page.
+   **2026-10-17: the first half is answered without keeping anything** — §5.4 offers the preview
+   for the one session a download just finished, so a recipient does see the page, with no key on
+   disk and nothing added to the list. What keeping the row would still add: a preview that can be
+   re-opened later, a re-download without the link, and seeding a received bundle.)*
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 
