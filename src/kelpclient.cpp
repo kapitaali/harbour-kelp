@@ -12,7 +12,10 @@
 #include "kelpfetch.h"
 #include "kelp_link.h"
 #include "kelp_manifest.h"
-#include "kelpstore.h"
+#include "kelp_store.h"
+#include "kelp_web.h"
+#include "kelpbuild.h"
+#include "kelppreviewserver.h"
 
 namespace {
 
@@ -25,6 +28,41 @@ const int kMaxInflight = 4;
 // that accepts the connection and then says nothing — and the fetch ends instead
 // of leaving a spinner up forever.
 const int kSilenceMs = 20000;
+
+// How large a *received webpage* may be before it is refused (design §5.5): the
+// whole bundle is held in memory while it is looked at, so there is a ceiling,
+// and this is it. Enough for a document-shaped page, not for a gallery. The
+// sender's claimed size is checked against it before anything is fetched, and
+// what actually arrives is counted against it too — the claim is only a claim.
+const quint64 kViewCeilingBytes = 32ull * 1024 * 1024;
+
+QString unitText(quint64 bytes, quint64 scale, const char *suffix)
+{
+    const double value = double(bytes) / double(scale);
+    const qint64 whole = qint64(value);
+    return double(whole) == value
+        ? QStringLiteral("%1 %2").arg(whole).arg(QLatin1String(suffix))
+        : QStringLiteral("%1 %2").arg(QString::number(value, 'f', 1))
+              .arg(QLatin1String(suffix));
+}
+
+QString sizeText(quint64 bytes)
+{
+    if (bytes >= 1024ull * 1024 * 1024)
+        return unitText(bytes, 1024ull * 1024 * 1024, "GB");
+    if (bytes >= 1024ull * 1024)
+        return unitText(bytes, 1024ull * 1024, "MB");
+    if (bytes >= 1024)
+        return unitText(bytes, 1024, "kB");
+    return QStringLiteral("%1 bytes").arg(bytes);
+}
+
+QString overCeiling(quint64 ceiling, quint64 bytes)
+{
+    return QStringLiteral("This page is %1 — more than the %2 a shared page can be "
+                          "viewed with. Ask the sender to share it as a folder instead.")
+        .arg(sizeText(bytes), sizeText(ceiling));
+}
 
 // The name in a link becomes a folder name, so it is stripped of anything that
 // means something to a filesystem, and of leading dots (hidden, and "..").
@@ -117,11 +155,16 @@ bool writeChildren(const QVector<Kelp::TreeNode> &children, const QString &dir,
 
 } // namespace
 
-KelpClient::KelpClient(KelpObjectStore *store, QObject *parent)
+KelpClient::KelpClient(Kelp::ObjectStore *store, QObject *parent)
     : QObject(parent),
       m_store(store),
       m_source(nullptr),
+      m_preview(nullptr),
+      m_settings(nullptr),
       m_deadline(new QTimer(this)),
+      m_viewing(false),
+      m_viewBytes(0),
+      m_viewCeiling(kViewCeilingBytes),
       m_phase(Idle),
       m_total(0),
       m_fetched(0),
@@ -133,6 +176,26 @@ KelpClient::KelpClient(KelpObjectStore *store, QObject *parent)
     m_deadline->setSingleShot(true);
     m_deadline->setInterval(kSilenceMs);
     connect(m_deadline, &QTimer::timeout, this, &KelpClient::timedOut);
+}
+
+void KelpClient::setPreviewServer(KelpPreviewServer *preview)
+{
+    m_preview = preview;
+}
+
+void KelpClient::setViewCeiling(quint64 bytes)
+{
+    m_viewCeiling = bytes;
+}
+
+void KelpClient::setSettings(KelpSettings *settings)
+{
+    m_settings = settings;
+}
+
+Kelp::ObjectStore *KelpClient::activeStore() const
+{
+    return m_viewing ? m_viewStore.data() : m_store;
 }
 
 QString KelpClient::phase() const
@@ -197,6 +260,15 @@ void KelpClient::reset()
     m_files = 0;
     m_bytes = 0;
     m_phase = Idle;
+    // A view's own bookkeeping goes with it, and its memory is released here if
+    // nothing else holds it: any preview session that was serving it holds a
+    // reference of its own and keeps working.
+    m_viewing = false;
+    m_viewSecret.clear();
+    m_viewToken.clear();
+    m_viewUrl.clear();
+    m_viewBytes = 0;
+    m_viewStore.clear();
     emit changed();
 }
 
@@ -204,6 +276,12 @@ void KelpClient::cancel()
 {
     const bool wasBusy = busy();
     dropSource();
+    if (m_viewing) {
+        // Nothing can be serving an incomplete view: a session only ever opens
+        // once the whole bundle is here.
+        m_viewBytes = 0;
+        m_viewStore.clear();
+    }
     if (wasBusy) {
         m_phase = Idle;
         qInfo() << "KelpClient: fetch cancelled after" << m_fetched << "objects";
@@ -216,6 +294,12 @@ bool KelpClient::failed(const QString &message)
     dropSource();
     m_error = message;
     m_phase = Failed;
+    if (m_viewing) {
+        // Nothing will serve a view that failed, so let its memory go now rather
+        // than at the next reset.
+        m_viewBytes = 0;
+        m_viewStore.clear();
+    }
     qWarning() << "KelpClient: fetch failed:" << message
                << "(objects stored:" << m_fetched << ")";
     emit changed();
@@ -224,6 +308,16 @@ bool KelpClient::failed(const QString &message)
 
 bool KelpClient::fetch(const QString &linkText)
 {
+    return beginFetch(linkText, false);
+}
+
+bool KelpClient::fetchForViewing(const QString &linkText)
+{
+    return beginFetch(linkText, true);
+}
+
+bool KelpClient::beginFetch(const QString &linkText, bool viewing)
+{
     if (busy()) {
         m_error = QStringLiteral("another fetch is still running");
         emit changed();
@@ -231,7 +325,16 @@ bool KelpClient::fetch(const QString &linkText)
     }
     reset();
 
-    if (!m_store)
+    // A view gets a store of its own, on the heap and shared with whatever ends
+    // up serving it: an earlier session, if any, is untouched by this (design
+    // §5.5, and C4a2-plan.md D4a).
+    m_viewing = viewing;
+    if (m_viewing) {
+        m_viewStore = QSharedPointer<Kelp::MemoryStore>::create();
+        m_viewBytes = 0;
+    }
+
+    if (!activeStore())
         return failed(QStringLiteral("no object store to fetch into"));
 
     Kelp::Link::Bundle link;
@@ -257,12 +360,16 @@ bool KelpClient::fetch(const QString &linkText)
     m_bundleIdText = QString::fromLatin1(Kelp::Link::base32Encode(link.bundleId));
     m_name = sanitiseName(link.name);
     m_sourceLabel = source->describe();
+    if (m_viewing)
+        m_viewSecret = Kelp::Link::base64UrlEncode(link.secret);
     m_phase = Checking;
     emit changed();
 
     qInfo() << "KelpClient: fetching" << m_bundleIdText.left(16) << "from"
             << m_sourceLabel << "as"
-            << (m_name.isEmpty() ? QStringLiteral("(unnamed)") : m_name);
+            << (m_name.isEmpty() ? QStringLiteral("(unnamed)") : m_name)
+            << (m_viewing ? QStringLiteral("(a webpage: nothing will be written)")
+                          : QString());
 
     connect(source, &KelpSource::infoReady, this, &KelpClient::onInfo);
     connect(source, &KelpSource::objectReady, this, &KelpClient::onObject);
@@ -276,9 +383,18 @@ bool KelpClient::fetch(const QString &linkText)
 void KelpClient::onInfo(int objects, int files, quint64 bytes)
 {
     Q_UNUSED(files);
-    Q_UNUSED(bytes);
     if (m_phase != Checking)
         return;
+
+    // A page is held in memory while it is looked at, so it has a ceiling — and
+    // it is checked against the sender's claim *before* anything is asked for, so
+    // an oversized page costs one /info and not 30 MB of transfers.
+    if (m_viewing && bytes > m_viewCeiling) {
+        qInfo() << "KelpClient: refusing a" << sizeText(bytes) << "page (ceiling"
+                << sizeText(m_viewCeiling) << ") before fetching anything";
+        failed(overCeiling(m_viewCeiling, bytes));
+        return;
+    }
 
     // What the sender claims the bundle holds. It only shapes the progress
     // display; what is downloaded and what is accepted is decided by the walk.
@@ -309,7 +425,7 @@ void KelpClient::walk()
 
     QVector<QByteArray> missing;
     QString error;
-    if (!Kelp::missingObjects(m_store, m_key, m_bundleId, &missing, &error)) {
+    if (!Kelp::missingObjects(activeStore(), m_key, m_bundleId, &missing, &error)) {
         failed(error);
         return;
     }
@@ -317,7 +433,10 @@ void KelpClient::walk()
     if (missing.isEmpty()) {
         qInfo() << "KelpClient: all" << m_fetched << "objects are here after"
                 << m_rounds << "rounds";
-        writeFiles();
+        if (m_viewing)
+            finishViewing();
+        else
+            writeFiles();
         return;
     }
 
@@ -354,9 +473,21 @@ void KelpClient::onObject(const QByteArray &id, const QByteArray &bytes)
 
     m_deadline->start();            // progress: silence starts a fresh deadline
 
-    if (!Kelp::storeReceived(m_store, id, bytes)) {
+    if (!Kelp::storeReceived(activeStore(), id, bytes)) {
         failed(QStringLiteral("something arrived that was not the object asked for"));
         return;
+    }
+
+    // A view is held in memory, so the ceiling is enforced against what actually
+    // arrives as well: /info is the sender's claim, not a promise.
+    if (m_viewing) {
+        m_viewBytes += quint64(bytes.size());
+        if (m_viewBytes > m_viewCeiling) {
+            qInfo() << "KelpClient: a page over the ceiling after" << m_fetched
+                    << "objects:" << sizeText(m_viewBytes);
+            failed(overCeiling(m_viewCeiling, m_viewBytes));
+            return;
+        }
     }
 
     ++m_fetched;
@@ -458,4 +589,98 @@ void KelpClient::writeFiles()
     qInfo() << "KelpClient: wrote" << files << "files," << bytes << "bytes to"
             << destination;
     emit changed();
+}
+
+void KelpClient::finishViewing()
+{
+    // No files, no folder, no destination: the bundle stays in the view store, and
+    // the page is served out of it from here on (design §5.5).
+    m_deadline->stop();
+    m_phase = Done;
+    qInfo() << "KelpClient: view store holds" << m_fetched << "objects,"
+            << sizeText(m_viewBytes) << "in memory; nothing was written";
+    emit changed();
+}
+
+QVariantMap KelpClient::openPageView()
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("ok"), false);
+    result.insert(QStringLiteral("url"), QString());
+    result.insert(QStringLiteral("entry"), QString());
+    result.insert(QStringLiteral("candidates"), QStringList());
+    result.insert(QStringLiteral("pages"), 0);
+
+    if (!m_viewing || m_phase != Done || !m_viewStore) {
+        result.insert(QStringLiteral("error"), QStringLiteral("there is no page to open"));
+        return result;
+    }
+
+    // Pressing the button again is the same session, not a second one: a new
+    // token would orphan the first URL the browser already has.
+    if (!m_viewToken.isEmpty()) {
+        result.insert(QStringLiteral("ok"), true);
+        result.insert(QStringLiteral("url"), m_viewUrl);
+        return result;
+    }
+
+    if (!m_preview) {
+        result.insert(QStringLiteral("error"),
+                      QStringLiteral("this build cannot serve a preview"));
+        return result;
+    }
+
+    QString error;
+    if (!m_preview->start(&error)) {
+        result.insert(QStringLiteral("error"), error);
+        return result;
+    }
+
+    Kelp::Web::Page page;
+    if (!Kelp::Web::page(m_viewStore.data(), m_key, m_bundleId, &page, &error)) {
+        result.insert(QStringLiteral("error"), error);
+        return result;
+    }
+    result.insert(QStringLiteral("candidates"), page.candidates);
+
+    if (page.path.isEmpty()) {
+        // The link said it was a page and the bundle holds none — a hand-made or
+        // dishonest link. There is nothing to look at, and this kind offers no
+        // save as a fallback (design §5.5).
+        result.insert(QStringLiteral("error"),
+                      QStringLiteral("This link says it is a page, but there is no web "
+                                     "page in it."));
+        qWarning() << "KelpClient: a webpage link holds no page:"
+                   << m_bundleIdText.left(16);
+        m_viewBytes = 0;
+        m_viewStore.clear();
+        return result;
+    }
+
+    const KelpPreviewServer::Opened opened =
+        m_preview->open(m_viewStore, m_bundleIdText, m_viewSecret, m_name);
+    result.insert(QStringLiteral("ok"), opened.ok);
+    result.insert(QStringLiteral("error"), opened.error);
+    result.insert(QStringLiteral("url"), opened.url);
+    result.insert(QStringLiteral("entry"), opened.entry);
+    if (!opened.ok) {
+        qWarning() << "KelpClient: could not serve the page:" << opened.error;
+        return result;
+    }
+
+    m_viewToken = opened.token;
+    m_viewUrl = opened.url;
+    result.insert(QStringLiteral("pages"), page.candidates.size());
+
+    // The URL is a read capability for the *decrypted* page while the session
+    // lives, exactly as a preview URL is, so it goes to the log only under the
+    // gate a link is under — and never in a release build, whatever that says.
+    if (KelpBuild::linksInLog(m_settings))
+        qInfo() << "KelpClient: page view served at" << opened.url
+                << "from" << m_bundleIdText.left(16) << "(" << page.path << ")";
+    else
+        qInfo() << "KelpClient: page view serving" << page.path
+                << "(the URL is not logged)";
+
+    return result;
 }

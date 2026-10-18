@@ -58,6 +58,15 @@ and test.
   explained before anything happens (name, content address, where it will be
   fetched from), you pick the folder to save into, and the download reports
   progress and then where the files went.
+  A link that says it is a **webpage** (design §5.5) behaves differently, because
+  its publisher asked for it to be looked at rather than kept: there is no folder
+  to pick and no *Download*, just **Open in browser**. That one button fetches the
+  bundle into memory — never to the object store, never to a file — serves the
+  page on `127.0.0.1`, and hands that URL to the browser. Nothing is left behind:
+  the copy is gone when the preview session ends (an idle sweep after about 30
+  minutes), and pressing the button again re-opens the same session rather than
+  fetching a second time. A page larger than 32 MiB is refused before anything is
+  transferred, and says so.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
   permission), relay address, *Include my local address in the link*, **Storage**
   (what the object store holds, what the shares need, and a *Remove unused
@@ -163,6 +172,13 @@ or power pressure — and with nothing to serve it releases the request rather t
 sitting on it. The switch is not persisted yet, so it comes back on at each launch,
 which is also the useful default.
 
+A **preview session** holds that request on its own account, with or without the
+switch: a webpage link is opened *from* the app into the browser, so the party in
+the foreground is the browser, not Kelp, and the app must not be ended while it is
+still serving the page. (The log tells the two apart — `KeepAlive: background
+serving on (setting off, 1 served, 1 previewing)` is a preview holding it by
+itself.)
+
 Two limits are real and worth saying plainly:
 
 - **Closing Kelp ends serving.** Serving is the app's own listeners, and there is
@@ -217,10 +233,16 @@ behind a NAT with no way in.
 When the link also names a relay (`r=`), the relay is used instead — see below —
 which is what makes a link work off the local network.
 
+A link that declares itself a **webpage** ends this walk differently: the objects
+go to a memory store of that view's own instead of the app's object store, nothing
+is written out, and the page is served to this device's browser through the same
+loopback preview a share uses. See *Open a link* under *Screens*.
+
 Not there yet: peers helping serve the same bundle to each other (the swarm),
-relay-side caching so a link outlives the phone, and any streaming — the whole
-tree is held in memory before it is written, so a bundle far larger than the
-device's memory would not fit.
+relay-side caching so a link outlives the phone, and any streaming — a save holds
+the bundle's objects on disk and then writes the files, so a bundle far larger
+than the device's storage would not fit, and a *view* holds its whole page in
+memory and so is capped at 32 MiB on purpose.
 
 ## Across networks: the relay
 

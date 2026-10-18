@@ -76,8 +76,10 @@ int main(int argc, char *argv[])
     // The loopback preview (design §5.1): when a browser on *this* device is shown
     // a page from a bundle this device holds, the app decrypts and serves it on
     // 127.0.0.1. It binds nothing until a page is actually opened, so a launch that
-    // never previews opens no port at all.
-    KelpPreviewServer previewServer(&objectStore);
+    // never previews opens no port at all. One listener serves both kinds of page:
+    // a share's own (served from the app store) and a *received* webpage link
+    // (served from the memory store KelpClient fetches into — design §5.5).
+    KelpPreviewServer previewServer;
 
     KelpBundles kelpBundles(&objectStore, &objectServer);
     // The publisher acts on the log-links preference; hand it the same object
@@ -89,6 +91,12 @@ int main(int argc, char *argv[])
     // bundle is verified content like any other, and nothing here can be confused
     // with a sealed one (different key, different ids).
     KelpClient kelpClient(&objectStore);
+    // A webpage link is viewed, never saved (design §5.5): its fetch goes into a
+    // memory store of the client's own and is served through this same preview
+    // listener. The settings are for the one thing it reads from them — whether a
+    // capability URL may be written to the log.
+    kelpClient.setPreviewServer(&previewServer);
+    kelpClient.setSettings(&kelpSettings);
     // The chosen download folder is remembered; an empty setting means the
     // platform's Downloads folder, which KelpClient falls back to by itself.
     kelpClient.setDirectory(kelpSettings.downloadDirectory());

@@ -633,14 +633,23 @@ has no address to put in one, so the hint survives a relay-only share.
 - One button — **Open in browser** — fetches the bundle and then serves it to the browser from
   `127.0.0.1`, exactly as §5.1 does. One listener, the same server.
 - The fetch lands in a **session store held in memory**, not in the app's object store: the page
-  exists only while it is being looked at. The store is dropped when the session ends — the page's
-  requests stop coming, the user leaves the screen, or the app exits — so there is no cleanup step,
-  no destructive deletion, and, the whole point, *nothing of the page is left on the device*.
-- Being memory, there is a ceiling: tens of megabytes, enough for a document-shaped page and not
-  for a gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched
-  and enforced while storing; a bundle over the ceiling is refused with the reason and the way out
-  — ask the sender to share it as a folder. Lazy fetch (§5.1's open item) is what would lift
-  this, because fetching only what the browser asks for needs no whole-bundle copy at all.
+  exists only while it is being looked at. The store is shared with the session that serves it, so
+  it dies when the session does — the page's requests stop coming and the idle sweep drops it, or
+  the app exits — so there is no cleanup step, no destructive deletion, and, the whole point,
+  *nothing of the page is left on the device*. Leaving the screen is deliberately **not** an end:
+  the browser is what the user is looking at, and it may still be loading or reloading after Kelp
+  is out of sight, so the session lives until its own idle timeout (the same ~30 minutes the
+  owner-side preview has always had) and its memory is released then. A *second* webpage link
+  therefore cannot free the first session's store: the session holds a reference of its own, which
+  is why `KelpPreviewServer::open()` takes a `StorePtr` rather than a bare store.
+- Being memory, there is a ceiling: **32 MiB**, enough for a document-shaped page and not for a
+  gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched and
+  enforced again while storing — the claim is only a claim; a bundle over the ceiling is refused
+  with the reason and the way out (ask the sender to share it as a folder). Lazy fetch (§5.1's open
+  item) is what would lift this, because fetching only what the browser asks for needs no
+  whole-bundle copy at all.
+- Pressing **Open in browser** again after the page has been served re-opens the *same* session —
+  the same URL — rather than fetching again or minting a second token.
 - **KeepAlive** is held while the session is live (the rule §5.4 needs too), because the browser now
   owns the foreground and the app is only serving it.
 
@@ -670,7 +679,7 @@ for that session. §5.5 is the declared case, where there is no download to add 
 | The link carries `p` but no address and no relay | **Open in browser** cannot start; the reason is the same one the save path already gives |
 | The sender goes offline mid-page | the page's requests fail, as any preview does — and there is nothing saved to fall back on, by design |
 | The page is bigger than the ceiling | refused before fetching, naming the sender-side workaround |
-| The recipient leaves the screen, or closes Kelp | session ends, memory is dropped, the URL is dead; nothing was ever written |
+| The recipient leaves the screen, or closes Kelp | the page keeps being served until the session's idle sweep (about 30 minutes), then the memory is dropped and the URL is dead; closing Kelp ends it at once. Nothing was ever written |
 | The recipient's device has no browser | nothing opens (the emulator); the session exists, so a `curl` from inside proves it (§12.9) |
 
 **Explicit non-goals.** Letting the recipient override the kind — a webpage link is view-only, and a
@@ -913,15 +922,15 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   session is live, not only while a share is served. Nothing is persisted, so §12.13 stays
   open. Verified by fetching a real bundle on the emulator and `curl`-ing the session there
   (no browser to hand it to), then with a real browser on the C2.
-- **C4a.2 — view-only webpage links (§5.5, recipient half).** Not built. For a link carrying
-  `p`, the Open-link page shows no *Save to* and no *Download*: one **Open in browser**, fetching
-  into a session-owned `MemoryStore` and opening the preview on the same single
-  `KelpPreviewServer` — whose `open()` takes the store, so a session becomes a store plus a key,
-  and one listener still serves shares and received pages alike. The store dies with the session,
-  so nothing is left; a ceiling refuses an oversized page before fetching and names the
-  workaround; `KeepAlive` is held while the session is live. Verified on the emulator by fetching
-  a real page link and `curl`-ing the session (and checking the app's store never grew), then
-  with a real browser on the C2.
+- **C4a.2 — view-only webpage links (§5.5, recipient half).** **Built and verified on the
+  emulator.** For a link carrying `p`, the Open-link page shows no *Save to* and no *Download*:
+  one **Open in browser**, fetching into a session-owned `MemoryStore` and opening the preview
+  on the same single `KelpPreviewServer` — whose `open()` takes the store, so a session becomes
+  a store plus a key, and one listener still serves shares and received pages alike. The store
+  dies with the session, so nothing is left; a ceiling refuses an oversized page before fetching
+  and names the workaround; `KeepAlive` is held while the session is live. Verified on the
+  emulator by fetching a real page link and `curl`-ing the session (and checking the app's store
+  never grew), then with a real browser on the C2.
 - **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
   in-browser decryption of a real bundle.

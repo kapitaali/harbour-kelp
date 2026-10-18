@@ -118,8 +118,8 @@ ByteRange parseRange(const QByteArray &value, quint64 size)
 
 } // namespace
 
-KelpPreviewServer::KelpPreviewServer(Kelp::ObjectStore *store, QObject *parent)
-    : QObject(parent), m_store(store), m_server(new QTcpServer(this)),
+KelpPreviewServer::KelpPreviewServer(QObject *parent)
+    : QObject(parent), m_server(new QTcpServer(this)),
       m_sweeper(new QTimer(this)), m_idleTimeoutMs(kDefaultIdleMs)
 {
     connect(m_server, SIGNAL(newConnection()), this, SLOT(onConnection()));
@@ -165,7 +165,8 @@ void KelpPreviewServer::setIdleTimeout(int ms)
     m_idleTimeoutMs = ms;
 }
 
-KelpPreviewServer::Opened KelpPreviewServer::open(const QString &bundleId,
+KelpPreviewServer::Opened KelpPreviewServer::open(const StorePtr &store,
+                                                  const QString &bundleId,
                                                   const QString &secret,
                                                   const QString &name)
 {
@@ -173,6 +174,10 @@ KelpPreviewServer::Opened KelpPreviewServer::open(const QString &bundleId,
 
     if (!m_server->isListening()) {
         opened.error = QStringLiteral("the preview listener is not running");
+        return opened;
+    }
+    if (!store) {
+        opened.error = QStringLiteral("there is no store to serve this page from");
         return opened;
     }
 
@@ -191,7 +196,7 @@ KelpPreviewServer::Opened KelpPreviewServer::open(const QString &bundleId,
     const QByteArray key = Kelp::contentKey(master);
 
     Kelp::Web::Page page;
-    if (!Kelp::Web::page(m_store, key, id, &page, &error)) {
+    if (!Kelp::Web::page(store.data(), key, id, &page, &error)) {
         opened.error = error;
         return opened;
     }
@@ -201,10 +206,11 @@ KelpPreviewServer::Opened KelpPreviewServer::open(const QString &bundleId,
         return opened;
     }
 
-    return openPath(id, key, name, page.path);
+    return openPath(store, id, key, name, page.path);
 }
 
-KelpPreviewServer::Opened KelpPreviewServer::openEntry(const QString &bundleId,
+KelpPreviewServer::Opened KelpPreviewServer::openEntry(const StorePtr &store,
+                                                       const QString &bundleId,
                                                        const QString &secret,
                                                        const QString &name,
                                                        const QString &entry)
@@ -213,6 +219,10 @@ KelpPreviewServer::Opened KelpPreviewServer::openEntry(const QString &bundleId,
 
     if (!m_server->isListening()) {
         opened.error = QStringLiteral("the preview listener is not running");
+        return opened;
+    }
+    if (!store) {
+        opened.error = QStringLiteral("there is no store to serve this page from");
         return opened;
     }
 
@@ -230,7 +240,7 @@ KelpPreviewServer::Opened KelpPreviewServer::openEntry(const QString &bundleId,
     bool isDir = false;
     QByteArray hash;
     Kelp::Manifest::File file;
-    if (!Kelp::Web::resolve(m_store, key, id, entry, &found, &isDir, &hash, &file, &error)) {
+    if (!Kelp::Web::resolve(store.data(), key, id, entry, &found, &isDir, &hash, &file, &error)) {
         opened.error = error;
         return opened;
     }
@@ -239,15 +249,17 @@ KelpPreviewServer::Opened KelpPreviewServer::openEntry(const QString &bundleId,
         return opened;
     }
 
-    return openPath(id, key, name, entry);
+    return openPath(store, id, key, name, entry);
 }
 
-KelpPreviewServer::Opened KelpPreviewServer::openPath(const QByteArray &id, const QByteArray &key,
-                                                      const QString &name, const QString &entry)
+KelpPreviewServer::Opened KelpPreviewServer::openPath(const StorePtr &store, const QByteArray &id,
+                                                      const QByteArray &key, const QString &name,
+                                                      const QString &entry)
 {
     Opened opened;
 
     Session session;
+    session.store = store;
     session.bundleId = id;
     session.key = key;
     session.name = name;
@@ -496,7 +508,7 @@ KelpPreviewServer::Target KelpPreviewServer::resolve(Session *session, const QSt
     Kelp::Manifest::File file;
     QString error;
 
-    if (!Kelp::Web::resolve(m_store, session->key, session->bundleId, full,
+    if (!Kelp::Web::resolve(session->store.data(), session->key, session->bundleId, full,
                             &found, &isDir, &hash, &file, &error)) {
         // Not "no such path": the bundle is not all here yet, which is a 503.
         target.status = 503;
@@ -520,7 +532,7 @@ KelpPreviewServer::Target KelpPreviewServer::resolve(Session *session, const QSt
                                              : full + QLatin1String("/index.html");
         found = false;
         isDir = false;
-        if (!Kelp::Web::resolve(m_store, session->key, session->bundleId, index,
+        if (!Kelp::Web::resolve(session->store.data(), session->key, session->bundleId, index,
                                 &found, &isDir, &hash, &file, &error)) {
             target.status = 503;
             return target;
@@ -576,7 +588,7 @@ void KelpPreviewServer::serve(QTcpSocket *socket, Session *session, const Target
     // one means the bundle is not all here yet, and half a page is worse than an
     // honest 503.
     for (int i = first; i < first + count; ++i) {
-        if (!m_store->contains(file.chunks.at(i))) {
+        if (!session->store->contains(file.chunks.at(i))) {
             ++m_tally.notHeld;
             respond(socket, 503, "Service Unavailable", "text/plain; charset=utf-8",
                     QByteArrayLiteral("this bundle is not all here yet\n"), headOnly);
@@ -608,7 +620,7 @@ void KelpPreviewServer::serve(QTcpSocket *socket, Session *session, const Target
     quint64 remaining = length;
     for (int i = first; i < first + count && remaining > 0; ++i) {
         QByteArray object;
-        if (!m_store->get(file.chunks.at(i), &object)) {
+        if (!session->store->get(file.chunks.at(i), &object)) {
             socket->abort();               // the store lost it since the check
             return;
         }

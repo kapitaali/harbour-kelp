@@ -129,6 +129,7 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh "$PWD/src/tests/run-all-t
 | `src/tests/run-kelpqr-test.sh` | QR encoding, against Python's `qrcode` | 9 |
 | `src/tests/run-kelpbundles-test.sh` | seal, webpage shares (`page` in the row and `p` in the link), the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 159 |
 | `src/tests/run-kelppreview-test.sh` | the §5.3 page convention, path → objects, the URL space (`404` vs `503`), `Range`/`HEAD`, the security headers, an expiring session | 202 |
+| `src/tests/run-kelpclient-test.sh` | receiving a link: a view writes nothing (the app store is byte-identical before and after), the page ceiling from `/info` and while storing, a link whose bundle has no page, the save path, and that a second view does not free the first session's store | 86 |
 | `relay/test/run-relay-test.sh` | the relay end to end, publisher and recipient both played | 6 cases |
 
 **Run the suites in both bundle modes.** Two of them check a default that

@@ -653,7 +653,7 @@ static void testPreview()
     KelpSettings settings;
     bundles.setSettings(&settings);
 
-    KelpPreviewServer preview(&store);
+    KelpPreviewServer preview;
     bundles.setPreviewServer(&preview);
 
     // A folder with a page in it, sealed through the same path the Add page uses.

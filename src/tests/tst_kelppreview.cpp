@@ -84,6 +84,16 @@ void checkEqual(const A &actual, const B &expected, const char *expression, int 
            qPrintable(show(actual)), qPrintable(show(expected)));
 }
 
+// A session is served from the store its opener names, and the session may outlive
+// the opener's interest in it — so the server takes a shared store (design §5.5).
+// These tests own their stores on the stack, so they hand over a pointer with a
+// deleter that does nothing: the *store* is borrowed even though the *reference*
+// is shared.
+KelpPreviewServer::StorePtr borrow(Kelp::ObjectStore *store)
+{
+    return KelpPreviewServer::StorePtr(store, [](Kelp::ObjectStore *) {});
+}
+
 #define CHECK(cond) check((cond), #cond, __LINE__)
 #define CHECK_EQ(actual, expected) checkEqual((actual), (expected), #actual " == " #expected, __LINE__)
 
@@ -589,7 +599,7 @@ void testServing()
         return;
     }
 
-    KelpPreviewServer server(&store);
+    KelpPreviewServer server;
     int opened = 0;
     int closed = 0;
     QObject::connect(&server, &KelpPreviewServer::sessionsChanged, [&opened, &closed, &server]() {
@@ -605,7 +615,7 @@ void testServing()
     CHECK_EQ(server.sessionCount(), 0);
 
     const KelpPreviewServer::Opened session =
-        server.open(site.bundleId, site.secretText, QStringLiteral("Preview test"));
+        server.open(borrow(&store), site.bundleId, site.secretText, QStringLiteral("Preview test"));
     CHECK(session.ok);
     if (!session.ok) {
         printf("  open error: %s\n", qPrintable(session.error));
@@ -829,11 +839,11 @@ void testLazy()
     copyObjects(&full, &partial, manifests);
     CHECK_EQ(partial.count(), manifests.size());
 
-    KelpPreviewServer server(&partial);
+    KelpPreviewServer server;
     CHECK(server.start(&error));
 
     const KelpPreviewServer::Opened session =
-        server.open(site.bundleId, site.secretText, QStringLiteral("Lazy"));
+        server.open(borrow(&partial), site.bundleId, site.secretText, QStringLiteral("Lazy"));
     CHECK(session.ok);                     // the page is known from manifests alone
     if (!session.ok) {
         printf("  open error: %s\n", qPrintable(session.error));
@@ -880,10 +890,10 @@ void testHoles()
         return;
     }
 
-    KelpPreviewServer server(&store);
+    KelpPreviewServer server;
     CHECK(server.start(&error));
     const KelpPreviewServer::Opened session =
-        server.open(site.bundleId, site.secretText, QStringLiteral("Holes"));
+        server.open(borrow(&store), site.bundleId, site.secretText, QStringLiteral("Holes"));
     CHECK(session.ok);
     if (!session.ok)
         return;
@@ -945,11 +955,11 @@ void testOnDiskStore()
     }
     CHECK(store.objectCount() > 0);
 
-    KelpPreviewServer server(&store);
+    KelpPreviewServer server;
     CHECK(server.start(&error));
 
     const KelpPreviewServer::Opened session =
-        server.open(site.bundleId, site.secretText, QStringLiteral("On disk"));
+        server.open(borrow(&store), site.bundleId, site.secretText, QStringLiteral("On disk"));
     CHECK(session.ok);
     if (!session.ok) {
         printf("  open error: %s\n", qPrintable(session.error));

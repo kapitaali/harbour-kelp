@@ -21,20 +21,6 @@ namespace {
 // Deep enough for any real folder; there to stop a symlink loop.
 const int kMaxDepth = 64;
 
-// A link is a capability — whoever holds it can read the bundle — so writing one
-// into the log is a deliberate act, never an accident. It is part of the dev-extras
-// bundle: in a release build it never happens at all, and in a dev build it is on
-// by default (Settings → "Include links in the log" turns it off). KELP_DEBUG_LINK
-// forces it on for a one-off run, so headless scripts keep working without touching
-// the UI. Logging a link makes the log a secret: it holds the key.
-bool linksInLog(const KelpSettings *settings)
-{
-    if (!KelpBuild::devExtras())
-        return false;
-    return (settings && settings->includeLinksInLog())
-           || !qgetenv("KELP_DEBUG_LINK").isEmpty();
-}
-
 // The object ids the shares on this device are made of. Strict on purpose: if one
 // share cannot be walked, the whole computation fails. "Not in this set" has to
 // mean "safe to delete", and an object this device merely cannot account for —
@@ -168,9 +154,14 @@ QVariantMap KelpBundles::previewPage(const QString &bundleId, const QString &sec
         return result;
     }
 
+    // The app's store is *borrowed*: a session can outlive this call (it ends on
+    // its own idle timeout), so it holds a reference — with a deleter that does
+    // nothing, because the app owns this store for its whole life.
+    const KelpPreviewServer::StorePtr store(m_store, [](Kelp::ObjectStore *) {});
+
     const KelpPreviewServer::Opened opened = entry.isEmpty()
-        ? m_preview->open(bundleId, secret, name)
-        : m_preview->openEntry(bundleId, secret, name, entry);
+        ? m_preview->open(store, bundleId, secret, name)
+        : m_preview->openEntry(store, bundleId, secret, name, entry);
 
     result.insert(QStringLiteral("ok"), opened.ok);
     result.insert(QStringLiteral("error"), opened.error);
@@ -184,7 +175,7 @@ QVariantMap KelpBundles::previewPage(const QString &bundleId, const QString &sec
     // The URL is a read capability for the *decrypted* bundle while the session
     // lives, so it is written down only under the same gate a link is under — and
     // never in a release build, whatever that gate says.
-    if (linksInLog(m_settings))
+    if (KelpBuild::linksInLog(m_settings))
         qInfo() << "KelpBundles: preview served at" << opened.url
                 << "from share" << name;
 
@@ -372,7 +363,7 @@ QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secre
     // A restored share mints a fresh link (its address may have changed since the
     // row was written), so the link a script reads from the log is this one, by
     // the same rule seal() follows.
-    if (linksInLog(m_settings))
+    if (KelpBuild::linksInLog(m_settings))
         qInfo() << "KelpBundles: link" << linkText;
 
     result.insert(QStringLiteral("ok"), true);
@@ -527,7 +518,7 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
 
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("link"), linkText);
-    if (linksInLog(m_settings))
+    if (KelpBuild::linksInLog(m_settings))
         qInfo() << "KelpBundles: link" << linkText;
     result.insert(QStringLiteral("relay"),
                   m_tunnels.contains(QString::fromLatin1(Kelp::Link::base32Encode(sealed.rootId)))

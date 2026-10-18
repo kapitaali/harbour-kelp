@@ -39,7 +39,7 @@ else
 fi
 
 run libkelp sh "$ROOT/libkelp/tests/run-tests.sh"
-for suite in kelpfetch kelpsettings kelpshares kelpqr kelpbundles kelppreview; do
+for suite in kelpfetch kelpsettings kelpshares kelpqr kelpbundles kelppreview kelpclient; do
     run "tst_$suite" sh "$HERE/run-$suite-test.sh"
 done
 run relay sh "$ROOT/relay/test/run-relay-test.sh"

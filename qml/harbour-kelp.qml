@@ -278,15 +278,19 @@ ApplicationWindow {
 
     // Background serving, made deliberate. Sailfish keeps a backgrounded app
     // alive, but the platform is free to end a process it thinks is idle, so
-    // while something is really being served — and only then, and only when the
-    // user asked for it — Kelp tells the system it has work to finish. An app
-    // with nothing to serve releases the request rather than sitting on it: that
-    // is the whole battery story this version can honestly tell (Wi-Fi and
-    // low-battery policy are still open — design §12.8).
+    // while something is really being served — and only then — Kelp tells the
+    // system it has work to finish. Two things count, and they are different
+    // users' situations: a *share* is served only because the user asked for
+    // background sharing, but a *preview* is not — the party in the foreground is
+    // the browser, not Kelp, and whoever opened it turned no setting on (design
+    // §5.4/§5.5). An app with neither releases the request rather than sitting on
+    // it: that is the whole battery story this version can honestly tell (Wi-Fi
+    // and low-battery policy are still open — design §12.8).
     KeepAlive {
         id: keepAlive
 
-        enabled: kelp.seedingEnabled && (kelp.servedShares > 0 || kelp.previewSessions > 0)
+        enabled: kelp.previewSessions > 0
+                 || (kelp.seedingEnabled && kelp.servedShares > 0)
         onEnabledChanged: kelpLog.info("KeepAlive: background serving "
                                        + (enabled ? "on" : "off")
                                        + " (setting " + (kelp.seedingEnabled ? "on" : "off")

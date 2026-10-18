@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QHash>
 #include <QObject>
+#include <QSharedPointer>
 #include <QString>
 #include <QStringList>
 
@@ -45,7 +46,14 @@ class KelpPreviewServer : public QObject
     Q_OBJECT
 
 public:
-    explicit KelpPreviewServer(Kelp::ObjectStore *store, QObject *parent = nullptr);
+    // The store a session is served from. Shared, not borrowed: a session outlives
+    // the page that opened it (it ends on its own idle timeout, design §5.4/§5.5),
+    // and the store must not be freed under it. A caller that merely passes the
+    // app's own store says so with a no-op deleter — see the app's previewPage().
+    using StorePtr = QSharedPointer<Kelp::ObjectStore>;
+
+    // No store of its own: every session names the one it is served from.
+    explicit KelpPreviewServer(QObject *parent = nullptr);
     ~KelpPreviewServer() override;
 
     // Binds 127.0.0.1. Failing is not fatal: without it there is simply no
@@ -67,11 +75,12 @@ public:
     // Opens a session for an already-sealed bundle, finding its page (design
     // §5.3). The bundle id is base32 and the secret base64url — the two strings
     // the link and shares.json already carry.
-    Opened open(const QString &bundleId, const QString &secret, const QString &name);
+    Opened open(const StorePtr &store, const QString &bundleId, const QString &secret,
+                const QString &name);
 
     // The same, for a page the recipient picked out of `candidates`.
-    Opened openEntry(const QString &bundleId, const QString &secret, const QString &name,
-                     const QString &entry);
+    Opened openEntry(const StorePtr &store, const QString &bundleId, const QString &secret,
+                     const QString &name, const QString &entry);
 
     // Ends a session. Its URL stops answering at once.
     void close(const QString &token);
@@ -102,6 +111,7 @@ private slots:
 
 private:
     struct Session {
+        StorePtr store;           // shared: outlives whoever handed it over
         QByteArray bundleId;
         QByteArray key;           // the content key, derived from the secret
         QString name;             // for the log only
@@ -125,8 +135,8 @@ private:
         QByteArray hash;
     };
 
-    Opened openPath(const QByteArray &id, const QByteArray &key, const QString &name,
-                    const QString &entry);
+    Opened openPath(const StorePtr &store, const QByteArray &id, const QByteArray &key,
+                    const QString &name, const QString &entry);
 
     void handle(QTcpSocket *socket, const QByteArray &request);
     Target resolve(Session *session, const QString &urlPath, bool trailingSlash);
@@ -139,7 +149,6 @@ private:
                  const QByteArray &extraHeaders = QByteArray());
     static QByteArray securityHeaders();
 
-    Kelp::ObjectStore *m_store;
     QTcpServer *m_server;
     QTimer *m_sweeper;
     QHash<QTcpSocket *, Pending> m_pending;

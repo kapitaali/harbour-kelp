@@ -1,5 +1,10 @@
 #include "kelpbuild.h"
 
+#include <QByteArray>
+#include <QString>
+
+#include "kelpsettings.h"
+
 namespace KelpBuild {
 
 bool devExtras()
@@ -9,6 +14,14 @@ bool devExtras()
 #else
     return false;
 #endif
+}
+
+bool linksInLog(const KelpSettings *settings)
+{
+    if (!devExtras())
+        return false;
+    return (settings && settings->includeLinksInLog())
+           || !qgetenv("KELP_DEBUG_LINK").isEmpty();
 }
 
 } // namespace KelpBuild

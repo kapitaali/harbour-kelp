@@ -4,11 +4,16 @@
 #include <QByteArray>
 #include <QQueue>
 #include <QSet>
+#include <QSharedPointer>
 #include <QString>
+#include <QVariantMap>
 
 #include <QObject>
 
-class KelpObjectStore;
+#include "kelp_store.h"
+
+class KelpPreviewServer;
+class KelpSettings;
 class KelpSource;
 class QTimer;
 
@@ -28,6 +33,14 @@ class QTimer;
  * quiet. When nothing is missing the bundle is opened and written into the
  * user's chosen download folder (Downloads by default): a bundle holding a
  * single file is that file, anything else becomes a folder named for the link.
+ *
+ * There is a second, entirely different ending, for a link that declares itself a
+ * *webpage* (design §5.5): fetchForViewing() takes the same walk but keeps the
+ * objects in a memory store of its own and writes nothing, and openPageView()
+ * serves the page to this device's browser through the preview listener. The
+ * memory is shared with the session that serves it, so a session may outlive the
+ * page safely; it is gone when the session's own idle timeout drops it, or when
+ * the app exits. See META-INF/C4a2-plan.md.
  */
 class KelpClient : public QObject
 {
@@ -47,12 +60,17 @@ class KelpClient : public QObject
     Q_PROPERTY(QString source READ source NOTIFY changed)
     Q_PROPERTY(QString destination READ destination NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
+    // True while this client is fetching for *viewing* rather than saving: the
+    // objects go into a memory store and nothing is written (design §5.5).
+    Q_PROPERTY(bool viewing READ viewing NOTIFY changed)
+    // What that memory store holds, in bytes. Zero once a view is over.
+    Q_PROPERTY(quint64 viewBytes READ viewBytes NOTIFY changed)
     // Base folder the bundle is written into. Empty means the platform's
     // Downloads folder. Kept across fetches so a choice is not lost on retry.
     Q_PROPERTY(QString directory READ directory WRITE setDirectory NOTIFY changed)
 
 public:
-    explicit KelpClient(KelpObjectStore *store, QObject *parent = nullptr);
+    explicit KelpClient(Kelp::ObjectStore *store, QObject *parent = nullptr);
 
     // Starts fetching the bundle behind `link`. Returns false when it cannot even
     // be tried — a link that does not parse, or names no source — and leaves the
@@ -60,11 +78,27 @@ public:
     // properties above follow it.
     Q_INVOKABLE bool fetch(const QString &link);
 
+    // The same fetch, for a link that declares itself a webpage (design §5.5):
+    // the objects are kept in a memory store belonging to this view and *nothing*
+    // is written, so the bundle exists only for as long as it is being looked at.
+    // A second view never disturbs the first — each one owns its store.
+    Q_INVOKABLE bool fetchForViewing(const QString &link);
+
+    // Serves the page just fetched for viewing to this device's browser through
+    // the preview listener, as §5.1 does, and returns { ok, url, entry,
+    // candidates, error }. Pressing the button again returns the same session
+    // rather than fetching again. The caller hands `url` to the browser: this
+    // class does not open anything, so a build with no browser (the emulator)
+    // still gets a session that a `curl` can prove.
+    Q_INVOKABLE QVariantMap openPageView();
+
     // Stops a fetch in flight. Objects already stored are kept: each one is
     // verified content, just an incomplete bundle.
     Q_INVOKABLE void cancel();
 
-    // Clears the result of the last fetch so the page can be used again.
+    // Clears the result of the last fetch so the page can be used again. A view's
+    // memory store is released here; a session still serving it holds its own
+    // reference and is unaffected.
     Q_INVOKABLE void reset();
 
     QString phase() const;
@@ -78,9 +112,25 @@ public:
     QString destination() const { return m_destination; }
     QString error() const { return m_error; }
     QString directory() const { return m_directory; }
+    bool viewing() const { return m_viewing; }
+    quint64 viewBytes() const { return m_viewBytes; }
 
     // Where the next fetch is written. Empty restores the Downloads default.
     void setDirectory(const QString &path);
+
+    // A test affordance, in the same spirit as the preview server's idle timeout:
+    // how large a *viewed* bundle may grow before it is refused. The production
+    // ceiling is 32 MiB, and the storing-time check is only reachable in a test
+    // with a smaller one.
+    void setViewCeiling(quint64 bytes);
+
+    // The listener a received page is served through (design §5.5). Without one a
+    // view can fetch but not be opened.
+    void setPreviewServer(KelpPreviewServer *preview);
+
+    // The user's own preference objects; only the link-logging gate is read here,
+    // through KelpBuild::linksInLog.
+    void setSettings(KelpSettings *settings);
 
 signals:
     void changed();
@@ -94,17 +144,32 @@ private slots:
 private:
     enum Phase { Idle, Checking, Fetching, Saving, Done, Failed };
 
+    bool beginFetch(const QString &linkText, bool viewing);
+    Kelp::ObjectStore *activeStore() const;
     void walk();
     void pump();
     void writeFiles();
+    void finishViewing();
     bool failed(const QString &message);
     void dropSource();
 
-    KelpObjectStore *m_store;
+    Kelp::ObjectStore *m_store;
     KelpSource *m_source;
+    KelpPreviewServer *m_preview;
+    KelpSettings *m_settings;
     QTimer *m_deadline;
     QQueue<QByteArray> m_queue;
     QSet<QByteArray> m_inflight;
+
+    // The view (design §5.5). Shared with the session that serves it, so the store
+    // outlives this client's interest in it; it is freed when the session ends.
+    QSharedPointer<Kelp::ObjectStore> m_viewStore;
+    bool m_viewing;
+    QString m_viewSecret;      // the link's secret, for the preview server
+    QString m_viewToken;
+    QString m_viewUrl;
+    quint64 m_viewBytes;       // what the view store holds, for the ceiling
+    quint64 m_viewCeiling;     // the ceiling itself (a test can lower it)
 
     QByteArray m_bundleId;
     QByteArray m_key;

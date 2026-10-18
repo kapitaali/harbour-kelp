@@ -22,10 +22,18 @@
 #ifndef KELPBUILD_H
 #define KELPBUILD_H
 
+class KelpSettings;
+
 namespace KelpBuild {
 
 // Whether this build carries the dev/testing extras.
 bool devExtras();
+
+// Whether a link, or a URL that is a capability the way a link is, may be written
+// to the log: the dev-extras switch, the user's own setting, and the one-shot
+// KELP_DEBUG_LINK all have to agree. One function so the answer cannot drift
+// between the publisher and the receiver.
+bool linksInLog(const KelpSettings *settings);
 
 } // namespace KelpBuild
 
