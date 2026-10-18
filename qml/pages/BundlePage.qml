@@ -61,6 +61,14 @@ Page {
     // carried in the link as an encrypted `q=`, and `entry.page` is that hint.
     property var page: null
 
+    // Whether this share was *declared* as a webpage (design §5.5). A page being in
+    // the bundle is not enough: the kind the publisher chose decides what the app
+    // offers — here as on the receive side, where an ordinary link only ever saves.
+    // A folder share is files to download, and a page among them is the recipient's
+    // own business, opened from their files (the user's decision, 2026-10-18, §3.26).
+    property bool isWebpage: !!bundlePage.entry && bundlePage.entry.page === true
+                             && bundlePage.page !== null && bundlePage.page.hasPage
+
     function lookForPage() {
         page = null
         if (!bundlePage.entry || !bundlePage.entry.secret || bundlePage.entry.secret.length === 0)
@@ -255,28 +263,27 @@ Page {
                 }
             }
 
+            // Only a share the publisher declared as a webpage is offered to the
+            // browser. A folder share holding a page gets no section and no button:
+            // its files are what a recipient gets, and what to do with them is theirs.
             SectionHeader {
-                visible: bundlePage.page !== null && bundlePage.page.hasPage
-                text: (bundlePage.entry && bundlePage.entry.page === true)
-                      ? qsTr("Web page — shared as one")
-                      : qsTr("Web page")
+                visible: bundlePage.isWebpage
+                text: qsTr("Web page — shared as one")
             }
 
             Label {
-                visible: bundlePage.page !== null && bundlePage.page.hasPage
+                visible: bundlePage.isWebpage
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
                 text: {
-                    if (bundlePage.page === null || !bundlePage.page.hasPage)
+                    if (!bundlePage.isWebpage)
                         return ""
                     var text = qsTr("This bundle has a page in it: %1. It opens in this device's browser, which is the only place a page can run — the app decrypts the bundle and serves it to the browser from 127.0.0.1 for as long as the browser keeps asking.")
                                    .arg(bundlePage.page.entry)
-                    if (bundlePage.entry && bundlePage.entry.page === true) {
-                        text += qsTr(" The link says this share is a webpage, so a recipient that understands it is invited to open the page rather than keep a copy.")
-                    }
+                    text += qsTr(" The link says this share is a webpage, so a recipient that understands it is invited to open the page rather than keep a copy.")
                     if (bundlePage.page.candidates
                             && bundlePage.page.candidates.length > 1) {
                         text += qsTr(" It holds %1 pages; the one above is the one shown.")
@@ -289,7 +296,7 @@ Page {
             // Wrapped in an Item so the button keeps the page margin inside the
             // Column (positioners ignore child anchors).
             Item {
-                visible: bundlePage.page !== null && bundlePage.page.hasPage
+                visible: bundlePage.isWebpage
                 width: parent.width
                 height: previewButton.height
 

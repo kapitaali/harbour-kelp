@@ -174,7 +174,7 @@ the browser. The log line keeps both halves spelled out.
 |---|---|
 | Folder has no HTML (publisher) | already refused in C5.1; unchanged |
 | A `p` link whose bundle has no page | fetch completes, then `openPageView()` returns §5.5's wording; store dropped; no save |
-| A link with no `p` | ordinary save; §5.4's button afterwards (C4a.1) |
+| A link with no `p` | ordinary save, and nothing else: no browser button. C4a.1, which would have added one for a page inside the folder, was dropped by the user (2026-10-18, design §5.4) |
 | `p` but no address and no relay | **Open in browser** is disabled; the page shows the same reason the save path already gives |
 | Sender goes offline mid-page | the browser's requests fail like any preview's; nothing saved to fall back on, by design |
 | Page larger than the ceiling | refused from `/info` before fetching; re-checked while storing |

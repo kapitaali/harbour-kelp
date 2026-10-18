@@ -195,7 +195,10 @@ Next Move (in this order — 1–3 are done as of this note)
    fetch through `KelpSource` (a preview serves what the store holds; anything else is `503`),
    the *recipient* side — a bundle fetched from a link is not kept, so §5.1 is reached today
    through a share this device made (design §12.13) — the per-bundle confirmation (§12.10), and
-   an on-device pass with a real browser. The design also covers the remaining options: C4b
+   an on-device pass with a real browser. *(2026-10-18: the recipient side was settled by the
+   user — an ordinary share only saves, so no *Open in browser* is offered after a download;
+   the same ruling made the owner's own button a webpage-share affordance. Design §5.4 and
+   PROGRESS §3.26.)* The design also covers the remaining options: C4b
    (relay gateway — §5.2) and C7 (swarm). An embedded `Sailfish.WebView` in place of the system
    browser stays a UI decision for later (§12.9).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug

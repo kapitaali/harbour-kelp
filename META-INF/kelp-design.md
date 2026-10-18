@@ -337,11 +337,12 @@ the only one. The earlier "browser viewer + gateway" milestone hid this split; i
 **C4a** (preview) and **C4b** (gateway) in §11, because the trust argument for each is
 opposite and hardly any work is shared beyond that convention.
 
-One more section belongs to this group without being a third trust model: **§5.4** is the
-receive-side door into §5.1 — the same preview, entered from a download that has just finished
-instead of from a share in the list. **§5.5** goes the other way: it is a *kind* the publisher
-declares — "this share is a page" — which changes the recipient's flow from saving to viewing,
-and is the one place a link carries something §5.3 refused to put there.
+One more section belongs to this group without being a third trust model: **§5.4** was meant to be
+the receive-side door into §5.1 — the same preview, entered from a download that has just finished
+instead of from a share in the list — and it was **dropped by the user (2026-10-18)**, which leaves
+the kind as the only thing that offers a browser. **§5.5** goes the other way: it is a *kind* the
+publisher declares — "this share is a page" — which changes the recipient's flow from saving to
+viewing, and is the one place a link carries something §5.3 refused to put there.
 
 ### 5.1 Shared-page preview — the app serves the page to the recipient's browser
 
@@ -410,16 +411,18 @@ behind a byte range; the extension table — manifests only, never a data object
 `src/kelppreviewserver.{h,cpp}`. `src/tests/tst_kelppreview.cpp` drives the server over a real
 socket with no browser and no display, and `tst_kelpbundles` covers the app seam; `BUILD.md`
 has the counts. The seam is `KelpBundles::pageInfo/previewPage/endPreview`, and the first UI is
-a **Web page** section on a bundle's own page — shown only when the bundle has one — with
-*Open in browser* (route B below). No menu was added: a labelled section on the page is where
-the design put it, and the whole flow is one button.
+a **Web page** section on a share's own page, with *Open in browser* (route B below) — shown
+only for a share the publisher **declared a webpage** (§5.5), not merely because an `index.html`
+is in the bundle: the kind is what the browser is for, and a folder share stays a folder (§5.4,
+dropped 2026-10-18). No menu was added: a labelled section on the page is where the design put
+it, and the whole flow is one button.
 
 **What is not built yet.** The lazy fetch through `KelpSource`, so a preview serves exactly what
 the store already holds and answers `503` for anything else. The per-bundle confirmation
-(§12.10) — deferred until the page being opened is someone else's. The *recipient* side is no
-longer blocked on a kept bundle: §5.4 opens the preview for the session a download just finished,
-and keeping a received bundle (§12.13) is what would make that preview re-openable and the bundle
-seedable.
+(§12.10) — deferred until the page being opened is someone else's. The *recipient* side needs no
+door of its own: §5.4 answered that question with "no button" (2026-10-18), so a received page is
+opened from the files it was saved as. Keeping a received bundle (§12.13) would still make one
+re-downloadable and seedable, which is a separate question from previewing it.
 
 **Two ways to open it, and the recommendation.**
 
@@ -537,7 +540,18 @@ not for "which file is the page", which this section still refuses to put on the
 the publisher's **kind**: "I shared this as a page". Contents can decide the first and cannot
 decide the second.)*
 
-### 5.4 The preview from the receive side — one session, nothing kept
+### 5.4 The preview from the receive side — designed, then dropped by the user
+
+**Dropped, 2026-10-18, by the user. This is not the plan; it is the record of what was
+considered.** *"Do not make it so that there is open in browser if the share is not shared as
+a webpage. If it's shared as a folder, it will only download them; the user will have to then
+find the file and open it up separately."* The kind decides, in both places: a **webpage**
+share (§5.5) is invited to the browser, and an ordinary share is files — a page among those
+files is the recipient's own business, opened from their own file manager, with no button
+offered. So the receive-side half below is not built and will not be, and the *owner's* own
+preview (§5.1) now appears only for a share declared as a webpage as well. The section stays
+because a design that was weighed and set aside is worth as much as the ones that were not,
+and because "why not offer it" is the next question a reader will have.
 
 **The gap.** §5.1 was designed for a recipient — "the recipient opens the page" — but the only
 door into it is a bundle *this device shares*: **Web page** lives on `BundlePage`, and that page
@@ -650,8 +664,8 @@ has no address to put in one, so the hint survives a relay-only share.
   whole-bundle copy at all.
 - Pressing **Open in browser** again after the page has been served re-opens the *same* session —
   the same URL — rather than fetching again or minting a second token.
-- **KeepAlive** is held while the session is live (the rule §5.4 needs too), because the browser now
-  owns the foreground and the app is only serving it.
+- **KeepAlive** is held while the session is live, because the browser now owns the foreground and
+  the app is only serving it.
 
 **What the publisher's side looks like.** The main page's button becomes **Share…** and opens a page
 with three actions — **Share file**, **Share folder**, **Share webpage** — in place of the old
@@ -665,9 +679,12 @@ collected in one pass. The §5.3 rule is factored so the filesystem answer and t
 cannot drift: one pure chooser over (relative path, is-HTML) pairs, fed from the folder by the app
 and from the manifests by `Kelp::Web::page`.
 
-**What it means for §5.4.** Nothing is lost: §5.4's *Open in browser*, offered after a download,
-stays for a page that arrives inside an ordinary directory share — you still get to look at it,
-for that session. §5.5 is the declared case, where there is no download to add a button to.
+**What it means for §5.4.** Nothing was there to lose: §5.4's receive-side button was dropped
+before it was built (the user's call, 2026-10-18 — see §5.4). §5.5 is therefore the *only* case
+in which a page is offered to a browser, and the kind — not the presence of an `index.html` — is
+what decides it, on the owner's own page as well as on a received link: share it as a **webpage**
+if the point is to look at it, or as a folder if the point is the files. A page that arrives
+inside an ordinary folder share is one of the recipient's files, opened from their file manager.
 
 **Failure modes, spelled out.**
 
@@ -675,7 +692,7 @@ for that session. §5.5 is the declared case, where there is no download to add 
 |---|---|
 | *Share webpage* picks a folder with no HTML in it | refused before sealing, pointing at *Share folder* |
 | A webpage link's bundle turns out to have no page (a hand-made or dishonest link) | "this link says it is a page, but there is no web page in it" — no save is offered, because the kind was view-only |
-| The link has no `p` (older link, or a directory share) | an ordinary share: save as always, and §5.4 offers the browser afterwards if the bundle holds a page |
+| The link has no `p` (older link, or a directory share) | an ordinary share: save as always, and **nothing else** — no browser button, no page section; the recipient opens the file themselves if they want to look at it (the user's decision, 2026-10-18, §5.4) |
 | The link carries `p` but no address and no relay | **Open in browser** cannot start; the reason is the same one the save path already gives |
 | The sender goes offline mid-page | the page's requests fail, as any preview does — and there is nothing saved to fall back on, by design |
 | The page is bigger than the ceiling | refused before fetching, naming the sender-side workaround |
@@ -910,20 +927,22 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
 - **C4a** — Shared-page preview (§5.1): **built, off-device.** The `Web` convention
   (`page`/`resolve`/`chunkRange`/`mimeType`, manifests only), the loopback `KelpPreviewServer`
   (token path, path → objects, `Range`/`HEAD`, the CSP/`no-store`/`nosniff` headers, `404` vs
-  `503`, a 30-minute idle session), the `KelpBundles` seam, and *Open in browser* on a bundle's
-  page. `tst_kelppreview` drives it over a real socket and `tst_kelpbundles` covers the seam;
-  both run without a browser or a display. Still to do: the lazy fetch through `KelpSource`
-  (today a missing object is a `503`), the receive side, now **C4a.1** below, the per-bundle
-  confirmation (§12.10), and an on-device pass with a real browser. An embedded
-  `Sailfish.WebView` remains a later UI decision (§12.9).
-- **C4a.1 — the preview from the receive side (§5.4).** Not built. One **Open in browser**
-  button on the Open-link page's Done panel, offered when the bundle just fetched has an entry
-  document (§5.3) and served by the same `KelpPreviewServer` through
-  `pageInfo`/`previewPage`; `KelpClient` exposes the two strings that seam takes
-  (`bundleId`, `secret`) and clears them on `reset()`; `KeepAlive` is held while any preview
-  session is live, not only while a share is served. Nothing is persisted, so §12.13 stays
-  open. Verified by fetching a real bundle on the emulator and `curl`-ing the session there
-  (no browser to hand it to), then with a real browser on the C2.
+  `503`, a 30-minute idle session), the `KelpBundles` seam, and *Open in browser* on a share's
+  own page — offered only for a share declared a **webpage** (§5.5), not for any bundle that
+  happens to hold a page. `tst_kelppreview` drives it over a real socket and `tst_kelpbundles`
+  covers the seam; both run without a browser or a display. Still to do: the lazy fetch through
+  `KelpSource` (today a missing object is a `503`), the per-bundle confirmation (§12.10), and
+  an on-device pass with a real browser. An embedded `Sailfish.WebView` remains a later UI
+  decision (§12.9).
+- **C4a.1 — the preview from the receive side (§5.4).** **Dropped by the user, 2026-10-18,
+  before any code was written.** The design was one **Open in browser** button on the Open-link
+  page's Done panel for a page that arrived inside an ordinary folder share; the user's answer
+  was that a folder share downloads its files and nothing more — *"the user will have to then
+  find the file and open it up separately"* — so the kind decides, and a received page is
+  opened from the files it was saved as. §5.4 keeps the design as a record; the same ruling
+  tightened the *owner's* side, where the button is now offered only for a webpage share.
+  Flipping this later would be small (the seam is `KelpClient`'s held `bundleId`/`secret`, and
+  `KeepAlive` already covers a live session), but nothing in the tree offers it.
 - **C4a.2 — view-only webpage links (§5.5, recipient half).** **Built; verified on the emulator and
   through a real browser on the C2.** For a link carrying `p`, the Open-link page shows no *Save to* and no *Download*:
   one **Open in browser**, fetching into a session-owned `MemoryStore` and opening the preview
@@ -1076,10 +1095,9 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    decision durable, because the same id is the same immutable bytes; a remembered "trusted"
    can never be swapped for different content. Deferred by the first cut: what is opened today
    is the sender's own share, and a prompt over your own content is noise. The prompt belongs
-   with §12.13, when the page is someone else's. **Still parked after §5.4:** fetching someone
-   else's bundle and pressing *Open in browser* is a fresh, explicit choice every time, and
-   nothing is remembered for a prompt to be about; the prompt is for the day a received bundle
-   is kept.)*
+   with §12.13, when the page is someone else's. **Parked again by §5.4's dropping
+   (2026-10-18):** with no receive-side button there is nothing to preview someone else's page
+   *with*, so the prompt waits for the day a received bundle is kept and opened.)*
 11. **A page's network reach** — offline forever, enforced by the CSP in §5.1 *(recommended)*,
    or an explicit per-preview "let this page use the internet" switch? *(2026-10-18: the first
    real-browser pass makes the trade visible. A page saved from a website and shared as it stands
@@ -1103,12 +1121,14 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    key this device never minted and of a bundle list that mixes "shared by me" with "received".
    *(Leaning: keep received bundles as rows that can be paused and removed and are marked as
    received, because the alternative is a preview that only ever shows you your own page.
-   **2026-10-17: the first half is answered without keeping anything** — §5.4 offers the preview
-   for the one session a download just finished, so a recipient does see the page, with no key on
-   disk and nothing added to the list. What keeping the row would still add: a preview that can be
-   re-opened later, a re-download without the link, and seeding a received bundle. And §5.5's
-   webpage links step around the question for the case a publisher can declare: view-only, held in
-   memory for the session, so there is nothing on disk either to keep or to prune.)*
+   **2026-10-17: the first half was answered without keeping anything** — §5.4 offered the
+   preview for the one session a download just finished, so a recipient did see the page, with
+   no key on disk and nothing added to the list. **2026-10-18: that answer was withdrawn** — the
+   user ruled that an ordinary share only saves, so looking at a received page is done from the
+   files; what keeping the row would still add is a preview that can be re-opened later, a
+   re-download without the link, and seeding a received bundle. §5.5's webpage links step around
+   the question for the case a publisher can declare: view-only, held in memory for the session,
+   so there is nothing on disk either to keep or to prune.)*
 
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 

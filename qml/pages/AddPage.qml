@@ -128,7 +128,10 @@ Page {
         }
         kelpLog.info("AddPage: \"" + path + "\" offers the page " + info.entry
                      + " (of " + info.candidates.length + " HTML file(s))")
-        return addPage.shareNow(path, path.split("/").pop(), "folder", true)
+        // "webpage", not "folder": the row's `page` flag is what decides what the
+        // app offers (design §5.5), but this string is persisted and logged, so it
+        // should not call a webpage share a folder (§3.26).
+        return addPage.shareNow(path, path.split("/").pop(), "webpage", true)
     }
 
     SilicaFlickable {

@@ -53,7 +53,9 @@ and test.
   first checks the chosen folder really holds a page — by the same rule that finds
   a page in a bundle (design §5.3) — and refuses a folder that holds none instead
   of sharing something a recipient could not open. (The repo's `demo/` folder is a page made to
-  be shared this way: one small offline site, three files.) Also carries the per-share *Let
+  be shared this way: one small offline site, three files.) Only a share declared as a **webpage**
+  is offered to a browser; a folder shared as a folder is files and nothing else, and a page among
+  them is the recipient's own business to open (design §5.4/§5.5). Also carries the per-share *Let
   peers help serve what I share here* choice.
 - **Open a link** — paste a `kelp://` link and download the bundle. The link is
   explained before anything happens (name, content address, where it will be
