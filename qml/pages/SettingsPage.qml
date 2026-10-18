@@ -118,33 +118,49 @@ Page {
 
             TextSwitch {
                 text: qsTr("Share in background")
-                description: qsTr("Keep seeding while Kelp is in the background, and ask the system not to stop it. Closing Kelp still ends serving — there is no always-on service.")
-                checked: settingsPage.store ? settingsPage.store.seedingEnabled : false
+                description: qsTr("Keep seeding while Kelp is in the background, and ask the system not to stop it. Closing Kelp still ends serving — there is no always-on service. Serving stops on its own when the battery is low and the device is not charging.")
+                checked: kelpSettings.shareInBackground
                 onCheckedChanged: {
-                    if (settingsPage.store && checked !== settingsPage.store.seedingEnabled)
-                        settingsPage.store.seedingEnabled = checked
+                    if (checked !== kelpSettings.shareInBackground)
+                        kelpSettings.shareInBackground = checked
                 }
             }
 
             TextSwitch {
                 text: qsTr("Wi-Fi only")
-                description: qsTr("Never seed over mobile data")
-                checked: settingsPage.store ? settingsPage.store.wifiOnly : true
+                description: qsTr("Never seed over mobile data. Sharing pauses when this device's only connection is mobile data, and comes back when Wi-Fi (or a wired network) is there again — the link does not change.")
+                checked: kelpSettings.wifiOnly
                 onCheckedChanged: {
-                    if (settingsPage.store && checked !== settingsPage.store.wifiOnly)
-                        settingsPage.store.wifiOnly = checked
+                    if (checked !== kelpSettings.wifiOnly)
+                        kelpSettings.wifiOnly = checked
                 }
+            }
+
+            // What the policy is doing right now, in the same words the share
+            // list uses. On a device with no battery and one connection this is
+            // the only place the two switches above can be seen to act at all.
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: kelpPolicy.block === "metered"
+                      ? qsTr("Serving is stopped: this device's only connection is mobile data, and “Wi-Fi only” is on.")
+                      : (kelpPolicy.block === "battery"
+                         ? qsTr("Serving is stopped: the battery is low and this device is not charging. It starts again at %1% or when charging.").arg(kelpPolicy.lowBatteryPercent)
+                         : qsTr("Serving now."))
             }
 
             SectionHeader { text: qsTr("Swarm") }
 
             TextSwitch {
                 text: qsTr("Allow peer swarm")
-                description: qsTr("Permit a bundle to let other downloaders serve pieces to each other. Still off per share by default, and those peers see your IP address.")
-                checked: settingsPage.store ? settingsPage.store.swarmEnabled : false
+                description: qsTr("Permit a bundle to let other downloaders serve pieces to each other. Still off per share by default, those peers see your IP address — and no share uses it yet.")
+                checked: kelpSettings.peerSwarm
                 onCheckedChanged: {
-                    if (settingsPage.store && checked !== settingsPage.store.swarmEnabled)
-                        settingsPage.store.swarmEnabled = checked
+                    if (checked !== kelpSettings.peerSwarm)
+                        kelpSettings.peerSwarm = checked
                 }
             }
 

@@ -67,7 +67,7 @@ Page {
             return false
         }
 
-        var peerSwarm = swarm && store && store.swarmEnabled
+        var peerSwarm = swarm && kelpSettings.peerSwarm
         kelpLog.info("AddPage: sharing " + kind + " \"" + name + "\" (" + path
                      + "), page=" + page + ", swarm=" + peerSwarm)
 
@@ -220,13 +220,27 @@ Page {
             }
 
             Label {
-                visible: addPage.store && addPage.store.seedingEnabled === false
+                visible: kelpSettings.shareInBackground === false
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeExtraSmall
                 text: qsTr("Background serving is off in Settings, so this share is served only while Kelp is in front.")
+            }
+
+            // The serving policy can stop this share the moment it is made
+            // (design §12.8), which is surprising unless it is said here first.
+            Label {
+                visible: kelpPolicy.block.length > 0
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: kelpPolicy.block === "metered"
+                      ? qsTr("Serving is stopped right now: this device's only connection is mobile data and “Wi-Fi only” is on. The share is still made and its link works as soon as Wi-Fi is back.")
+                      : qsTr("Serving is stopped right now: the battery is low. The share is still made and its link works as soon as this device is charging.")
             }
 
             SectionHeader { text: qsTr("Privacy") }
@@ -244,11 +258,11 @@ Page {
 
             TextSwitch {
                 text: qsTr("Let peers help serve what I share here")
-                description: addPage.store && addPage.store.swarmEnabled
+                description: kelpSettings.peerSwarm
                              ? qsTr("Other downloaders trade pieces among themselves. Faster for popular shares, but those peers see your IP address.")
                              : qsTr("Turn on “Allow peer swarm” in Settings to enable this.")
                 checked: addPage.swarm
-                enabled: addPage.store ? addPage.store.swarmEnabled : false
+                enabled: kelpSettings.peerSwarm
                 onCheckedChanged: {
                     if (checked !== addPage.swarm)
                         addPage.swarm = checked

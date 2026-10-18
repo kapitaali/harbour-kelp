@@ -1064,10 +1064,59 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    something is really being served and *Share in background* is on, and releases
    it otherwise. Verified live with the app backgrounded (PROGRESS §3.17).
 
-   *Should it?* is the part that is still design, and it is a **policy**, not a
-   service: what to do off Wi-Fi, below a battery threshold, or while the screen
-   sleeps. None of that is implemented, the switch that gates the keepalive is
-   not persisted, and `wifiOnly` is still a placeholder.
+   *Should it?* — **answered 2026-10-18**, and the answer is a *policy*, not a
+   service. Two rules, in one place (`Kelp::Policy::servingBlock()` in `libkelp`,
+   wrapped for QML by `src/kelppolicy.{h,cpp}`), so what the switches promise and
+   what the app does cannot drift:
+
+   - **Wi-Fi only** — whose label now says what it means, *never seed over mobile
+     data*: serving stops when the device's **only usable connection is
+     cellular**, and starts again when a Wi-Fi or wired interface carries an
+     address. "Metered" is a fact about the device, not about each socket: an
+     interface counts if it is up and carries an address that is neither loopback
+     nor link-local, and it is cellular if the kernel does not mark it wireless
+     (`/sys/class/net/<if>/wireless`, which is what Wi-Fi really is) *and* its name
+     looks mobile — `ccmni*` (MediaTek, the C2), `rmnet*`, `wwan*`, `pdp_ip*`,
+     `ppp*`. A name that is none of those — a wire, a VPN — is **unmetered on
+     purpose**: guessing "metered" for a name we cannot place would stop serving
+     on a network that costs nothing. Wi-Fi and mobile data both up is not
+     metered, and a relay tunnel may still ride the mobile link; this switch is a
+     data-plan courtesy, not a per-socket leash (and relays are off by default).
+   - **Low battery**: below 15% while not charging, serving stops, and starts
+     again by itself at the threshold or as soon as the device is charging. A
+     device with no battery at all and an unreadable battery never block
+     anything.
+
+   When a rule fires, every share that was being served is *paused in place*: the
+   row keeps its link and its objects, the row and the Bundle page say why, and
+   the stop is **not** recorded in `shares.json` as a user pause — so a restart
+   comes back serving, and a pause the user did ask for is never overwritten.
+   Serving comes back by itself, and **a link already handed out keeps working**:
+   stopping a share does not close the LAN listener (`KelpServer::start()`
+   returns early when it is already listening), so the address inside the link a
+   recipient holds is still the address being served when the policy lifts. The
+   link *text* is not byte-identical — `q=` is sealed under a fresh nonce every
+   time it is minted — but it decodes to the same host:port and the old link still
+   fetches; verified on the emulator by fetching through a link minted *before*
+   the stop, after the resume (BUILD.md, PROGRESS §3.28).
+
+   Where the facts come from is a finding in itself: **a sandboxed app may not
+   talk to connman or MCE.** `/etc/sailjail/permissions/Internet.permission`
+   grants an app with the Internet permission exactly
+   `com.jolla.lipstick.ConnectionSelector`, `org.ofono` and
+   `com.jolla.PinQuery` — `net.connman` and `com.nokia.mce` are not among them, so
+   `Nemo.Mce` and connman's signals are out however convenient they would be. The
+   same app may read the kernel the daemons read (its firejail profile adds only
+   `--private-bin`, no private `/sys` or `/proc`), so the battery comes from
+   `/sys/class/power_supply/*` and the connection from `QNetworkInterface` plus
+   `/sys/class/net`. Both are polled every 20 seconds, and the classification is
+   logged whenever it changes, precisely because the cellular names are a
+   heuristic and a wrong verdict should be visible.
+
+   The three switches persist (`KelpSettings`): background serving on, Wi-Fi only
+   on, peer swarm off — and the Settings page and the code that acts on them read
+   the same object, so a switch the user set survives a restart instead of being
+   forgotten, and "Allow peer swarm" is at least honest about being remembered.
 
    *And once the app is closed?* Nothing — and nothing can be, from a Harbour app:
    an always-on seeder is a systemd **user service**, which is OpenRepos territory,
@@ -1080,7 +1129,9 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    stopped, row and objects kept, `paused` recorded in `shares.json`, resumed with
    the same `republish()` that restores a share at startup. That pair is the
    non-destructive half of the serving controls, and the shape background serving
-   needed.
+   needed. The serving policy rides on that same `pause()`, which is why a policy
+   stop inherits the property that matters: the listener never moves, so the link
+   outside does not have to be replaced.
 
 9. **Preview route** — the system browser (recommended: browser affordances for free, no new
    dependency) or an embedded `Sailfish.WebView` (stronger leash via a request interceptor and

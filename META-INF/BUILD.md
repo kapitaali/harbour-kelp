@@ -122,9 +122,9 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh "$PWD/src/tests/run-all-t
 
 | Suite | What it pins | Checks |
 |---|---|---|
-| `libkelp/tests/run-tests.sh` | RFC 5869 + GCM vectors, wire-spec §16 manifest/object vectors, the whole seal→open round trip, corrupt-object refusal, the §5.3 page chooser | 393 |
+| `libkelp/tests/run-tests.sh` | RFC 5869 + GCM vectors, wire-spec §16 manifest/object vectors, the whole seal→open round trip, corrupt-object refusal, the §5.3 page chooser, and the serving policy's truth table (metered, battery, charging, at and below the threshold, unknown battery) | 420 |
 | `src/tests/run-kelpfetch-test.sh` | the LAN request header, base64url swarm token, the reachability rule | 37 |
-| `src/tests/run-kelpsettings-test.sh` | the persisted preferences, including the dev-extras default from both sides | 24 |
+| `src/tests/run-kelpsettings-test.sh` | the persisted preferences — including the three serving switches and the dev-extras default, from both sides | 39 |
 | `src/tests/run-kelpshares-test.sh` | the persisted share rows | 24 |
 | `src/tests/run-kelpqr-test.sh` | QR encoding, against Python's `qrcode` | 9 |
 | `src/tests/run-kelpbundles-test.sh` | seal, webpage shares (`page` in the row and `p` in the link), the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 159 |
@@ -163,6 +163,39 @@ carries `demo/`: a three-file page with no external reference at all, which is w
 has to be (the preview serves it offline, design §5.1/§12.11). Copy the folder in and point
 *Share… → Share webpage* at it; it is also the honest test of relative sub-resources resolving
 through a bundle (§3.24).
+
+### The serving policy's two inputs
+
+The rule itself is pure and covered by `libkelp/tests`; what a device can *prove* is the
+plumbing, and an emulator has neither a cellular connection nor a battery that can be drained.
+Two environment variables make those situations reachable there, read once at startup and
+deliberately **not** behind the dev-extras bundle — they cannot make the app serve something it
+would not otherwise have served, only stop it sooner:
+
+| Variable | Effect |
+|---|---|
+| `KELP_FORCE_METERED=1` | the only usable connection counts as mobile data |
+| `KELP_FORCE_BATTERY=<0..100>` | a discharging battery of that percentage (charging cannot be forced) |
+
+Launch the guest app with either, the way the deploy recipe does but with the variable added:
+
+```sh
+ssh -p 2223 -i $KEY defaultuser@127.0.0.1 \
+    'cd /home/defaultuser && XDG_RUNTIME_DIR=/run/user/100000 \
+     DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/100000/dbus/user_bus_socket \
+     WAYLAND_DISPLAY=../../display/wayland-0 QT_QPA_PLATFORM=wayland \
+     KELP_ADVERTISE_HOST=<this host> KELP_DEBUG_LINK=1 KELP_FORCE_METERED=1 \
+     setsid /usr/bin/harbour-kelp >/dev/null 2>&1 </dev/null &'
+```
+
+Then read the verdict off the log (`KelpDeviceState:`, then `KelpPolicy: serving stopped — …` or
+`KelpPolicy: serving allowed`), and check the network half with
+`run-emu-share.sh --host <this host> --redact --fetch`, which must report
+`401 bad token` / `NOT SERVING` while blocked. The clearest observable is the link *behaviour*,
+not the link text: flip the Wi-Fi-only switch off (a temporary QML hook is the honest way — a
+restart would move the ephemeral port, and a move is the one thing this is testing) and fetch
+through a link minted *before* the stop. It must still serve. Nothing about the switch changes
+the same-app-in-front rule: it only decides whether serving happens at all.
 
 ## Checks before committing
 

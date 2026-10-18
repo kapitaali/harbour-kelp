@@ -81,10 +81,16 @@ and test.
   objects* action), *Include links in the log*, and a *Clear log* action. *Share
   in background* is real: it decides whether Kelp asks the platform not to end it
   while it serves with the window gone (see *Serving with the window gone* below);
-  closing the app still ends serving. *Wi-Fi only* and *Allow peer swarm* are the
-  shape of the intended behaviour and are deliberately not acted on yet — only the
-  LAN path is wired up, and now in both directions. Two switches are real and
-  persisted: *Include my local address in the link* decides whether a link carries
+  closing the app still ends serving. *Wi-Fi only* is real too: it **never seeds
+  over mobile data** — serving stops when the device's only usable connection is
+  cellular and starts again by itself when a Wi-Fi or wired interface is back.
+  Serving also stops below 15% battery while not charging, for the same reason
+  (the battery is not a switch; the rule is design §12.8). A policy stop is not a
+  pause the user asked for: the row says why, the link is kept, and the stop is
+  forgotten once the condition lifts. *Allow peer swarm* is the remaining parked
+  switch: it is remembered now, but only the LAN path is wired up, in both
+  directions. Two more switches are real and persisted: *Include my local address
+  in the link* decides whether a link carries
   this device's address at all (and so whether the bundle is served locally), and
   *Include links in the log* decides whether a share's `kelp://` link (and so its
   key) is written to the log — part of the dev-extras bundle, so a dev build offers
@@ -177,8 +183,8 @@ app on its cover (PROGRESS §3.17).
 while something is really being served and the switch is on, Kelp holds the
 platform's `Nemo.KeepAlive` request — how an app asks not to be ended under memory
 or power pressure — and with nothing to serve it releases the request rather than
-sitting on it. The switch is not persisted yet, so it comes back on at each launch,
-which is also the useful default.
+sitting on it. The switch is persisted — a user who turns background serving
+off does not get it back at the next launch — and comes on by default.
 
 A **preview session** holds that request on its own account, with or without the
 switch: a webpage link is opened *from* the app into the browser, so the party in
@@ -193,8 +199,12 @@ Two limits are real and worth saying plainly:
   no always-on service behind them — a Harbour app cannot ship one (that would be
   a systemd user service). The old wording promised "keep seeding after the app is
   closed", which was never true.
-- **There is no Wi-Fi-only or low-battery policy yet.** *Settings → Wi-Fi only* is
-  still the shape of the intended behaviour (design §12.8).
+- **Serving stops on mobile data and on a low battery, and comes back by
+  itself.** *Wi-Fi only* means *never seed over mobile data*: while the only
+  usable connection is cellular, serving pauses and says why. Below 15% while
+  not charging, it pauses for the same reason. Neither is a *user* pause — the
+  link is kept, and the stop is forgotten once the condition lifts, so a link
+  already handed out works again untouched (design §12.8).
 
 To silence a share without giving up its place in the list, *Pause sharing* from a
 row's menu — or the cover action, which pauses them all — stops serving while

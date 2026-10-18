@@ -47,6 +47,24 @@ class KelpSettings : public QObject
     Q_PROPERTY(QString downloadDirectory READ downloadDirectory
                    WRITE setDownloadDirectory NOTIFY downloadDirectoryChanged)
 
+    // Settings → Share in background. On by default. What it asks the platform
+    // for is KeepAlive (the root QML holds it while something is really being
+    // served); closing Kelp still ends serving — there is no always-on service.
+    Q_PROPERTY(bool shareInBackground READ shareInBackground
+                   WRITE setShareInBackground NOTIFY shareInBackgroundChanged)
+
+    // Settings → Wi-Fi only. On by default. The label says the real rule: never
+    // seed over mobile data. The serving policy (src/kelppolicy.h and libkelp's
+    // kelp_policy.h) is what acts on it; this is only where the choice lives.
+    Q_PROPERTY(bool wifiOnly READ wifiOnly
+                   WRITE setWifiOnly NOTIFY wifiOnlyChanged)
+
+    // Settings → Allow peer swarm. Off by default. Persisted so the switch is
+    // honest about being a remembered choice, but nothing serves peers yet —
+    // the per-share option it gates is still not implemented (design §12.6).
+    Q_PROPERTY(bool peerSwarm READ peerSwarm
+                   WRITE setPeerSwarm NOTIFY peerSwarmChanged)
+
 public:
     explicit KelpSettings(QObject *parent = nullptr);
 
@@ -63,10 +81,22 @@ public:
     QString downloadDirectory() const;
     void setDownloadDirectory(const QString &path);
 
+    bool shareInBackground() const;
+    void setShareInBackground(bool on);
+
+    bool wifiOnly() const;
+    void setWifiOnly(bool on);
+
+    bool peerSwarm() const;
+    void setPeerSwarm(bool on);
+
 signals:
     void includeLanAddressChanged();
     void includeLinksInLogChanged();
     void downloadDirectoryChanged();
+    void shareInBackgroundChanged();
+    void wifiOnlyChanged();
+    void peerSwarmChanged();
 
 private:
     QSettings m_settings;

@@ -37,23 +37,35 @@ CoverBackground {
             font.pixelSize: Theme.fontSizeExtraSmall
             text: (cover.store && cover.store.servedShares > 0)
                   ? qsTr("%n bundle(s) served", "", cover.store.servedShares)
-                  : qsTr("Nothing is being served")
+                  : (cover.store && cover.store.blockedShares > 0
+                     ? qsTr("Serving stopped")
+                     : qsTr("Nothing is being served"))
         }
     }
 
     CoverActionList {
+        // A policy stop (design §12.8) is nobody's choice and undoes itself, so
+        // this button does not offer to undo it: it is enabled only while there
+        // is a share the user can pause or resume themselves.
+        enabled: cover.store
+                 && (cover.store.bundlesModel.count - cover.store.pausedShares
+                     - cover.store.blockedShares > 0
+                     || cover.store.pausedShares > 0)
         CoverAction {
             // One action for the whole app: pause every share, or serve them all
             // again — the same per-share pause/resume the list and Bundle page
-            // offer. Something is active while at least one row is not paused.
+            // offer. Something is active while at least one row is neither
+            // paused by the user nor stopped by the policy.
             iconSource: (cover.store
-                         && cover.store.bundlesModel.count - cover.store.pausedShares > 0)
+                         && cover.store.bundlesModel.count - cover.store.pausedShares
+                            - cover.store.blockedShares > 0)
                         ? "image://theme/icon-m-pause"
                         : "image://theme/icon-m-play"
             onTriggered: {
                 if (!cover.store)
                     return
-                if (cover.store.bundlesModel.count - cover.store.pausedShares > 0)
+                if (cover.store.bundlesModel.count - cover.store.pausedShares
+                        - cover.store.blockedShares > 0)
                     cover.store.pauseAllShares()
                 else
                     cover.store.resumeAllShares()

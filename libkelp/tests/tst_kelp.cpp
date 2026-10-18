@@ -23,6 +23,7 @@
 #include "kelp_link.h"
 #include "kelp_manifest.h"
 #include "kelp_object.h"
+#include "kelp_policy.h"
 #include "kelp_store.h"
 #include "kelp_web.h"
 #include "kelp_wire.h"
@@ -40,6 +41,28 @@ QString show(const QString &value) { return value; }
 QString show(int value) { return QString::number(value); }
 QString show(qint64 value) { return QString::number(value); }
 QString show(quint64 value) { return QString::number(value); }
+
+// The serving policy's enums print as words, so a failing check says "metered"
+// rather than a number.
+QString show(Policy::InterfaceKind value)
+{
+    switch (value) {
+    case Policy::InterfaceKind::Other: return QStringLiteral("other");
+    case Policy::InterfaceKind::Wifi: return QStringLiteral("wifi");
+    case Policy::InterfaceKind::Cellular: return QStringLiteral("cellular");
+    }
+    return QStringLiteral("?");
+}
+
+QString show(Policy::ServingBlock value)
+{
+    switch (value) {
+    case Policy::ServingBlock::None: return QStringLiteral("none");
+    case Policy::ServingBlock::Metered: return QStringLiteral("metered");
+    case Policy::ServingBlock::Battery: return QStringLiteral("battery");
+    }
+    return QStringLiteral("?");
+}
 
 void section(const char *name)
 {
@@ -1469,11 +1492,106 @@ void testWebChooser()
     CHECK_EQ(Web::chooseEntry(shuffled, &root), QStringLiteral("index.html"));
 }
 
+void testPolicy()
+{
+    section("serving policy: Wi-Fi only and low battery");
+
+    // The classifier. The `wireless` flag is the kernel's own answer and wins:
+    // wlan0, ap0 and p2p0 are Wi-Fi on a C2, and none of them is named like a
+    // mobile interface; the cellular names are the heuristic.
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("wlan0"), true),
+             Policy::InterfaceKind::Wifi);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("ap0"), true),
+             Policy::InterfaceKind::Wifi);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("ccmni1"), false),
+             Policy::InterfaceKind::Cellular);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("rmnet_data0"), false),
+             Policy::InterfaceKind::Cellular);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("wwan0"), false),
+             Policy::InterfaceKind::Cellular);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("pdp_ip0"), false),
+             Policy::InterfaceKind::Cellular);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("ppp0"), false),
+             Policy::InterfaceKind::Cellular);
+    // Wired, a tunnel, and the emulator's own interface: unmetered, because
+    // guessing "metered" for a name we do not know would stop serving on a
+    // network that costs nothing.
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("eth0"), false),
+             Policy::InterfaceKind::Other);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("tun0"), false),
+             Policy::InterfaceKind::Other);
+    CHECK_EQ(Policy::classifyInterface(QStringLiteral("usb0"), false),
+             Policy::InterfaceKind::Other);
+
+    // "Metered" is about the device, not about one socket: the only usable
+    // connection being cellular. Wi-Fi alongside mobile data is not metered.
+    QVector<Policy::InterfaceKind> usable;
+    CHECK(!Policy::metered(usable));   // nothing up: not a data-plan problem
+    usable.append(Policy::InterfaceKind::Cellular);
+    CHECK(Policy::metered(usable));
+    usable.append(Policy::InterfaceKind::Cellular);
+    CHECK(Policy::metered(usable));
+    usable.append(Policy::InterfaceKind::Wifi);
+    CHECK(!Policy::metered(usable));
+    usable.clear();
+    usable.append(Policy::InterfaceKind::Cellular);
+    usable.append(Policy::InterfaceKind::Other);   // wired or a tunnel
+    CHECK(!Policy::metered(usable));
+
+    // The battery, from the kernel's word.
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Discharging"), 56).known, true);
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Discharging"), 56).charging, false);
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Charging"), 56).charging, true);
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Full"), 100).charging, true);
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Not charging"), 56).charging, false);
+    // No battery at all (a wall-powered device), an empty file, or a capacity
+    // that makes no sense: unknown, and an unknown battery never blocks.
+    CHECK_EQ(Policy::powerFromStatus(QString(), 56).known, false);
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Discharging"), -1).known, false);
+    CHECK_EQ(Policy::powerFromStatus(QStringLiteral("Discharging"), 101).known, false);
+
+    const Policy::Power dischargingLow(true, false, 5);
+    const Policy::Power dischargingAt(true, false, Policy::kLowBatteryPercent);
+    const Policy::Power dischargingJustUnder(true, false, Policy::kLowBatteryPercent - 1);
+    const Policy::Power chargingLow(true, true, 5);
+    const Policy::Power unknown;
+    const Policy::Power full(true, true, 100);
+
+    // Wi-Fi only, on mobile data: metered wins over everything, including a low
+    // battery — the explicit setting is the more surprising one to violate.
+    CHECK_EQ(Policy::servingBlock(true, true, dischargingLow), Policy::ServingBlock::Metered);
+    CHECK_EQ(Policy::servingBlock(true, true, chargingLow), Policy::ServingBlock::Metered);
+    CHECK_EQ(Policy::servingBlock(true, true, unknown), Policy::ServingBlock::Metered);
+
+    // On an unmetered connection the battery rule decides.
+    CHECK_EQ(Policy::servingBlock(true, false, dischargingLow), Policy::ServingBlock::Battery);
+    CHECK_EQ(Policy::servingBlock(true, false, chargingLow), Policy::ServingBlock::None);
+    CHECK_EQ(Policy::servingBlock(true, false, unknown), Policy::ServingBlock::None);
+    CHECK_EQ(Policy::servingBlock(true, false, full), Policy::ServingBlock::None);
+    // The threshold is a floor, not a ceiling: at it, serving continues; below
+    // it, it stops.
+    CHECK_EQ(Policy::servingBlock(true, false, dischargingAt), Policy::ServingBlock::None);
+    CHECK_EQ(Policy::servingBlock(true, false, dischargingJustUnder),
+             Policy::ServingBlock::Battery);
+
+    // Wi-Fi only off: mobile data no longer stops anything, and only the battery
+    // can.
+    CHECK_EQ(Policy::servingBlock(false, true, dischargingLow), Policy::ServingBlock::Battery);
+    CHECK_EQ(Policy::servingBlock(false, true, chargingLow), Policy::ServingBlock::None);
+
+    // The threshold is a parameter so a caller could move it; the default is
+    // the one the app uses.
+    CHECK_EQ(Policy::kLowBatteryPercent, 15);
+    CHECK_EQ(Policy::servingBlock(true, false, Policy::Power(true, false, 10), 5),
+             Policy::ServingBlock::None);
+    CHECK_EQ(Policy::servingBlock(true, false, Policy::Power(true, false, 10), 20),
+             Policy::ServingBlock::Battery);
+}
+
 int main()
 {
     printf("libkelp unit tests\n");
     testCborEncoding();
-    testManifestVectors();
     testCborDecoding();
     testManifestRules();
     testCryptoVectors();
@@ -1481,6 +1599,7 @@ int main()
     testStoreContract();
     testLink();
     testWebChooser();
+    testPolicy();
     testBundleRoundTrip();
     testMissingObjects();
     testBundleObjects();

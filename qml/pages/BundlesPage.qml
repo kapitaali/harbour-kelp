@@ -101,14 +101,21 @@ Page {
                 Label {
                     anchors.right: parent.right
                     text: shareState === "seeding" ? qsTr("Seeding")
-                          : (shareState === "paused" ? qsTr("Paused") : qsTr("Offline"))
+                          : (shareState === "paused" ? qsTr("Paused")
+                          : (shareState === "blocked" ? qsTr("Not serving") : qsTr("Offline")))
                     color: shareState === "seeding" ? Theme.highlightColor : Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                 }
 
                 Label {
                     anchors.right: parent.right
-                    text: lan.length > 0 ? lan : qsTr("not serving")
+                    // A stopped-by-policy row says why, in the place where an
+                    // address would otherwise be: that is the difference between
+                    // "something is wrong" and "this will come back by itself".
+                    text: lan.length > 0 ? lan
+                          : (shareState === "blocked" && bundlesPage.store
+                             && bundlesPage.store.policyBlockText.length > 0
+                             ? bundlesPage.store.policyBlockText : qsTr("not serving"))
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                 }

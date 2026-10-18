@@ -89,6 +89,12 @@ void testSettings()
         // The local address is exposed unless the user opts out: it is what the
         // same-network fast path needs.
         CHECK_EQ(settings.includeLanAddress(), true);
+        // The three serving switches keep the literals the root QML used to
+        // carry, so an upgrade changes nothing: background on, Wi-Fi only on,
+        // peer swarm off (and not implemented — it is a permission, §12.6).
+        CHECK_EQ(settings.shareInBackground(), true);
+        CHECK_EQ(settings.wifiOnly(), true);
+        CHECK_EQ(settings.peerSwarm(), false);
         // Lives in the directory Sailjail provisions (beside the log), not in
         // the ~/.config location the sandbox hides.
         CHECK_EQ(KelpSettings::filePath(),
@@ -176,6 +182,47 @@ void testSettings()
                  QStringLiteral("/home/defaultuser/Documents/inbox"));
         settings.setDownloadDirectory(QString());
         CHECK_EQ(settings.downloadDirectory(), QString());
+    }
+
+    section("serving switches");
+    {
+        KelpSettings settings;
+        int background = 0;
+        int wifi = 0;
+        int swarm = 0;
+        QObject::connect(&settings, &KelpSettings::shareInBackgroundChanged,
+                         [&background]() { ++background; });
+        QObject::connect(&settings, &KelpSettings::wifiOnlyChanged,
+                         [&wifi]() { ++wifi; });
+        QObject::connect(&settings, &KelpSettings::peerSwarmChanged,
+                         [&swarm]() { ++swarm; });
+
+        settings.setShareInBackground(false);
+        settings.setWifiOnly(false);
+        settings.setPeerSwarm(true);
+        CHECK_EQ(background, 1);
+        CHECK_EQ(wifi, 1);
+        CHECK_EQ(swarm, 1);
+        CHECK(readFile(path).contains("in_background=false"));
+        CHECK(readFile(path).contains("wifi_only=false"));
+        CHECK(readFile(path).contains("peer_swarm=true"));
+
+        // Unchanged values are neither signalled nor written again — the same
+        // guard the other settings have, and what keeps the switch the user
+        // sees and the value the app acts on from disagreeing.
+        settings.setShareInBackground(false);
+        settings.setWifiOnly(false);
+        settings.setPeerSwarm(true);
+        CHECK_EQ(background, 1);
+        CHECK_EQ(wifi, 1);
+        CHECK_EQ(swarm, 1);
+    }
+    {
+        // The restart path: a fresh instance reads all three back off disk.
+        KelpSettings settings;
+        CHECK_EQ(settings.shareInBackground(), false);
+        CHECK_EQ(settings.wifiOnly(), false);
+        CHECK_EQ(settings.peerSwarm(), true);
     }
 
     QFile::remove(path);

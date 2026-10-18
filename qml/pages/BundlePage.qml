@@ -21,6 +21,12 @@ Page {
     // objects, but nothing is served and it has no live link.
     property bool paused: entry ? entry.shareState === "paused" : false
 
+    // A share the serving policy stopped (design §12.8): the device is on mobile
+    // data with Wi-Fi only on, or the battery is low and not charging. Unlike a
+    // pause this is nobody's choice and it undoes itself — and unlike a pause the
+    // link is kept, because the listener did not move and the link still works.
+    property bool policyBlocked: entry ? entry.shareState === "blocked" : false
+
     // The link, decoded rather than string-split, so the page shows what a
     // recipient's client would see in it.
     property var linkParts: entry ? kelpBundles.linkInfo(entry.link) : null
@@ -131,8 +137,12 @@ Page {
                 label: qsTr("Status")
                 value: bundlePage.paused
                        ? qsTr("Paused")
-                       : ((bundlePage.entry && bundlePage.entry.shareState === "seeding")
-                          ? qsTr("Seeding") : qsTr("Offline"))
+                       : (bundlePage.policyBlocked
+                          ? qsTr("Stopped — %1").arg(bundlePage.store
+                                                    ? bundlePage.store.policyBlockText
+                                                    : qsTr("not serving"))
+                          : ((bundlePage.entry && bundlePage.entry.shareState === "seeding")
+                             ? qsTr("Seeding") : qsTr("Offline")))
             }
             DetailItem {
                 width: parent.width
@@ -154,6 +164,19 @@ Page {
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 text: qsTr("This share is paused, so there is no link to send. Resume it to serve the objects again — resuming mints a fresh link, because the address is only good while the bundle is being served.")
+            }
+
+            // A policy stop keeps the link, so this page says so rather than
+            // hiding it: the recipient holding it is not left with a dead link.
+            Label {
+                visible: bundlePage.policyBlocked
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                text: kelpPolicy.block === "metered"
+                      ? qsTr("Serving is stopped because this device's only connection is mobile data and “Wi-Fi only” is on. The link below is unchanged and starts answering again by itself when Wi-Fi (or a wired network) is back.")
+                      : qsTr("Serving is stopped because the battery is low. The link below is unchanged and starts answering again by itself when this device is charging.")
             }
 
             TextArea {
@@ -345,11 +368,13 @@ Page {
                 font.pixelSize: Theme.fontSizeSmall
                 text: bundlePage.paused
                       ? qsTr("This share is paused. It stays in the list and its objects stay in the store, but nothing is served, so any link handed out earlier will not work until you resume it.")
-                      : (bundlePage.entry && bundlePage.linkParts && bundlePage.linkParts.ok
-                         && bundlePage.linkParts.lan
-                         && bundlePage.linkParts.lan.length > 0
-                         ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network needs the relay.")
-                         : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device."))
+                      : (bundlePage.policyBlocked
+                         ? qsTr("Serving is stopped for now, so nobody can fetch this bundle. It is still sealed in the object store on this device, and the link above starts answering again by itself.")
+                         : (bundlePage.entry && bundlePage.linkParts && bundlePage.linkParts.ok
+                            && bundlePage.linkParts.lan
+                            && bundlePage.linkParts.lan.length > 0
+                            ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network needs the relay.")
+                            : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device.")))
                       + bundlePage.swarmNote
             }
         }

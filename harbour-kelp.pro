@@ -46,9 +46,11 @@ SOURCES += \
     src/kelpbundles.cpp \
     src/kelpbuild.cpp \
     src/kelpclient.cpp \
+    src/kelpdevicestate.cpp \
     src/kelpfetch.cpp \
     src/kelpfiles.cpp \
     src/kelplog.cpp \
+    src/kelppolicy.cpp \
     src/kelpqr.cpp \
     src/kelppreviewserver.cpp \
     src/kelpserver.cpp \
@@ -63,9 +65,11 @@ HEADERS += \
     src/kelpbundles.h \
     src/kelpbuild.h \
     src/kelpclient.h \
+    src/kelpdevicestate.h \
     src/kelpfetch.h \
     src/kelpfiles.h \
     src/kelplog.h \
+    src/kelppolicy.h \
     src/kelpqr.h \
     src/kelppreviewserver.h \
     src/kelpserver.h \

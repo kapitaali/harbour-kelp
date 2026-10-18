@@ -26,8 +26,10 @@
 #include "kelpbundles.h"
 #include "kelpbuild.h"
 #include "kelpclient.h"
+#include "kelpdevicestate.h"
 #include "kelpfiles.h"
 #include "kelplog.h"
+#include "kelppolicy.h"
 #include "kelpqr.h"
 #include "kelppreviewserver.h"
 #include "kelpserver.h"
@@ -54,6 +56,14 @@ int main(int argc, char *argv[])
     KelpFiles kelpFiles;
     KelpLog kelpLog;
     KelpSettings kelpSettings;
+
+    // The serving policy (design §12.8): what the device's connection and
+    // battery look like right now, and whether that means this device may serve
+    // at all. It reads sysfs/procfs (a sandboxed app may not ask connman or
+    // MCE), polls, and holds no state the UI does not act on itself.
+    KelpDeviceState kelpDeviceState;
+    KelpPolicy kelpPolicy(&kelpSettings, &kelpDeviceState);
+
     // The saved share list, restored by the UI at startup so a restart no longer
     // drops a share (the objects were already staying on disk).
     KelpShares kelpShares;
@@ -129,6 +139,7 @@ int main(int argc, char *argv[])
     context->setContextProperty("kelpFiles", &kelpFiles);
     context->setContextProperty("kelpLog", &kelpLog);
     context->setContextProperty("kelpSettings", &kelpSettings);
+    context->setContextProperty("kelpPolicy", &kelpPolicy);
     context->setContextProperty("kelpShares", &kelpShares);
     context->setContextProperty("kelpBundles", &kelpBundles);
     context->setContextProperty("kelpClient", &kelpClient);
