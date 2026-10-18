@@ -151,6 +151,13 @@ emulator link reachable at all from another device — and `kelp-probe.py` fetch
 link the way a recipient would without printing its key. Both are documented in
 `PROGRESS-<date>.md` §4.5.
 
+That reachability only holds for the app instance the script started. Start Kelp from the
+guest's own app grid instead — or restart it, or install a package — and it goes back to
+advertising the guest's `10.0.2.15`, so its links read `10.0.2.15:<port>` and nothing
+outside the emulator can open them. If a link that worked a moment ago says `10.0.2.15`,
+re-run `run-emu-share.sh --relaunch` and copy the link **again**: the address is sealed into
+the link at mint time, so the old one stays dead (PROGRESS §2.5, met twice).
+
 To try a *webpage* share end to end — the one thing that needs something to look at — the repo
 carries `demo/`: a three-file page with no external reference at all, which is what a viewed page
 has to be (the preview serves it offline, design §5.1/§12.11). Copy the folder in and point
