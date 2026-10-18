@@ -17,11 +17,15 @@ RELAY="$(cd "$HERE/.." && pwd)"
 
 PORT=9643
 
+# Out of source, and cleaned first, so that switching build targets
+# (i486 <-> aarch64) cannot leave foreign object files behind — the same rule the
+# C++ suite runners follow, and the reason a stale tree once failed to link here
+# with "undefined reference to operator new(unsigned int)".
 echo "building relay and harness"
 mkdir -p "$RELAY/.build"
-( cd "$RELAY/.build" && qmake "$RELAY/kelp-relay.pro" >/dev/null && make -s )
+( cd "$RELAY/.build" && qmake "$RELAY/kelp-relay.pro" >/dev/null && make -s clean && make -s )
 mkdir -p "$HERE/.build"
-( cd "$HERE/.build" && qmake "$HERE/relaytest.pro" >/dev/null && make -s )
+( cd "$HERE/.build" && qmake "$HERE/relaytest.pro" >/dev/null && make -s clean && make -s )
 
 mkdir -p "$HERE/certs"
 if [ ! -f "$HERE/certs/cert.pem" ]; then
@@ -34,9 +38,8 @@ fi
 pkill -x kelp-relay 2>/dev/null || true
 sleep 1
 
-# QT_LOGGING_TO_CONSOLE so the relay's qInfo/qWarning are actually visible here.
-# QT_LOGGING_TO_CONSOLE so the relay's and the app's own qInfo/qWarning are
-# actually visible here — the traffic line included.
+# QT_LOGGING_TO_CONSOLE so the relay's qInfo/qWarning are actually visible here —
+# the traffic line included.
 env QT_LOGGING_TO_CONSOLE=1 "$RELAY/.build/kelp-relay" \
     --port "$PORT" \
     --cert "$HERE/certs/cert.pem" --key "$HERE/certs/key.pem" \

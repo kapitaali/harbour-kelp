@@ -627,6 +627,7 @@ void testServing()
     CHECK_EQ(session.url,
              QStringLiteral("http://127.0.0.1:%1/%2/").arg(server.port()).arg(session.token));
     CHECK_EQ(server.sessionCount(), 1);
+    CHECK(server.has(session.token));
     CHECK_EQ(opened, 1);
 
     const QByteArray prefix = "/" + session.token.toLatin1();
@@ -684,11 +685,15 @@ void testServing()
     CHECK_EQ(reply.status, 301);              // a real directory, so it redirects
 
     // A token this server never minted is the same 404, with nothing to tell the
-    // two apart.
+    // two apart — and a body that says what a reader can do, because the usual
+    // reason a real token stops working is that the session was swept (§3.25).
     reply = get(port, "/0000000000000000000000000000000000000000000000000000000000000000/");
     CHECK_EQ(reply.status, 404);
+    CHECK(!server.has(QString(64, QLatin1Char('0'))));
+    CHECK(reply.body.contains("Open the link again from Kelp"));
     reply = get(port, "/");
     CHECK_EQ(reply.status, 404);
+    CHECK(reply.body.contains("Open the link again from Kelp"));
 
     // HEAD is answered like GET, without the body.
     reply = get(port, prefix + "/", QByteArray(), true);

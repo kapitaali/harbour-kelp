@@ -86,6 +86,11 @@ public:
     void close(const QString &token);
     int sessionCount() const;
 
+    // Whether a token still names a session. A caller that kept a URL can be
+    // holding one whose session the idle sweep has dropped, and must not hand it
+    // out again as if it worked (§3.25).
+    bool has(const QString &token) const;
+
     // What this server has done, for the log and for tests.
     struct Tally {
         qint64 requests = 0;      // files served

@@ -67,6 +67,30 @@ Page {
     property string entry: ""
     property int pages: 0
 
+    // This client outlives this page, so a page opened later can find the last
+    // visit's finished fetch still sitting in it: a leftover "done" is the *last*
+    // link's, not this one's. Asking the client which link it is handling is what
+    // tells the two apart — without it, pressing Open in browser on a fresh link
+    // re-opened the old session's URL instead of fetching (§3.25).
+    property bool viewOpen: openPage.viewOnly && openPage.phase === "done"
+                            && kelpClient.isHandling(openPage.link)
+    property bool doneHere: openPage.phase === "done"
+                            && (!openPage.viewOnly || openPage.viewOpen)
+    // The same for a failure: the error panel must belong to this link too, or a
+    // new link arrives wearing the last one's complaint.
+    property bool failedHere: openPage.phase === "failed"
+                              && kelpClient.isHandling(openPage.link)
+
+    // The same question, asked the imperative way. A property-change handler — and
+    // anything it calls — runs *before* a derived binding like viewOpen above has
+    // been re-evaluated, so reading that property there answers for the state
+    // before the change: that is how a finished view used to be re-handed out.
+    // Everything imperative reads the client directly instead.
+    function viewIsOpenNow() {
+        return openPage.viewOnly && openPage.phase === "done"
+               && kelpClient.isHandling(openPage.link)
+    }
+
     // Fetching needs a link that parses and an address to fetch from: a link
     // carrying only a relay cannot be fetched by this version.
     property bool canFetch: parsed !== null && parsed.ok && parsed.lan.length > 0
@@ -81,7 +105,7 @@ Page {
     // The bundle arrived for viewing: hand it to the browser, if it was that
     // press that asked for it.
     onPhaseChanged: {
-        if (openPage.viewOnly && openPage.phase === "done" && openPage.pendingOpen) {
+        if (openPage.viewIsOpenNow() && openPage.pendingOpen) {
             openPage.pendingOpen = false
             openPage.openInBrowser()
         }
@@ -112,7 +136,7 @@ Page {
     // re-opens the same session — it does not fetch, and it does not mint a
     // second URL (design §5.5, C4a2-plan.md D5).
     function startOpen() {
-        if (openPage.viewOnly && openPage.phase === "done") {
+        if (openPage.viewIsOpenNow()) {
             openPage.openInBrowser()
             return
         }
@@ -285,7 +309,7 @@ Page {
 
             SectionHeader {
                 visible: openPage.parsed !== null && openPage.parsed.ok
-                         && !openPage.busy && openPage.phase !== "done"
+                         && !openPage.busy && !openPage.doneHere
                          && !openPage.viewOnly
                 text: qsTr("Save to")
             }
@@ -295,7 +319,7 @@ Page {
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 spacing: Theme.paddingSmall
                 visible: openPage.parsed !== null && openPage.parsed.ok
-                         && !openPage.busy && openPage.phase !== "done"
+                         && !openPage.busy && !openPage.doneHere
                          && !openPage.viewOnly
 
                 Label {
@@ -355,14 +379,16 @@ Page {
                                 width: busyRow.width - spinner.width - busyRow.spacing
                                 anchors.verticalCenter: parent.verticalCenter
                                 wrapMode: Text.Wrap
-                                text: openPage.phase === "checking"
-                                      ? qsTr("Asking the sender…")
-                                      : openPage.phase === "saving"
-                                        ? qsTr("Saving the files…")
-                                        : kelpClient.total > 0
-                                          ? qsTr("Fetched %1 of %2 objects")
-                                            .arg(kelpClient.fetched).arg(kelpClient.total)
-                                          : qsTr("Fetched %1 objects").arg(kelpClient.fetched)
+                                text: !kelpClient.isHandling(openPage.link)
+                                      ? qsTr("Another transfer is still running…")
+                                      : openPage.phase === "checking"
+                                        ? qsTr("Asking the sender…")
+                                        : openPage.phase === "saving"
+                                          ? qsTr("Saving the files…")
+                                          : kelpClient.total > 0
+                                            ? qsTr("Fetched %1 of %2 objects")
+                                              .arg(kelpClient.fetched).arg(kelpClient.total)
+                                            : qsTr("Fetched %1 objects").arg(kelpClient.fetched)
                             }
                         }
                     }
@@ -379,7 +405,7 @@ Page {
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
-                visible: openPage.phase === "failed"
+                visible: openPage.failedHere
                 wrapMode: Text.Wrap
                 color: Theme.secondaryHighlightColor
                 font.pixelSize: Theme.fontSizeSmall
@@ -389,7 +415,7 @@ Page {
             Item {
                 width: parent.width
                 height: doneColumn.height
-                visible: openPage.phase === "done"
+                visible: openPage.doneHere
 
                 Column {
                     id: doneColumn
@@ -472,15 +498,15 @@ Page {
                         enabled: openPage.canFetch
                         text: openPage.viewOnly
                               ? qsTr("Open in browser")
-                              : openPage.phase === "failed" ? qsTr("Try again")
-                                                            : qsTr("Download")
+                              : openPage.failedHere ? qsTr("Try again")
+                                                    : qsTr("Download")
                         onClicked: openPage.viewOnly ? openPage.startOpen()
                                                      : openPage.startDownload()
                     }
 
                     Button {
                         width: parent.width
-                        visible: openPage.phase === "done"
+                        visible: openPage.doneHere
                         text: qsTr("Open another link")
                         onClicked: {
                             kelpClient.reset()
@@ -494,7 +520,7 @@ Page {
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
-                visible: openPage.phase === "failed" && kelpClient.destination.length > 0
+                visible: openPage.failedHere && kelpClient.destination.length > 0
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeExtraSmall

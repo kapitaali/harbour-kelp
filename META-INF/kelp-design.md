@@ -680,6 +680,8 @@ for that session. §5.5 is the declared case, where there is no download to add 
 | The sender goes offline mid-page | the page's requests fail, as any preview does — and there is nothing saved to fall back on, by design |
 | The page is bigger than the ceiling | refused before fetching, naming the sender-side workaround |
 | The recipient leaves the screen, or closes Kelp | the page keeps being served until the session's idle sweep (about 30 minutes), then the memory is dropped and the URL is dead; closing Kelp ends it at once. Nothing was ever written |
+| A page is opened while an *earlier* link's finished view is still in the client | the finished view belongs to the link that asked for it: the new link is fetched as its own page, and *Open in browser* never re-hands the earlier session's URL (§3.25) |
+| The browser asks for a session the sweep has taken (a reload after half an hour) | `404`, with a body saying the preview has ended and to open the link again; pressing *Open in browser* mints a fresh session from the memory still held, so the page comes back without a re-fetch |
 | The recipient's device has no browser | nothing opens (the emulator); the session exists, so a `curl` from inside proves it (§12.9) |
 
 **Explicit non-goals.** Letting the recipient override the kind — a webpage link is view-only, and a

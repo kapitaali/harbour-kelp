@@ -18,7 +18,12 @@
  *      timeout" safe rather than a use-after-free;
  *   4. a link that says "page" over a bundle with no page is refused with the
  *      §5.5 wording, and keeps nothing;
- *   5. the save path is unchanged by any of it.
+ *   5. the save path is unchanged by any of it;
+ *   6. a view whose session has been swept is re-minted rather than handed out
+ *      dead — the URL the browser holds is not served after the idle timeout
+ *      drops it (§3.25);
+ *   7. a finished fetch knows which link it belongs to, so a page holding a new
+ *      link cannot show the last one's result (§3.25).
  *
  * Everything is off-device: a stub publisher on 127.0.0.1 answers /info and
  * /object/<id> the way the wire spec says a sender does. No browser, no GUI, no
@@ -378,6 +383,13 @@ Reply get(int port, const QByteArray &path)
     return http(port, "GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
 }
 
+// The token out of a preview URL's path, which is always "/<token>/".
+QString tokenOf(const QUrl &url)
+{
+    const QString path = url.path();
+    return path.mid(1, path.size() - 2);
+}
+
 // ---- driving the client ------------------------------------------------------
 
 // The client is asynchronous, so the test spins the event loop until it settles.
@@ -669,6 +681,132 @@ void testTwoSessions()
     CHECK_EQ(afterReset.body, b.html);
 }
 
+void testViewRemintsAfterSweep()
+{
+    section("view: a swept session is re-minted, not handed out dead");
+
+    MemoryStore sealed;
+    Sealed site;
+    QString error;
+    CHECK(sealSite(&sealed, QStringLiteral("client-swept"), true, &site, &error));
+    StubPublisher stub(&sealed);
+
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    KelpPreviewServer preview;
+    client.setPreviewServer(&preview);
+
+    const QString link = linkFor(site, stub, true);
+    CHECK(client.fetchForViewing(link));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+
+    const QVariantMap first = client.openPageView();
+    CHECK(first.value(QStringLiteral("ok")).toBool());
+    if (!first.value(QStringLiteral("ok")).toBool())
+        return;
+
+    const QUrl urlA(first.value(QStringLiteral("url")).toString());
+    CHECK_EQ(get(urlA.port(), urlA.path().toLatin1() + "/").status, 200);
+    CHECK_EQ(preview.sessionCount(), 1);
+
+    const QString tokenA = tokenOf(urlA);
+    CHECK(preview.has(tokenA));
+
+    // The idle sweep takes the session away — what happened on the phone half an
+    // hour after a page was opened (§3.25). The client still holds the memory
+    // store *and* the URL it handed the browser.
+    preview.setIdleTimeout(0);
+    QElapsedTimer tick;
+    tick.start();
+    while (tick.elapsed() < 5)                  // let the clock move past "0 idle"
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+    CHECK(QMetaObject::invokeMethod(&preview, "sweep"));
+    CHECK_EQ(preview.sessionCount(), 0);
+    CHECK(!preview.has(tokenA));
+    CHECK_EQ(get(urlA.port(), urlA.path().toLatin1() + "/").status, 404);
+
+    // Pressing again must not hand the browser that dead URL: the store is still
+    // here, so a fresh session costs nothing and serves the same page.
+    const QVariantMap again = client.openPageView();
+    CHECK(again.value(QStringLiteral("ok")).toBool());
+    if (!again.value(QStringLiteral("ok")).toBool()) {
+        printf("  re-open failed: %s\n",
+               qPrintable(again.value(QStringLiteral("error")).toString()));
+        return;
+    }
+    CHECK(again.value(QStringLiteral("url")).toString()
+          != first.value(QStringLiteral("url")).toString());
+
+    const QUrl urlB(again.value(QStringLiteral("url")).toString());
+    const Reply reply = get(urlB.port(), urlB.path().toLatin1() + "/");
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.html);
+    CHECK(preview.has(tokenOf(urlB)));
+
+    // Nothing was fetched again: the page was already in memory.
+    CHECK_EQ(stub.infoRequests(), 1);
+    CHECK_EQ(stub.objectRequests(), sealed.count());
+}
+
+void testHandlingIsTiedToItsLink()
+{
+    section("link identity: a finished fetch is never presented as another link's");
+
+    MemoryStore sealedA;
+    MemoryStore sealedB;
+    Sealed a;
+    Sealed b;
+    QString error;
+    CHECK(sealSite(&sealedA, QStringLiteral("client-id-a"), true, &a, &error));
+    CHECK(sealSite(&sealedB, QStringLiteral("client-id-b"), true, &b, &error));
+    CHECK(a.bundleId != b.bundleId);
+    StubPublisher stubA(&sealedA);
+    StubPublisher stubB(&sealedB);
+
+    QTemporaryDir downloads;
+    CHECK(downloads.isValid());
+
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    client.setDirectory(downloads.path());
+    KelpPreviewServer preview;
+    client.setPreviewServer(&preview);
+
+    const QString linkA = linkFor(a, stubA, true);
+    const QString linkB = linkFor(b, stubB, true);
+    CHECK(linkA != linkB);
+
+    // Before anything runs there is nothing to attribute, and an empty link is
+    // never an identity.
+    CHECK(!client.isHandling(linkA));
+    CHECK(!client.isHandling(QString()));
+
+    CHECK(client.fetchForViewing(linkA));
+    CHECK(client.isHandling(linkA));
+    CHECK(!client.isHandling(linkB));       // never another link's
+    CHECK(client.isHandling(QStringLiteral("  ") + linkA + QStringLiteral("\n")));
+
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK(client.isHandling(linkA));
+
+    // The identity follows the fetch across endings: a save is as much about its
+    // link as a view is, so a page holding A cannot show B's saved summary.
+    CHECK(client.fetch(linkB));
+    CHECK(client.isHandling(linkB));
+    CHECK(!client.isHandling(linkA));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK(client.isHandling(linkB));
+    CHECK(!client.isHandling(linkA));
+
+    // "Open another link" forgets both.
+    client.reset();
+    CHECK(!client.isHandling(linkA));
+    CHECK(!client.isHandling(linkB));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -682,6 +820,8 @@ int main(int argc, char **argv)
     testNoPage();
     testSavePathUnchanged();
     testTwoSessions();
+    testViewRemintsAfterSweep();
+    testHandlingIsTiedToItsLink();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

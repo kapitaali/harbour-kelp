@@ -46,9 +46,10 @@ For a link whose `p` hint is set:
 | D3 | Who owns the listener | unchanged: `KelpPreviewServer`, one instance, owned by `harbour-kelp.cpp` | §5.5: "one listener, the same server". |
 | D4 | Session lifetime | **the server's idle sweep only** (30 min), as the owner-side preview already works; app exit drops everything | Chosen by the user, over closing the session when the user leaves the page: less machinery, at the cost of the decrypted copy living up to half an hour in RAM. §5.5's "the user leaves the screen" is therefore *not* implemented as an explicit close; it is worth saying so in PROGRESS. |
 | D4a | Consequence of D4, which is not optional | the store is a `QSharedPointer<Kelp::ObjectStore>`, held by the client while a fetch is in flight and by the session once it opens | With a borrowed raw pointer, opening a second page link while the first session is still live would free the first session's store under it — a use-after-free, reachable by pressing *Open another link* and opening another page (the first browser tab can still ask for the old URL). A shared pointer makes "no explicit close" safe: whoever is last frees it, and nobody dangles. |
-| D5 | Re-pressing *Open in browser* in the Done panel | re-opens the **same** session (same URL) rather than fetching or minting a new one | It is one session per view; re-fetching would be surprising, and a new token would orphan the first. |
+| D5 | Re-pressing *Open in browser* in the Done panel | re-opens the **same** session (same URL) rather than fetching or minting a new one — **unless that session has gone** (the idle sweep of D4), when a fresh one is minted from the memory still held | It is one session per view; re-fetching would be surprising, and a new token would orphan the first. The caveat is D8: without it, the URL handed to the browser was one whose session the sweep had already dropped. |
 | D6 | A `p` link whose bundle has no page | the fetch completes, then the view fails with §5.5's wording; no save is offered and the store is released | §5.5's failure table; the hint is a default, not enforcement, so a dishonest sender must not turn into a save. |
 | D7 | New unit suite for the client | **yes**, `tst_kelpclient` (see Tests) | Ceiling, "no files written" and "app store untouched" are logic, and the device pass cannot repeat them cheaply. Chosen by the user. |
+| D8 | Who a finished fetch belongs to (**added after the C2 report**, §3.25) | the **link** it was started from: `KelpClient` keeps `m_link` and answers `isHandling(link)`, and the QML page presents a finished or failed fetch only for *its own* link | D4/D4a let a session outlive the page that opened it, and the client outlives it too — so a page opened later found the last visit's `done` and treated its own link as already open (pressing *Open in browser* took the "already open" path and re-handed the swept session's URL). The link is the identity of everything the client holds for one fetch. This is the same rule D5's caveat needs. |
 
 ## The seams, exactly
 
@@ -259,6 +260,11 @@ taps the emulator cannot receive (as in C4a/C5.1):
 - D4 means a viewed page stays in RAM until the 30-minute sweep. That is the user's
   choice, not an oversight — but it belongs in the README's "what this does not do", next
   to serving stopping when the app closes.
+- **Added with D8 (§3.25):** a QML *change handler* runs before a derived binding has been
+  re-evaluated, so reading a property like `viewOpen` inside `onPhaseChanged` answers for
+  the state *before* the change. The imperative paths must ask `KelpClient` directly
+  (`viewIsOpenNow()`); the emulator probe caught exactly this — `phase=done viewOpen=false
+  viewIsOpenNow=true`. A trap that would have re-introduced the bug in a different mask.
 
 ## Size
 

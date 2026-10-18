@@ -264,6 +264,7 @@ void KelpClient::reset()
     // nothing else holds it: any preview session that was serving it holds a
     // reference of its own and keeps working.
     m_viewing = false;
+    m_link.clear();
     m_viewSecret.clear();
     m_viewToken.clear();
     m_viewUrl.clear();
@@ -324,6 +325,11 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing)
         return false;
     }
     reset();
+
+    // The link this fetch is about, trimmed exactly as it is decoded below: the
+    // identity a page asks by when it needs to know whether what it sees in this
+    // client is its own fetch or a visit that came before it (§3.25).
+    m_link = linkText.trimmed();
 
     // A view gets a store of its own, on the heap and shared with whatever ends
     // up serving it: an earlier session, if any, is untouched by this (design
@@ -591,6 +597,12 @@ void KelpClient::writeFiles()
     emit changed();
 }
 
+bool KelpClient::isHandling(const QString &link) const
+{
+    const QString trimmed = link.trimmed();
+    return m_phase != Idle && !trimmed.isEmpty() && trimmed == m_link;
+}
+
 void KelpClient::finishViewing()
 {
     // No files, no folder, no destination: the bundle stays in the view store, and
@@ -617,11 +629,20 @@ QVariantMap KelpClient::openPageView()
     }
 
     // Pressing the button again is the same session, not a second one: a new
-    // token would orphan the first URL the browser already has.
+    // token would orphan the first URL the browser already has — *unless* that
+    // session has gone, which the idle sweep does to one nobody has asked for in
+    // half an hour. Then the URL in hand is dead (a 404 with nothing to look at),
+    // and the store still in memory can mint a fresh one for the same page, so
+    // what the browser is handed always answers (§3.25).
     if (!m_viewToken.isEmpty()) {
-        result.insert(QStringLiteral("ok"), true);
-        result.insert(QStringLiteral("url"), m_viewUrl);
-        return result;
+        if (m_preview && m_preview->has(m_viewToken)) {
+            result.insert(QStringLiteral("ok"), true);
+            result.insert(QStringLiteral("url"), m_viewUrl);
+            return result;
+        }
+        qInfo() << "KelpClient: the view session has gone; serving a fresh one";
+        m_viewToken.clear();
+        m_viewUrl.clear();
     }
 
     if (!m_preview) {

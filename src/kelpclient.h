@@ -87,9 +87,11 @@ public:
     // Serves the page just fetched for viewing to this device's browser through
     // the preview listener, as §5.1 does, and returns { ok, url, entry,
     // candidates, error }. Pressing the button again returns the same session
-    // rather than fetching again. The caller hands `url` to the browser: this
-    // class does not open anything, so a build with no browser (the emulator)
-    // still gets a session that a `curl` can prove.
+    // rather than fetching again — unless the session has since been swept, when
+    // a fresh one is minted from the memory still held, so the URL handed to the
+    // browser always answers. The caller hands `url` to the browser: this class
+    // does not open anything, so a build with no browser (the emulator) still
+    // gets a session that a `curl` can prove.
     Q_INVOKABLE QVariantMap openPageView();
 
     // Stops a fetch in flight. Objects already stored are kept: each one is
@@ -100,6 +102,15 @@ public:
     // memory store is released here; a session still serving it holds its own
     // reference and is unaffected.
     Q_INVOKABLE void reset();
+
+    // Whether the fetch this client is on — or the one it last finished — belongs
+    // to *this* link. This class outlives the QML page that drove it, so a page
+    // opened later can find a finished fetch sitting in it that is not its own: a
+    // "done" (or a failure) that would otherwise present itself as this link's.
+    // Asking by link is how the page tells (§3.25). The link is the identity of
+    // everything the client holds for one fetch — the state, the summary, the
+    // store, the session.
+    Q_INVOKABLE bool isHandling(const QString &link) const;
 
     QString phase() const;
     bool busy() const;
@@ -165,6 +176,7 @@ private:
     // outlives this client's interest in it; it is freed when the session ends.
     QSharedPointer<Kelp::ObjectStore> m_viewStore;
     bool m_viewing;
+    QString m_link;            // the link this fetch belongs to; its identity
     QString m_viewSecret;      // the link's secret, for the preview server
     QString m_viewToken;
     QString m_viewUrl;

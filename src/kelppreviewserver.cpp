@@ -306,6 +306,11 @@ int KelpPreviewServer::sessionCount() const
     return m_sessions.size();
 }
 
+bool KelpPreviewServer::has(const QString &token) const
+{
+    return m_sessions.contains(token);
+}
+
 void KelpPreviewServer::onConnection()
 {
     while (m_server->hasPendingConnections()) {
@@ -426,7 +431,9 @@ void KelpPreviewServer::handle(QTcpSocket *socket, const QByteArray &request)
     if (raw.isEmpty() || !raw.at(0).isEmpty() || raw.size() < 2 || raw.at(1).isEmpty()) {
         ++m_tally.refused;
         respond(socket, 404, "Not Found", "text/plain; charset=utf-8",
-                QByteArrayLiteral("no such preview\n"), headOnly);
+                QByteArrayLiteral("no such preview: it has ended, or the address is "
+                                  "wrong. Open the link again from Kelp.\n"),
+                headOnly);
         return;
     }
 
@@ -434,10 +441,14 @@ void KelpPreviewServer::handle(QTcpSocket *socket, const QByteArray &request)
     QHash<QString, Session>::iterator found = m_sessions.find(token);
     if (found == m_sessions.end()) {
         // The token is the whole of the address: without it there is nothing to
-        // tell an unknown preview from a wrong one, and nothing to enumerate.
+        // tell an unknown preview from a wrong one, and nothing to enumerate. The
+        // body says what a reader can do about it: a page that worked a moment ago
+        // has usually just been idle past its timeout (§3.25).
         ++m_tally.refused;
         respond(socket, 404, "Not Found", "text/plain; charset=utf-8",
-                QByteArrayLiteral("no such preview\n"), headOnly);
+                QByteArrayLiteral("no such preview: it has ended, or the address is "
+                                  "wrong. Open the link again from Kelp.\n"),
+                headOnly);
         return;
     }
 

@@ -65,8 +65,11 @@ and test.
   bundle into memory — never to the object store, never to a file — serves the
   page on `127.0.0.1`, and hands that URL to the browser. Nothing is left behind:
   the copy is gone when the preview session ends (an idle sweep after about 30
-  minutes), and pressing the button again re-opens the same session rather than
-  fetching a second time. The page is served **offline**: it can use its own files and
+  minutes). Pressing the button again re-opens that same session; if it has since
+  ended, the page is still in memory, so a fresh session is minted and what the
+  browser gets always answers. A finished view belongs to the link that asked for it,
+  so a *second* link is fetched as its own page rather than being shown the first
+  one's. The page is served **offline**: it can use its own files and
   its own inline CSS and scripts, but nothing from another host, so a page that expects
   something from a CDN renders without it (design §12.11). A page larger than 32 MiB is
   refused before anything is transferred, and says so.
