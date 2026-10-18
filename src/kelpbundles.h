@@ -48,23 +48,32 @@ public:
     void setSettings(KelpSettings *settings) { m_settings = settings; }
 
     // Returns { ok, error, link, bundleId, secret, objectCount, fileCount,
-    //           totalBytes, skippedLinks, lan, relay }.
+    //           totalBytes, skippedLinks, lan, relay, passBlob }.
     //
     // `page` says the thing being shared is a *webpage* (design §5.5): the link
     // then tells the recipient to open it in a browser and leave nothing behind,
     // and validation that it really holds a page is the caller's job
     // (KelpFiles::pageEntry), because only it can look at the folder.
+    //
+    // A non-empty `passphrase` makes a *passphrase link* (design §12.3): the
+    // master secret is wrapped under a key derived from the passphrase, and the
+    // link carries only the wrapped form, so the link by itself opens nothing.
+    // The passphrase is used here and never stored — what the row keeps is the
+    // wrapped blob (`passBlob`), which is enough to mint the same link again.
     Q_INVOKABLE QVariantMap seal(const QStringList &paths, const QString &name,
-                                 bool page);
+                                 bool page, const QString &passphrase = QString());
 
     // Serves a bundle that was shared in an earlier run — the objects and the
     // key are unchanged, only the address is minted afresh, because the LAN port
     // is ephemeral and will have moved. Restores the saved share list at startup
     // (see KelpShares). `page` is the row's own flag, so a restored webpage share
-    // is still a webpage share. Returns { ok, error, link, lan, relay }.
+    // is still a webpage share, and `passBlob` is the row's wrapped secret, so a
+    // restored passphrase share is still protected by the same passphrase.
+    // Returns { ok, error, link, lan, relay }.
     Q_INVOKABLE QVariantMap republish(const QString &bundleId, const QString &secret,
                                       const QString &name, int objects, int files,
-                                      quint64 bytes, bool page);
+                                      quint64 bytes, bool page,
+                                      const QString &passBlob = QString());
 
     // Stops serving a bundle. The objects stay on disk; nothing else can fetch
     // them until they are shared again. This is the delete path — the caller
@@ -96,11 +105,24 @@ public:
 
     // Breaks a kelp:// link into the parts the UI explains: the content address
     // and the hints saying where to fetch it. Returns
-    // { ok, error, bundleId, relays, lan, name, page }. `page` is the publisher's
-    // "open this in a browser" hint (design §5.5) and is false for every link
-    // minted before it existed. The key is deliberately not returned — it never
-    // needs to leave the link.
+    // { ok, error, bundleId, relays, lan, name, page, needsPassphrase }. `page` is
+    // the publisher's "open this in a browser" hint (design §5.5) and is false for
+    // every link minted before it existed. The key is deliberately not returned —
+    // it never needs to leave the link.
+    //
+    // For a passphrase link nothing but the content address and the relay names
+    // can be read: the address, the label and the kind are all sealed under the
+    // secret the passphrase unwraps (§12.3). `needsPassphrase` is what says so,
+    // and unlockLink() is what opens the rest.
     Q_INVOKABLE QVariantMap linkInfo(const QString &link);
+
+    // Opens a passphrase link with the passphrase the user typed, the way a
+    // recipient does: it derives the key, unwraps the master secret and reads the
+    // hints that were sealed under it. Returns the same fields as linkInfo() plus
+    // the answer, { ok, error, bundleId, relays, lan, name, page,
+    // needsPassphrase }, with `needsPassphrase` false on success. The passphrase
+    // is not kept: a later open() is asked for it again.
+    Q_INVOKABLE QVariantMap unlockLink(const QString &link, const QString &passphrase);
 
     /*
      * The loopback preview (design §5.1).
@@ -143,10 +165,12 @@ private:
 
     // Serves an already-sealed bundle and mints a link for it: the LAN address is
     // added as `l=` and any relays as `r=`. Shared by seal() and republish(), so
-    // a freshly sealed bundle and a restored one are published the same way.
+    // a freshly sealed bundle and a restored one are published the same way. A
+    // non-empty `wrappedSecret` makes the link a passphrase link (`#p=`) instead
+    // of an ordinary one (`#k=`).
     Kelp::Link::Bundle publish(const QByteArray &rootId, const QByteArray &secret,
                                const QString &name, int objects, int files, quint64 bytes,
-                               bool page);
+                               bool page, const QByteArray &wrappedSecret = QByteArray());
 
     // Takes a bundle out of service on both paths — the relay tunnel first, then
     // the LAN listener. Shared by unshare() and pause(), which differ only in

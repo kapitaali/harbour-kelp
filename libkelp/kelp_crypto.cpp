@@ -67,6 +67,23 @@ bool hkdfSha256(const QByteArray &ikm, const QByteArray &salt,
     return true;
 }
 
+bool pbkdf2Sha256(const QByteArray &passphrase, const QByteArray &salt,
+                  int iterations, int length, QByteArray *out)
+{
+    if (!out || iterations < 1 || length <= 0)
+        return false;
+
+    QByteArray result(length, '\0');
+    if (PKCS5_PBKDF2_HMAC(passphrase.constData(), passphrase.size(),
+                          reinterpret_cast<const unsigned char *>(salt.constData()),
+                          salt.size(), iterations, EVP_sha256(), length,
+                          reinterpret_cast<unsigned char *>(result.data())) != 1)
+        return false;
+
+    *out = result;
+    return true;
+}
+
 bool hmacSha256(const QByteArray &key, const QByteArray &data, QByteArray *out)
 {
     if (!out)

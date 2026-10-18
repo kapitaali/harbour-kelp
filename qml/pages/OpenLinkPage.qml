@@ -46,8 +46,37 @@ Page {
             // The publisher declared this a webpage (design §5.5): it is looked
             // at, never saved. A hint, not enforcement — but the ordinary client
             // does the right thing by default because of it.
-            "page": info.page === true
+            "page": info.page === true,
+            // A passphrase link (design §12.3): the fragment holds the key wrapped
+            // under a passphrase, not the key. Nothing but the content address and
+            // the relay names can be read until one is given — the publisher sealed
+            // the address, the label and the kind under that key.
+            "needsPassphrase": info.needsPassphrase === true
         }
+    }
+
+    // The passphrase the recipient typed, and the link's own reading once it has
+    // opened. `unlocked` starts null and is dropped whenever the link changes, so
+    // a second link never inherits the first one's passphrase.
+    property string passphrase: ""
+    property var unlocked: null
+    property string unlockError: ""
+
+    // The one object every binding below reads — the unlocked reading once there
+    // is one, the plain one until then — so opening a link does not mean every
+    // binding learns a second source.
+    property var facts: openPage.unlocked !== null ? openPage.unlocked : openPage.parsed
+
+    // A passphrase link nobody has opened yet. There is nothing to fetch from and
+    // nothing worth saying about the share, so the page asks for the passphrase
+    // and shows nothing else.
+    property bool locked: openPage.facts !== null && openPage.facts.ok
+                          && openPage.facts.needsPassphrase === true
+
+    onLinkChanged: {
+        openPage.unlocked = null
+        openPage.passphrase = ""
+        openPage.unlockError = ""
     }
 
     property bool busy: kelpClient.busy
@@ -55,7 +84,8 @@ Page {
 
     // A webpage link is a view, not a save: no folder, no Download, nothing
     // written. One action, and it is the browser's.
-    property bool viewOnly: parsed !== null && parsed.ok && parsed.page
+    property bool viewOnly: openPage.facts !== null && openPage.facts.ok
+                            && openPage.facts.page
 
     // Set while "Open in browser" is fetching, so the page opens the moment the
     // bundle is complete — one press, two steps (design §5.5).
@@ -93,8 +123,9 @@ Page {
 
     // Fetching needs a link that parses and an address to fetch from: a link
     // carrying only a relay cannot be fetched by this version.
-    property bool canFetch: parsed !== null && parsed.ok && parsed.lan.length > 0
-                            && !busy
+    property bool canFetch: openPage.facts !== null && openPage.facts.ok
+                            && openPage.facts.lan.length > 0
+                            && !openPage.locked && !busy
 
     // Where the files will be written. The chosen folder is remembered across
     // sessions; empty means the platform's Downloads folder, the default.
@@ -115,17 +146,52 @@ Page {
         return id.length > 16 ? id.substring(0, 16) + "…" : id
     }
 
-    // The fragment is the decryption key, so it must never reach the log. The
-    // rest of the link (address, name, content address) is enough to debug with.
+    // The fragment is the decryption key — or, for a passphrase link, the key
+    // wrapped under one — so it must never reach the log either way. The rest of
+    // the link (relays, content address) is enough to debug with.
     function redactLink(text) {
         var hash = text.indexOf("#")
-        return hash >= 0 ? text.substring(0, hash) + "#k=…" : text
+        return hash >= 0 ? text.substring(0, hash) + "#…" : text
+    }
+
+    /*
+     * Opens a passphrase link with the passphrase the user typed (design §12.3).
+     *
+     * This is where the link stops being a bare content address: unwrapping the
+     * key is what makes the publisher's hints readable, so the name, the address
+     * and the kind all appear at once. Nothing has been asked of the network yet —
+     * a wrong passphrase costs the derivation and not a round trip.
+     *
+     * The passphrase is not kept beyond this page: the fetch is given it again
+     * when it starts, and the derivation is what proves it both times.
+     */
+    function unlockNow() {
+        if (openPage.passphrase.length === 0) {
+            openPage.unlockError = qsTr("Type the passphrase that came with the link.")
+            return
+        }
+
+        kelpLog.info("OpenLinkPage: unlocking a passphrase link")
+        var info = kelpBundles.unlockLink(openPage.link, openPage.passphrase)
+        if (info.ok !== true) {
+            // The derivation's own verdict, which is the only thing that can tell
+            // a wrong passphrase from a damaged link.
+            openPage.unlockError = info.error
+            kelpLog.info("OpenLinkPage: unlock failed: " + info.error)
+            return
+        }
+
+        openPage.unlockError = ""
+        openPage.unlocked = info
+        kelpLog.info("OpenLinkPage: unlocked " + shortId(info.bundleId) + " ("
+                     + (info.name.length > 0 ? info.name : "unnamed") + ")"
+                     + (info.page === true ? ", a webpage" : ""))
     }
 
     function startDownload() {
         kelpLog.info("OpenLinkPage: download pressed for \""
                      + redactLink(openPage.link) + "\"")
-        if (!kelpClient.fetch(openPage.link)) {
+        if (!kelpClient.fetch(openPage.link, openPage.passphrase)) {
             kelpLog.error("OpenLinkPage: fetch refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
         }
@@ -142,7 +208,7 @@ Page {
         }
         kelpLog.info("OpenLinkPage: open in browser pressed for \""
                      + redactLink(openPage.link) + "\"")
-        if (!kelpClient.fetchForViewing(openPage.link)) {
+        if (!kelpClient.fetchForViewing(openPage.link, openPage.passphrase)) {
             kelpLog.error("OpenLinkPage: view refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
             return
@@ -241,17 +307,71 @@ Page {
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
-                visible: openPage.parsed !== null && !openPage.parsed.ok
+                visible: openPage.facts !== null && !openPage.facts.ok
                 wrapMode: Text.Wrap
                 color: Theme.secondaryHighlightColor
                 font.pixelSize: Theme.fontSizeSmall
-                text: openPage.parsed !== null && !openPage.parsed.ok
-                      ? qsTr("That is not a link Kelp can read: %1").arg(openPage.parsed.error)
+                text: openPage.facts !== null && !openPage.facts.ok
+                      ? qsTr("That is not a link Kelp can read: %1").arg(openPage.facts.error)
                       : ""
             }
 
+            // A passphrase link, before the passphrase. Nothing about the share is
+            // known yet — not the name, not the address, not whether it is a page —
+            // because all of it is sealed under the key the passphrase unwraps, so
+            // asking for the passphrase is the only useful thing this page can do.
+            Column {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                spacing: Theme.paddingSmall
+                visible: openPage.locked
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    color: Theme.highlightColor
+                    text: qsTr("This link is protected by a passphrase. The link on its own opens nothing; the sender will have given you the passphrase separately.")
+                }
+
+                TextField {
+                    id: passphraseField
+
+                    width: parent.width
+                    label: qsTr("Passphrase")
+                    echoMode: TextInput.Password
+                    inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
+                    text: openPage.passphrase
+                    onTextChanged: openPage.passphrase = text
+                    onAccepted: openPage.unlockNow()
+                }
+
+                Button {
+                    width: parent.width
+                    enabled: openPage.passphrase.length > 0
+                    text: qsTr("Unlock")
+                    onClicked: openPage.unlockNow()
+                }
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    visible: openPage.unlockError.length > 0
+                    color: Theme.secondaryHighlightColor
+                    font.pixelSize: Theme.fontSizeSmall
+                    text: openPage.unlockError
+                }
+
+                Label {
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    color: Theme.secondaryColor
+                    font.pixelSize: Theme.fontSizeExtraSmall
+                    text: qsTr("Checking the passphrase takes a moment on purpose: it is what makes a guess at the link alone hopeless.")
+                }
+            }
+
             SectionHeader {
-                visible: openPage.parsed !== null && openPage.parsed.ok
+                visible: openPage.facts !== null && openPage.facts.ok && !openPage.locked
                 text: qsTr("This link")
             }
 
@@ -259,13 +379,13 @@ Page {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 spacing: Theme.paddingSmall
-                visible: openPage.parsed !== null && openPage.parsed.ok
+                visible: openPage.facts !== null && openPage.facts.ok && !openPage.locked
 
                 Label {
                     width: parent.width
                     wrapMode: Text.Wrap
-                    text: openPage.parsed && openPage.parsed.name.length > 0
-                          ? openPage.parsed.name
+                    text: openPage.facts && openPage.facts.name.length > 0
+                          ? openPage.facts.name
                           : qsTr("Unnamed bundle")
                 }
 
@@ -274,8 +394,8 @@ Page {
                     wrapMode: Text.Wrap
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
-                    text: qsTr("Content address %1").arg(openPage.parsed
-                                                         ? shortId(openPage.parsed.bundleId) : "")
+                    text: qsTr("Content address %1").arg(openPage.facts
+                                                         ? shortId(openPage.facts.bundleId) : "")
                 }
 
                 Label {
@@ -283,15 +403,15 @@ Page {
                     wrapMode: Text.Wrap
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
-                    text: openPage.parsed && openPage.parsed.lan.length > 0
-                          ? qsTr("Fetching from %1").arg(openPage.parsed.lan)
+                    text: openPage.facts && openPage.facts.lan.length > 0
+                          ? qsTr("Fetching from %1").arg(openPage.facts.lan)
                           : qsTr("No address to fetch from yet — relays are not implemented")
                 }
 
                 Label {
                     width: parent.width
                     wrapMode: Text.Wrap
-                    visible: openPage.parsed !== null && openPage.parsed.relays.length > 0
+                    visible: openPage.facts !== null && openPage.facts.relays.length > 0
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                     text: qsTr("The link also names a relay, which this version cannot use yet")
@@ -308,7 +428,8 @@ Page {
             }
 
             SectionHeader {
-                visible: openPage.parsed !== null && openPage.parsed.ok
+                visible: openPage.facts !== null && openPage.facts.ok
+                         && !openPage.locked
                          && !openPage.busy && !openPage.doneHere
                          && !openPage.viewOnly
                 text: qsTr("Save to")
@@ -318,7 +439,8 @@ Page {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin
                 spacing: Theme.paddingSmall
-                visible: openPage.parsed !== null && openPage.parsed.ok
+                visible: openPage.facts !== null && openPage.facts.ok
+                         && !openPage.locked
                          && !openPage.busy && !openPage.doneHere
                          && !openPage.viewOnly
 
@@ -493,7 +615,7 @@ Page {
                         width: parent.width
                         // A view keeps its button after it is done: pressing it
                         // again re-opens the same session.
-                        visible: !openPage.busy
+                        visible: !openPage.busy && !openPage.locked
                                  && (openPage.phase !== "done" || openPage.viewOnly)
                         enabled: openPage.canFetch
                         text: openPage.viewOnly

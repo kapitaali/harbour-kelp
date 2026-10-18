@@ -76,13 +76,20 @@ public:
     // be tried — a link that does not parse, or names no source — and leaves the
     // reason in `error`. Otherwise the work happens asynchronously and the
     // properties above follow it.
-    Q_INVOKABLE bool fetch(const QString &link);
+    //
+    // `passphrase` is for a passphrase link (design §12.3): the link holds no key,
+    // so the master secret has to be unwrapped from the passphrase before
+    // anything can be asked of the network. An ordinary link ignores it. It is
+    // used and dropped — this class remembers it no more than it remembers the
+    // link's key.
+    Q_INVOKABLE bool fetch(const QString &link, const QString &passphrase = QString());
 
     // The same fetch, for a link that declares itself a webpage (design §5.5):
     // the objects are kept in a memory store belonging to this view and *nothing*
     // is written, so the bundle exists only for as long as it is being looked at.
     // A second view never disturbs the first — each one owns its store.
-    Q_INVOKABLE bool fetchForViewing(const QString &link);
+    Q_INVOKABLE bool fetchForViewing(const QString &link,
+                                     const QString &passphrase = QString());
 
     // Serves the page just fetched for viewing to this device's browser through
     // the preview listener, as §5.1 does, and returns { ok, url, entry,
@@ -155,7 +162,7 @@ private slots:
 private:
     enum Phase { Idle, Checking, Fetching, Saving, Done, Failed };
 
-    bool beginFetch(const QString &linkText, bool viewing);
+    bool beginFetch(const QString &linkText, bool viewing, const QString &passphrase);
     Kelp::ObjectStore *activeStore() const;
     void walk();
     void pump();

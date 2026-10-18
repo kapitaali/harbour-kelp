@@ -307,17 +307,18 @@ bool KelpClient::failed(const QString &message)
     return false;
 }
 
-bool KelpClient::fetch(const QString &linkText)
+bool KelpClient::fetch(const QString &linkText, const QString &passphrase)
 {
-    return beginFetch(linkText, false);
+    return beginFetch(linkText, false, passphrase);
 }
 
-bool KelpClient::fetchForViewing(const QString &linkText)
+bool KelpClient::fetchForViewing(const QString &linkText, const QString &passphrase)
 {
-    return beginFetch(linkText, true);
+    return beginFetch(linkText, true, passphrase);
 }
 
-bool KelpClient::beginFetch(const QString &linkText, bool viewing)
+bool KelpClient::beginFetch(const QString &linkText, bool viewing,
+                            const QString &passphrase)
 {
     if (busy()) {
         m_error = QStringLiteral("another fetch is still running");
@@ -347,6 +348,18 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing)
     QString error;
     if (!Kelp::Link::decode(linkText.trimmed(), &link, &error))
         return failed(error);
+
+    // A passphrase link (design §12.3) carries no key at all: the secret is
+    // wrapped under the passphrase, and until it is unwrapped there is nothing to
+    // fetch and no address to fetch from — the hints are sealed under that same
+    // secret. So this happens before a source is created: a wrong passphrase costs
+    // the derivation and not a network round trip.
+    if (Kelp::Link::needsPassphrase(link)) {
+        if (passphrase.isEmpty())
+            return failed(QStringLiteral("this link needs a passphrase"));
+        if (!Kelp::Link::unlock(&link, passphrase, &error))
+            return failed(error);
+    }
 
     // The LAN address is preferred when the link has one — it needs no third
     // party — and a relay is the fallback for everything wider than one network.

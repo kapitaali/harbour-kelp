@@ -122,14 +122,14 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh "$PWD/src/tests/run-all-t
 
 | Suite | What it pins | Checks |
 |---|---|---|
-| `libkelp/tests/run-tests.sh` | RFC 5869 + GCM vectors, wire-spec §16 manifest/object vectors, the whole seal→open round trip, corrupt-object refusal, the §5.3 page chooser, and the serving policy's truth table (metered, battery, charging, at and below the threshold, unknown battery) | 420 |
+| `libkelp/tests/run-tests.sh` | RFC 5869 + GCM + PBKDF2 vectors, wire-spec §16 manifest/object vectors, the whole seal→open round trip, corrupt-object refusal, the §5.3 page chooser, the serving policy's truth table (metered, battery, charging, at and below the threshold, unknown battery), and the passphrase link form (`#p=` wrapping, unlock, the AAD binding, the iteration cap, both fragments at once) | 497 |
 | `src/tests/run-kelpfetch-test.sh` | the LAN request header, base64url swarm token, the reachability rule | 37 |
 | `src/tests/run-kelpsettings-test.sh` | the persisted preferences — including the three serving switches and the dev-extras default, from both sides | 39 |
 | `src/tests/run-kelpshares-test.sh` | the persisted share rows | 24 |
 | `src/tests/run-kelpqr-test.sh` | QR encoding, against Python's `qrcode` | 9 |
-| `src/tests/run-kelpbundles-test.sh` | seal, webpage shares (`page` in the row and `p` in the link), the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 159 |
+| `src/tests/run-kelpbundles-test.sh` | seal, webpage shares (`page` in the row and `p` in the link), passphrase shares (`#p=` in the link, `passBlob` in the row, restores and the 8-character floor), the local-address gate, the link-log gate, storage management, pause/resume, the preview seam | 211 |
 | `src/tests/run-kelppreview-test.sh` | the §5.3 page convention, path → objects, the URL space (`404` vs `503`), `Range`/`HEAD`, the security headers, an expiring session and `has()` for a caller that kept a URL, the 404 body that says the link can be opened again | 206 |
-| `src/tests/run-kelpclient-test.sh` | receiving a link: a view writes nothing (the app store is byte-identical before and after), the page ceiling from `/info` and while storing, a link whose bundle has no page, the save path, that a second view does not free the first session's store, that a swept session is re-minted rather than handed out dead, and that a finished fetch knows which link it belongs to | 128 |
+| `src/tests/run-kelpclient-test.sh` | receiving a link: a view writes nothing (the app store is byte-identical before and after), the page ceiling from `/info` and while storing, a link whose bundle has no page, the save path, a passphrase link refused without (and with the wrong) passphrase before the publisher is dialled, that a second view does not free the first session's store, that a swept session is re-minted rather than handed out dead, and that a finished fetch knows which link it belongs to | 152 |
 | `relay/test/run-relay-test.sh` | the relay end to end, publisher and recipient both played | 6 cases |
 
 **Run the suites in both bundle modes.** Two of them check a default that

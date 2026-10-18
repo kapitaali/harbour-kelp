@@ -101,9 +101,10 @@ ciphertext**:
   Harbour allow-list, and AES-GCM is hardware-accelerated on the C2's Cortex-A75 (ARMv8
   crypto extensions). **Zero crypto dependencies added.**
 
-Optional **passphrase links:** derive the secret with Argon2id (tiny embedded impl) or,
-dependency-free, PBKDF2-HMAC-SHA256 from libcrypto — so the link need not carry the raw
-key. Trade-off noted in §7.
+**Passphrase links** (built 2026-10-18, §12.3): the master secret is wrapped under
+PBKDF2-HMAC-SHA256 from libcrypto — dependency-free, and the work factor travels
+*in the link*, so the link alone carries nothing that opens it, and the cost can be
+raised later without breaking links already out there. Trade-off noted in §7.
 
 ---
 
@@ -731,7 +732,8 @@ object hash-verified); on-path plaintext (TLS + E2E); known-plaintext confirmati
 convergent addressing).
 
 **Does not protect against:** the recipient forwarding the link (capability links are
-un-recallable — document it); endpoint compromise; traffic-analysis of *sizes/timing*
+un-recallable — document it; a *passphrase* link is the one exception, since forwarding it
+alone grants nothing); endpoint compromise; traffic-analysis of *sizes/timing*
 (mitigate with chunk padding, optional); the relay learning *who fetches what bundle id*
 unless you use per-fetch blinded ids or fetch through a steward; and, once a bundle's page is
 *previewed* (§5.1), **code the recipient did not write** — the sender's JavaScript runs on the
@@ -741,8 +743,13 @@ serves.
 **Revocation:** stop publishing + delete from relays/stewards. Anything already fetched
 cannot be recalled.
 
-**Passphrase caveat:** PBKDF2 (dependency-free) is weaker than Argon2id against GPU
-cracking; if we care, embed a small Argon2id. Decide in v1.
+**Passphrase caveat** (decided 2026-10-18, §12.3): PBKDF2-HMAC-SHA256, dependency-free,
+600 000 iterations by default and the count carried *in the link* — which is what lets the
+cost rise later without breaking links already handed out. It is weaker than Argon2id
+against a GPU-assisted cracker, so the honest reading is that a passphrase link solves a
+*distribution* problem (a link pasted into a group chat, a link written on a whiteboard) and
+not a *weak passphrase* problem. Argon2id remains the upgrade if that ever matters; the
+`#p=` version byte is what would carry it.
 
 ---
 
@@ -1034,6 +1041,34 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
 2. **Relay posture** — ship with a default community relay (convenient, some
    centralization) or require the user to supply one (maximally sovereign, worse first-run)?
 3. **Passphrase links** — PBKDF2 (zero deps) or embed Argon2id (better, ~adds code)?
+   *(answered and **built** 2026-10-18: **PBKDF2-HMAC-SHA256** — the user's choice — so
+   nothing new is linked in. A passphrase link replaces the fragment's `#k=` with `#p=`, the
+   same 32-byte master secret wrapped under AES-256-GCM with the bundle id as associated
+   data, the wrapping key being PBKDF2 over the passphrase. The blob is self-describing —
+   `version(1) ‖ iterations(4, big-endian) ‖ salt(16) ‖ nonce(12) ‖ ct+tag(48)`, 81 bytes,
+   108 base64url characters — so the **work factor travels in the link** and the default can
+   be raised later without breaking links already handed out. This build mints 600 000 and
+   refuses to derive more than 10 000 000: a link is untrusted input and the derivation is
+   deliberately slow, so a hostile one must not be able to hang the app. The passphrase is
+   NFC-normalized and otherwise used exactly as typed, is never written anywhere, and there
+   is no recovery — the row keeps the *wrapped* blob (salt included), which is what lets a
+   restart mint the same link again, while the thing that opens it stays only in the sender's
+   head and the recipient's. A floor of 8 characters is enforced where sealing happens.
+
+   Because the address, the label and the kind are all sealed under the master secret,
+   a passphrase link reveals **nothing** until it is unlocked — it is a content address and
+   some relay names. That is also why the recipient's page shows a passphrase prompt and
+   nothing else: there is no name to print and no address to dial. Unwrapping happens in
+   `KelpClient` before a source is created, so a wrong passphrase costs the derivation and
+   never a network round trip. Old builds refuse such a link outright (`p` is not a fragment
+   they know), which is the safe direction: there is nothing in the clear for them to dial.
+
+   Argon2id stays on the table as the strictly better KDF if a weak passphrase ever becomes
+   the threat worth paying for; the version byte is where that would go. `libkelp` knows
+   nothing about UI or storage: `Link::wrapSecret`/`Link::unlock`/`Link::needsPassphrase`/
+   `Link::wrappedParameters` and `Crypto::pbkdf2Sha256`; the row field and the pages are the
+   app's. Tests: libkelp 497 checks (RFC 7914 vectors, the AAD binding, the cap, both
+   fragments at once), `tst_kelpbundles` 211, `tst_kelpclient` 152.)*
 4. **Sizes/timing privacy** — do we pad chunks to hide size distributions, or accept the
    leak in v1?
 5. **Relationship to the IPFS app** — is Kelp the *replacement* (drop IPFS entirely) or the

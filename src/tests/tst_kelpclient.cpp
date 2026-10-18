@@ -807,6 +807,76 @@ void testHandlingIsTiedToItsLink()
     CHECK(!client.isHandling(linkB));
 }
 
+void testPassphraseLink()
+{
+    section("passphrase link: the link alone opens nothing, the fetch needs the other half");
+
+    MemoryStore sealed;
+    QString bundleId;
+    QByteArray rootId;
+    QByteArray secret;
+    QString error;
+    CHECK(sealFile(&sealed, QStringLiteral("client-passphrase"), &bundleId, &rootId,
+                   &secret, &error));
+    StubPublisher stub(&sealed);
+
+    const QString passphrase = QStringLiteral("correct horse battery staple");
+    // 1000 rounds rather than the default 600 000: the count travels in the link,
+    // which is exactly what carrying it is for, and a unit test has no reason to
+    // pay the real cost to prove it — the vectors in libkelp pin the real one.
+    const QByteArray blob = Link::wrapSecret(secret, rootId, passphrase, 1000, &error);
+    CHECK(!blob.isEmpty());
+
+    Link::Bundle share;
+    share.bundleId = rootId;
+    share.secret = secret;
+    share.lan = QStringLiteral("127.0.0.1:%1").arg(stub.port());
+    share.name = QStringLiteral("protected");
+    share.wrappedSecret = blob;
+    const QString link = Link::encode(share);
+
+    CHECK(link.contains(QStringLiteral("#p=")));
+    CHECK(!link.contains(QStringLiteral("#k=")));
+    // Where to fetch from and what the share is called are inside the sealed
+    // block, so the link text says neither without the passphrase.
+    CHECK(!link.contains(QStringLiteral("protected")));
+    CHECK(!link.contains(QString::number(stub.port())));
+
+    QTemporaryDir downloads;
+    CHECK(downloads.isValid());
+
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    client.setDirectory(downloads.path());
+
+    // No passphrase at all: refused before the publisher is even dialled.
+    CHECK(!client.fetch(link));
+    CHECK(client.error().contains(QStringLiteral("passphrase")));
+    CHECK_EQ(client.phase(), QStringLiteral("failed"));
+    CHECK_EQ(appStore.count(), 0);
+
+    // A wrong passphrase: the derivation is what refuses it, and still nothing
+    // has been asked of the network.
+    CHECK(!client.fetch(link, QStringLiteral("not the passphrase")));
+    CHECK(client.error().contains(QStringLiteral("does not open")));
+    CHECK_EQ(appStore.count(), 0);
+
+    // The right one: the ordinary save, files and all.
+    CHECK(client.fetch(link, passphrase));
+    CHECK(!client.viewing());
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK_EQ(client.files(), 1);
+    CHECK(client.bytes() > 0);
+    CHECK(appStore.count() > 0);
+    CHECK_EQ(QDir(downloads.path()).entryList(QDir::Files).size(), 1);
+
+    // The passphrase is not remembered by the client: the same link opens nothing
+    // again until it is given the passphrase again.
+    CHECK(!client.fetch(link));
+    CHECK(client.error().contains(QStringLiteral("passphrase")));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -822,6 +892,7 @@ int main(int argc, char **argv)
     testTwoSessions();
     testViewRemintsAfterSweep();
     testHandlingIsTiedToItsLink();
+    testPassphraseLink();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -179,13 +179,53 @@ kelp://<bundle_id_b32>?r=<relay-url>[&l=<host:port>][&n=<display name>]#k=<secre
 A link that carries both uses the sealed block. A reader that predates `q=` sees no LAN
 address and falls back to a relay.
 
+### 5.1 Passphrase links (`#p=`)
+
+A passphrase link (design §12.3) has no key in it: the fragment holds the master
+secret *wrapped* under a passphrase the sender gives separately.
+
+```
+kelp://<bundle_id_b32>?r=<relay-url>[&q=<sealed_hints>]#p=<wrapped_b64url>
+```
+
+`p` and `k` are mutually exclusive; a link carrying both is malformed and is
+refused, as is one carrying neither.
+
+```
+p = base64url( version(1) ‖ iterations(4, big-endian) ‖ salt(16)
+               ‖ nonce(12) ‖ AES-256-GCM ciphertext ‖ tag(16) )      # 81 bytes → 108 chars
+
+  key       = PBKDF2-HMAC-SHA256( NFC(passphrase), salt, iterations, 32 )
+  aad       = bundle_id (32 bytes)
+  plaintext = the master secret (32 bytes)
+```
+
+The iteration count travels in the link, which is what lets the default be raised
+later without breaking links already handed out; `version` is what would change if
+the KDF or the layout ever did. This build mints 600 000 iterations and refuses to
+derive more than 10 000 000: a link is untrusted input and the derivation is
+deliberately slow, so a hostile one must not be able to hang the reader.
+
+Because the address, the label and the kind are all sealed under the *master
+secret*, a passphrase link gives away nothing until it is unlocked — it is a
+content address and some relay names, and nothing else. `q=` is present as usual;
+it becomes readable in the same step that unwraps the key.
+
+A reader that predates this refuses the link rather than the fragment: `p` is not
+a fragment key it knows, so it reports a link with no key. Fail-closed is the
+right answer there — treating `#p=` as an unknown fragment and proceeding would
+mean dialling an address that is not in the clear anyway.
+
 A CID-shaped variant (`b` multibase prefix) is reserved for the IPFS bridge.
 
-Implemented in `libkelp/kelp_link.{h,cpp}` (`Link::encode` / `Link::decode`), with
-the base32/base64url codecs and round-trip tests. Decoding refuses a link with no
-`#k=` fragment: without the key it is a name, not a capability. The app mints links
-of this shape today (`r=` when a relay is configured, `q=` whenever it advertises an
-address) and serves objects over the LAN (wire spec §7.2).
+Implemented in `libkelp/kelp_link.{h,cpp}` (`Link::encode` / `Link::decode`,
+`Link::wrapSecret` / `Link::unlock` / `Link::needsPassphrase` /
+`Link::wrappedParameters`) and `libkelp/kelp_crypto.{h,cpp}`
+(`Crypto::pbkdf2Sha256`), with the base32/base64url codecs and round-trip tests.
+Decoding refuses a link with no `#k=` and no `#p=` fragment: without one of them
+it is a name, not a capability. The app mints links of this shape today (`r=`
+when a relay is configured, `q=` whenever it advertises an address) and serves
+objects over the LAN (wire spec §7.2).
 
 ---
 

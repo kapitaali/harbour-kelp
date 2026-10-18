@@ -7,7 +7,10 @@
 Share a folder or file from the phone as a `kelp://` link. A recipient pastes the
 link into Kelp and it fetches the bundle. Content-addressed and encrypted by default,
 with the key travelling in the link fragment — the relay and any peers only ever
-see ciphertext.
+see ciphertext. A link is a *capability*, so it is as secret as its key; when that is
+awkward — a link pasted into a group chat, or written on a whiteboard — *Require a
+passphrase* mints one whose key is wrapped under a passphrase the sender gives
+separately, and the link alone opens nothing at all.
 
 Current state: **a bundle can be shared from the phone and opened on another
 device — on the same Wi-Fi, or across networks through a relay.** `libkelp`
@@ -56,11 +59,23 @@ and test.
   be shared this way: one small offline site, three files.) Only a share declared as a **webpage**
   is offered to a browser; a folder shared as a folder is files and nothing else, and a page among
   them is the recipient's own business to open (design §5.4/§5.5). Also carries the per-share *Let
-  peers help serve what I share here* choice.
+  peers help serve what I share here* choice, and a **Protect the link** section at the top: turn on
+  *Require a passphrase*, type one (at least eight characters) and every share made from this page
+  is minted with its key wrapped under that passphrase instead of carried in the link. The link
+  then names no address, no label and no kind until it is unlocked, and the passphrase is never
+  stored — the row keeps only the wrapped key, which is enough to mint the same link again after a
+  restart. Forget it and the link is locked for good; there is no recovery.
 - **Open a link** — paste a `kelp://` link and download the bundle. The link is
   explained before anything happens (name, content address, where it will be
   fetched from), you pick the folder to save into, and the download reports
   progress and then where the files went.
+  A link that needs a **passphrase** (the one a sender minted with *Require a
+  passphrase*) shows a masked field and an *Unlock* button instead of that
+  explanation: the name, the address and the kind are all under the key the
+  passphrase unwraps, so there is nothing to say until it is given. Checking it
+  takes a moment on purpose — that delay is what makes guessing hopeless — and a
+  wrong passphrase costs nothing but the delay, because the sender is never
+  dialled until it is right.
   A link that says it is a **webpage** (design §5.5) behaves differently, because
   its publisher asked for it to be looked at rather than kept: there is no folder
   to pick and no *Download*, just **Open in browser**. That one button fetches the
@@ -110,6 +125,16 @@ There is no "public" vs "private" bundle, and no encryption toggle: **every bund
 is AES-256-GCM encrypted**, with the key in the link fragment, so a bundle is a
 *capability* — readable only by whoever holds the link. Relays and peers see only
 ciphertext.
+
+A **passphrase link** is the same capability with its key wrapped under a
+passphrase (`kelp://…#p=<wrapped key>`, design §12.3): the link text names nothing
+— not the address, not the label, not the kind — until someone has both halves.
+It is not a weaker *encryption* setting (there is no such setting); it is a way to
+hand over the capability in two pieces. PBKDF2-HMAC-SHA256 at 600 000 iterations is
+what stands between a stolen link and a guess, so it is only as strong as the
+passphrase: it solves the *distribution* problem, not the *weak passphrase*
+problem. The work factor is carried inside the link, so it can be raised later
+without breaking links already out there.
 
 What varies per bundle is **how it is served**:
 
@@ -218,7 +243,9 @@ the address inside it for what the bundle needs, and writes the files out.
 
 The link is explained before anything is fetched — the name, the content address
 and the address it will be fetched from all come out of the link itself, so the
-preview works with no network at all. Downloading then goes in rounds, and the
+preview works with no network at all. (For a passphrase link the name and the
+address come out of the same link once the passphrase has unwrapped them — still
+with no network, and still before anything is asked of the sender.) Downloading then goes in rounds, and the
 rounds are the interesting part:
 
 1. ask the store what is still missing for this bundle — to begin with that is
@@ -298,13 +325,14 @@ Sailfish device.
 ```
 libkelp/
   kelp_cbor.{h,cpp}      canonical CBOR, strict decode (rejects non-canonical)
-  kelp_crypto.{h,cpp}    SHA-256, HKDF-SHA256, AES-256-GCM (libcrypto)
+  kelp_crypto.{h,cpp}    SHA-256, HKDF-SHA256, PBKDF2-HMAC-SHA256, AES-256-GCM (libcrypto)
   kelp_object.{h,cpp}    the object envelope and its content address
   kelp_manifest.{h,cpp}  file/directory manifests, segmentation, NFC names
   kelp_store.{h,cpp}     the object-store interface, plus an in-memory store
   kelp_bundle.{h,cpp}    seal a tree, open a tree, plan a fetch, list every object
                          a bundle is made of, store what arrives, derive the keys
-  kelp_link.{h,cpp}      encode/decode a kelp:// link, base32 and base64url
+  kelp_link.{h,cpp}      encode/decode a kelp:// link, base32 and base64url, and the
+                         passphrase form: wrap/unwrap the key under a passphrase
   kelp_web.{h,cpp}       the page convention: which file in a bundle is its page,
                          how a URL path maps onto it, MIME types, byte ranges
   tests/                 unit tests with pinned vectors
@@ -342,26 +370,38 @@ relative sub-resources resolve through the bundle's own objects.
 
 The relay itself is a separate program in `relay/`, not part of the app package.
 
-`KelpBundles::seal(paths, name, page)` is what the *Share* page calls: it
+`KelpBundles::seal(paths, name, page, passphrase)` is what the *Share* page calls: it
 snapshots the paths into a `SourceNode` tree (counting files, skipping symlinks),
 picks a fresh random master secret, seals into the store, publishes the bundle on
 the LAN and returns the link, bundle id, key, object count, file count, total
-bytes, the address it is being served on and whether it was declared a webpage
-(`page`). The folder check that decides whether a folder *can* be declared one is
+bytes, the address it is being served on, whether it was declared a webpage
+(`page`) and — for a passphrase share — the wrapped key as `passBlob`. An empty
+`passphrase` is the ordinary link; a non-empty one (eight characters or more, or
+`seal` refuses before sealing anything) is wrapped under a `PBKDF2-HMAC-SHA256`
+key with the bundle id as associated data, so the link carries `#p=` and the
+wrapped blob (`passBlob`) is what the row keeps instead of the passphrase. The folder check that
+decides whether a folder *can* be declared a page is
 `KelpFiles::pageEntry`, which applies the same `Kelp::Web::chooseEntry` rule the
 preview does, so the two cannot disagree. Sealing is synchronous on the UI thread,
-so a large folder freezes the window while it works — a worker thread is a known
+so a large folder freezes the window while it works — and so does a passphrase
+derivation, which is deliberately slow; a worker thread is a known
 TODO. Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log.
 Re-sharing the same folder writes new objects because every seal uses fresh
 nonces.
 
-`KelpBundles::republish(bundleId, secret, name, objects, files, bytes, page)` is
-the restore path: it serves a bundle again from the saved row — the objects are
+`KelpBundles::republish(bundleId, secret, name, objects, files, bytes, page, passBlob)`
+is the restore path: it serves a bundle again from the saved row — the objects are
 already in the store, and the link is minted afresh because the LAN port is
 ephemeral. The `page` flag comes from the row, so a restored webpage share is
-still a webpage share. `seal()` and `republish()` share one `publish()` helper, so
-a freshly sealed bundle and a restored one get the same LAN address and relay
-treatment.
+still a webpage share, and `passBlob` comes from the row too, so a restored
+passphrase share is still opened by the passphrase its sender gave out (a stored
+`passBlob` that cannot be read is refused rather than published as an ordinary
+link — failing open would hand out the key). `seal()` and `republish()` share one
+`publish()` helper, so a freshly sealed bundle and a restored one get the same LAN
+address and relay treatment. `KelpBundles::linkInfo()` and `unlockLink()` are the
+reading side of both link forms, and the unlock is what `KelpClient` does before it
+creates a source (`fetch(link, passphrase)`), so a wrong passphrase never costs a
+network round trip.
 
 Nothing is deleted automatically: seals and fetches both add objects, so Settings →
 **Storage** shows what is there and offers **Remove unused objects**. *Unused* has

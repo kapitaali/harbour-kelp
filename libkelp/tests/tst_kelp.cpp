@@ -839,6 +839,197 @@ void testLink()
                         &futureParsed, &error));
 }
 
+void testPassphrase()
+{
+    section("passphrase links (design §12.3)");
+
+    // PBKDF2-HMAC-SHA256, RFC 7914 §11. Checked against `openssl kdf` on the
+    // host before being pinned here, so this is an outside opinion and not a
+    // recording of whatever OpenSSL happens to do.
+    QByteArray derived;
+    CHECK(Crypto::pbkdf2Sha256(QByteArrayLiteral("passwd"), QByteArrayLiteral("salt"), 1,
+                               32, &derived));
+    CHECK_EQ(derived.toHex(), QByteArray("55ac046e56e3089fec1691c22544b605"
+                                         "f94185216dde0465e68b9d57c20dacbc"));
+    CHECK(Crypto::pbkdf2Sha256(QByteArrayLiteral("Password"), QByteArrayLiteral("NaCl"),
+                               80000, 32, &derived));
+    CHECK_EQ(derived.toHex(), QByteArray("4ddcd8f60b98be21830cee5ef22701f9"
+                                         "641a4418d04c0414aeff08876b34ab56"));
+    // A count of zero is not a derivation, it is a mistake.
+    CHECK(!Crypto::pbkdf2Sha256(QByteArrayLiteral("x"), QByteArrayLiteral("y"), 0, 32,
+                                &derived));
+    CHECK(!Crypto::pbkdf2Sha256(QByteArrayLiteral("x"), QByteArrayLiteral("y"), 1, 0,
+                                &derived));
+
+    const QByteArray secret = testHash("wrapped-secret");
+    const QByteArray bundleId = testHash("wrapped-bundle");
+    const QString passphrase = QStringLiteral("correct horse battery staple");
+
+    QString error;
+    const QByteArray blob = Link::wrapSecret(secret, bundleId, passphrase, 0, &error);
+    CHECK(error.isEmpty());
+    CHECK_EQ(blob.size(), int(Link::WrappedSize));
+    CHECK_EQ(blob.size(), 81);
+
+    // What the blob says about itself, without deriving anything.
+    int iterations = 0;
+    QByteArray salt;
+    CHECK(Link::wrappedParameters(blob, &iterations, &salt));
+    CHECK_EQ(iterations, int(Link::DefaultIterations));
+    CHECK_EQ(iterations, 600000);
+    CHECK_EQ(salt.size(), int(Link::SaltSize));
+    CHECK_EQ(salt, blob.mid(5, Link::SaltSize));
+    CHECK(!Link::wrappedParameters(blob.left(80), &iterations, &salt));   // short
+    QByteArray wrongVersion = blob;
+    wrongVersion[0] = char(Link::WrappedVersion + 1);
+    CHECK(!Link::wrappedParameters(wrongVersion, &iterations, &salt));
+    QByteArray zeroCount = blob;
+    zeroCount[1] = zeroCount[2] = zeroCount[3] = zeroCount[4] = '\0';
+    CHECK(!Link::wrappedParameters(zeroCount, &iterations, &salt));
+
+    // Two blobs of the same secret differ: the salt and the nonce are fresh.
+    CHECK(Link::wrapSecret(secret, bundleId, passphrase, 0, &error) != blob);
+
+    // Unwrapping gives the secret back, and the passphrase is not needed for
+    // anything else.
+    Link::Bundle locked;
+    locked.bundleId = bundleId;
+    locked.wrappedSecret = blob;
+    CHECK(Link::needsPassphrase(locked));
+    CHECK_EQ(locked.secret.size(), 0);
+    CHECK(Link::unlock(&locked, passphrase, &error));
+    CHECK(error.isEmpty());
+    CHECK_EQ(locked.secret, secret);
+    CHECK(!Link::needsPassphrase(locked));
+    // Unlocking again with the same passphrase is harmless; with a wrong one it
+    // still refuses, because the blob is still there to check against — and a
+    // refused unlock leaves the secret that was already recovered untouched.
+    CHECK(Link::unlock(&locked, passphrase, &error));
+    CHECK_EQ(locked.secret, secret);
+    error.clear();
+    CHECK(!Link::unlock(&locked, QStringLiteral("anything"), &error));
+    CHECK_EQ(locked.secret, secret);
+
+    // A wrong passphrase is the tag failing, and says so.
+    Link::Bundle wrong = locked;
+    wrong.secret.clear();
+    error.clear();
+    CHECK(!Link::unlock(&wrong, QStringLiteral("correct horse battery stapl"),
+                        &error));
+    CHECK(error.contains(QStringLiteral("does not open")));
+    CHECK_EQ(wrong.secret.size(), 0);
+
+    // The bundle id is authenticated data: a blob cannot be moved onto another
+    // bundle's link.
+    Link::Bundle foreign = locked;
+    foreign.secret.clear();
+    foreign.bundleId = testHash("another-bundle");
+    error.clear();
+    CHECK(!Link::unlock(&foreign, passphrase, &error));
+    CHECK(error.contains(QStringLiteral("does not open")));
+
+    // A link: the hints are sealed under the very secret the passphrase unwraps,
+    // so nothing readable is left in the text — not the address, not the label,
+    // not even whether it is a page.
+    Link::Bundle share;
+    share.bundleId = bundleId;
+    share.secret = secret;
+    share.relays << QStringLiteral("https://relay.kelp.dev");
+    share.lan = QStringLiteral("192.168.1.7:7373");
+    share.name = QStringLiteral("Kelp samples");
+    share.page = true;
+    share.wrappedSecret = blob;
+
+    const QString link = Link::encode(share);
+    CHECK(link.contains(QStringLiteral("#p=")));
+    CHECK(!link.contains(QStringLiteral("#k=")));
+    CHECK(link.contains(QStringLiteral("q=")));
+    CHECK(link.contains(QStringLiteral("r=https%3A%2F%2Frelay.kelp.dev")));
+    CHECK(!link.contains(QStringLiteral("192.168.1.7")));
+    CHECK(!link.contains(QStringLiteral("samples")));
+    CHECK_EQ(link.indexOf(QLatin1Char('#')), link.lastIndexOf(QLatin1Char('#')));
+
+    Link::Bundle opened;
+    error.clear();
+    CHECK(Link::decode(link, &opened, &error));
+    CHECK_EQ(opened.bundleId, bundleId);
+    CHECK_EQ(opened.wrappedSecret, blob);
+    CHECK_EQ(opened.secret.size(), 0);
+    CHECK(Link::needsPassphrase(opened));
+    CHECK_EQ(opened.relays.size(), 1);          // relays are not secret
+    // Nothing about the share itself is known yet, because all of it is sealed.
+    CHECK(opened.lan.isEmpty());
+    CHECK(opened.name.isEmpty());
+    CHECK_EQ(opened.page, false);
+
+    error.clear();
+    CHECK(!Link::unlock(&opened, QStringLiteral("wrong"), &error));
+    CHECK_EQ(opened.secret.size(), 0);
+    CHECK(opened.lan.isEmpty());
+
+    error.clear();
+    CHECK(Link::unlock(&opened, passphrase, &error));
+    CHECK(error.isEmpty());
+    CHECK_EQ(opened.secret, secret);
+    CHECK_EQ(opened.lan, share.lan);
+    CHECK_EQ(opened.name, share.name);
+    CHECK_EQ(opened.page, true);
+
+    // An ordinary link still decodes as before, and needs nothing.
+    Link::Bundle ordinary = share;
+    ordinary.wrappedSecret.clear();
+    const QString ordinaryLink = Link::encode(ordinary);
+    CHECK(ordinaryLink.contains(QStringLiteral("#k=")));
+    CHECK(!ordinaryLink.contains(QStringLiteral("#p=")));
+    Link::Bundle ordinaryParsed;
+    CHECK(Link::decode(ordinaryLink, &ordinaryParsed, &error));
+    CHECK(!Link::needsPassphrase(ordinaryParsed));
+    CHECK(Link::unlock(&ordinaryParsed, QString(), &error));
+    CHECK_EQ(ordinaryParsed.secret, secret);
+    CHECK_EQ(ordinaryParsed.lan, share.lan);
+
+    // Both fragments at once is a link trying to be two things; a damaged
+    // passphrase blob is refused at decode, so it can never reach unlock.
+    const QString both = ordinaryLink + QStringLiteral("&p=") + Link::base64UrlEncode(blob);
+    CHECK(!Link::decode(both, &opened, &error));
+    const QString id32 = QString::fromLatin1(Link::base32Encode(bundleId));
+    CHECK(!Link::decode(QStringLiteral("kelp://") + id32 + QStringLiteral("#p=")
+                            + Link::base64UrlEncode(blob.left(40)),
+                        &opened, &error));
+    CHECK(!Link::decode(QStringLiteral("kelp://") + id32 + QStringLiteral("#p=")
+                            + Link::base64UrlEncode(wrongVersion),
+                        &opened, &error));
+    CHECK(!Link::decode(QStringLiteral("kelp://") + id32, &opened, &error));
+
+    // A link may ask for a cost this build is not willing to pay; it is refused
+    // rather than obeyed, and the refusal is about the cost, not the passphrase.
+    QByteArray greedy = blob;
+    const quint32 huge = quint32(Link::MaxIterations) + 1;
+    greedy[1] = char((huge >> 24) & 0xFF);
+    greedy[2] = char((huge >> 16) & 0xFF);
+    greedy[3] = char((huge >> 8) & 0xFF);
+    greedy[4] = char(huge & 0xFF);
+    Link::Bundle costly;
+    costly.bundleId = bundleId;
+    costly.wrappedSecret = greedy;
+    error.clear();
+    CHECK(!Link::unlock(&costly, passphrase, &error));
+    CHECK(error.contains(QStringLiteral("more work")));
+
+    // A different cost is a different link but the same secret: the count travels
+    // in the link, which is what lets the default be raised without breaking
+    // links already handed out.
+    Link::Bundle cheap;
+    cheap.bundleId = bundleId;
+    cheap.wrappedSecret = Link::wrapSecret(secret, bundleId, passphrase, 1000, &error);
+    CHECK_EQ(cheap.wrappedSecret.size(), int(Link::WrappedSize));
+    CHECK(Link::wrappedParameters(cheap.wrappedSecret, &iterations, &salt));
+    CHECK_EQ(iterations, 1000);
+    CHECK(Link::unlock(&cheap, passphrase, &error));
+    CHECK_EQ(cheap.secret, secret);
+    CHECK(cheap.wrappedSecret != blob);
+}
+
 void testBundleRoundTrip()
 {
     section("bundle round-trip (chunk -> manifest -> hash -> verify -> decrypt)");
@@ -1598,6 +1789,7 @@ int main()
     testObjectEnvelope();
     testStoreContract();
     testLink();
+    testPassphrase();
     testWebChooser();
     testPolicy();
     testBundleRoundTrip();

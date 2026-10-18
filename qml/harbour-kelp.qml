@@ -71,6 +71,10 @@ ApplicationWindow {
             "link": info.link,
             "bundleId": info.bundleId,
             "secret": info.secret,
+            // The wrapped secret of a passphrase share (design §12.3), and empty
+            // for every other share. It is what lets a restart mint the same
+            // passphrase link again without anyone re-typing the passphrase.
+            "passBlob": info.passBlob ? info.passBlob : "",
             "objects": info.objects
         })
         kelpLog.info("addBundle: bundlesModel.count is now " + bundlesModel.count)
@@ -105,7 +109,8 @@ ApplicationWindow {
                 "objects": row.objects,
                 "paused": row.shareState === "paused",
                 "bundleId": row.bundleId,
-                "secret": row.secret
+                "secret": row.secret,
+                "passBlob": row.passBlob ? row.passBlob : ""
             })
         }
         kelpLog.info("saveShares: writing " + rows.length + " row(s)")
@@ -144,7 +149,8 @@ ApplicationWindow {
             return false
         var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
                                               row.objects, row.files, row.bytes,
-                                              row.page === true)
+                                              row.page === true,
+                                              row.passBlob ? row.passBlob : "")
         if (!published.ok) {
             kelpLog.warn("resumeShare: cannot resume \"" + row.name + "\": " + published.error)
             return false
@@ -272,7 +278,8 @@ ApplicationWindow {
             var row = bundlesModel.get(index)
             var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
                                                   row.objects, row.files, row.bytes,
-                                                  row.page === true)
+                                                  row.page === true,
+                                                  row.passBlob ? row.passBlob : "")
             if (!published.ok) {
                 kelpLog.warn("KelpPolicy: cannot serve \"" + row.name + "\" again: "
                              + published.error)
@@ -324,13 +331,15 @@ ApplicationWindow {
                     "link": "",
                     "bundleId": row.bundleId,
                     "secret": row.secret,
+                    "passBlob": row.passBlob ? row.passBlob : "",
                     "objects": row.objects
                 })
                 continue
             }
             var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
                                                   row.objects, row.files, row.bytes,
-                                                  row.page === true)
+                                                  row.page === true,
+                                                  row.passBlob ? row.passBlob : "")
             if (!published.ok) {
                 kelpLog.warn("restoreShares: dropping \"" + row.name + "\": " + published.error)
                 continue
@@ -349,6 +358,7 @@ ApplicationWindow {
                 "link": published.link,
                 "bundleId": row.bundleId,
                 "secret": row.secret,
+                "passBlob": row.passBlob ? row.passBlob : "",
                 "objects": row.objects
             })
         }

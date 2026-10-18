@@ -32,6 +32,15 @@ Page {
     // UI thread, so this never actually paints.
     property bool sealing: false
 
+    // A passphrase link (design §12.3) is built before the buttons are pressed,
+    // because pressing one seals and shares in the same gesture. Empty means an
+    // ordinary link, whose key travels in its fragment.
+    property string passphrase: protectSwitch.checked ? passphraseField.text : ""
+
+    // The floor is the same one KelpBundles::seal enforces, so the UI never
+    // offers a share that would be refused — but seal() is what decides.
+    property bool passphraseOk: passphrase.length === 0 || passphrase.length >= 8
+
     // Set when something was sealed while a picker was on top: this page pops
     // itself as soon as it is on top again, so one gesture lands back in the list
     // with the new row visible, instead of on a page whose buttons are all spent.
@@ -68,18 +77,27 @@ Page {
         }
 
         var peerSwarm = swarm && kelpSettings.peerSwarm
+        // The passphrase never reaches kelpLog: what is logged is that there is
+        // one, never what it is.
+        var passphrase = addPage.passphrase
         kelpLog.info("AddPage: sharing " + kind + " \"" + name + "\" (" + path
-                     + "), page=" + page + ", swarm=" + peerSwarm)
+                     + "), page=" + page + ", swarm=" + peerSwarm
+                     + (passphrase.length > 0 ? ", passphrase-protected" : ""))
 
         sealing = true
-        var sealed = kelpBundles.seal([ path ], name, page)
+        var sealed = kelpBundles.seal([ path ], name, page, passphrase)
         sealing = false
 
         if (!sealed.ok) {
+            // The passphrase is left in the field: the reason it failed may be
+            // that it was too short, and retyping it is not the fix.
             kelpLog.error("AddPage: sealing \"" + name + "\" failed: " + sealed.error)
             toast.show(qsTr("Could not share %1: %2").arg(name).arg(sealed.error))
             return false
         }
+        // The passphrase has done its one job — the wrapped blob is what the row
+        // keeps — so it is dropped rather than left in memory.
+        passphraseField.text = ""
 
         kelpLog.info("AddPage: sealed \"" + name + "\" — " + sealed.objectCount
                      + " object(s), " + sealed.fileCount + " file(s), "
@@ -104,6 +122,7 @@ Page {
             "link": sealed.link,
             "bundleId": sealed.bundleId,
             "secret": sealed.secret,
+            "passBlob": sealed.passBlob,
             "objects": sealed.objectCount
         })
 
@@ -146,6 +165,38 @@ Page {
 
             PageHeader { title: qsTr("Share") }
 
+            SectionHeader { text: qsTr("Protect the link") }
+
+            TextSwitch {
+                id: protectSwitch
+
+                text: qsTr("Require a passphrase")
+                description: qsTr("The link alone will open nothing: send the passphrase separately.")
+                checked: false
+            }
+
+            TextField {
+                id: passphraseField
+
+                visible: protectSwitch.checked
+                width: parent.width
+                label: qsTr("Passphrase")
+                placeholderText: qsTr("At least 8 characters")
+                echoMode: TextInput.Password
+                inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
+                errorHighlight: text.length > 0 && text.length < 8
+            }
+
+            Label {
+                visible: protectSwitch.checked
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: qsTr("Only someone with both the link and the passphrase can open this share, so send them apart. The passphrase is not stored anywhere: forget it and the link is locked for good — sharing the folder again mints a new one.")
+            }
+
             SectionHeader { text: qsTr("What to share") }
 
             Label {
@@ -176,13 +227,13 @@ Page {
                     Button {
                         width: parent.width
                         text: qsTr("Share file…")
-                        enabled: !addPage.sealing
+                        enabled: !addPage.sealing && addPage.passphraseOk
                         onClicked: pageStack.push(filePickerComponent)
                     }
                     Button {
                         width: parent.width
                         text: qsTr("Share folder…")
-                        enabled: !addPage.sealing
+                        enabled: !addPage.sealing && addPage.passphraseOk
                         onClicked: pageStack.push(Qt.resolvedUrl("FolderPickPage.qml"), {
                             startPath: StandardPaths.home,
                             pickedCallback: function(path) {
@@ -194,7 +245,7 @@ Page {
                     Button {
                         width: parent.width
                         text: qsTr("Share webpage…")
-                        enabled: !addPage.sealing
+                        enabled: !addPage.sealing && addPage.passphraseOk
                         onClicked: pageStack.push(Qt.resolvedUrl("FolderPickPage.qml"), {
                             startPath: StandardPaths.home,
                             title: qsTr("Choose webpage folder"),
@@ -252,6 +303,17 @@ Page {
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
                 text: qsTr("Always encrypted. The key travels in the link, so only the people you send it to can read the bundle — the relay and any peers see only ciphertext.")
+                visible: addPage.passphrase.length === 0
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeSmall
+                visible: addPage.passphrase.length > 0
+                text: qsTr("Always encrypted. The key does not travel in the link: it is wrapped under your passphrase, so someone needs both to read the bundle — and the relay and any peers still see only ciphertext.")
             }
 
             SectionHeader { text: qsTr("Serving") }

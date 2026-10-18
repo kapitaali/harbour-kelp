@@ -126,6 +126,14 @@ bool openLocations(const QByteArray &secret, const QByteArray &bundleId,
     return true;
 }
 
+// Passphrases are Unicode text, so the same passphrase typed on two devices has
+// to reach the KDF as the same bytes. NFC is the only normalization done — the
+// passphrase is otherwise used exactly as typed, spaces and all.
+QByteArray passphraseBytes(const QString &passphrase)
+{
+    return passphrase.normalized(QString::NormalizationForm_C).toUtf8();
+}
+
 } // namespace
 
 QByteArray base32Encode(const QByteArray &data)
@@ -277,7 +285,7 @@ QString encode(const Bundle &bundle)
         const QString sealed = sealLocations(bundle);
         if (!sealed.isEmpty()) {
             query.append(QStringLiteral("q=") + sealed);
-        } else {
+        } else if (bundle.wrappedSecret.isEmpty()) {
             // No usable secret to seal under — an internal-invariant breach
             // (decode would reject such a link anyway). Keep the address rather
             // than mint a link that reaches nothing; the page hint cannot be
@@ -290,12 +298,18 @@ QString encode(const Bundle &bundle)
                 query.append(QStringLiteral("n=")
                              + QString::fromLatin1(QUrl::toPercentEncoding(bundle.name)));
         }
+        // For a passphrase link there is no fallback: the whole point of one is
+        // that the link text gives nothing away, so a link whose hints could not
+        // be sealed simply carries no hints, and fails closed.
     }
 
     if (!query.isEmpty())
         text += QLatin1Char('?') + query.join(QLatin1Char('&'));
 
-    text += QStringLiteral("#k=") + base64UrlEncode(bundle.secret);
+    if (!bundle.wrappedSecret.isEmpty())
+        text += QStringLiteral("#p=") + base64UrlEncode(bundle.wrappedSecret);
+    else
+        text += QStringLiteral("#k=") + base64UrlEncode(bundle.secret);
     return text;
 }
 
@@ -339,21 +353,51 @@ bool decode(const QString &text, Bundle *out, QString *error)
     }
 
     bool haveSecret = false;
+    bool haveWrapped = false;
     const QStringList fragmentParts = fragment.split(QLatin1Char('&'), QString::SkipEmptyParts);
     for (int i = 0; i < fragmentParts.size(); ++i) {
         const QString &part = fragmentParts.at(i);
         const int equals = part.indexOf(QLatin1Char('='));
-        if (equals <= 0 || part.left(equals) != QLatin1String("k"))
+        if (equals <= 0)
             continue;
-        if (!base64UrlDecode(part.mid(equals + 1), &bundle.secret, error))
-            return false;
-        haveSecret = true;
+        const QString key = part.left(equals);
+        if (key == QLatin1String("k")) {
+            if (haveSecret) {
+                *error = QStringLiteral("link has more than one key fragment");
+                return false;
+            }
+            if (!base64UrlDecode(part.mid(equals + 1), &bundle.secret, error))
+                return false;
+            haveSecret = true;
+        } else if (key == QLatin1String("p")) {
+            if (haveWrapped) {
+                *error = QStringLiteral("link has more than one passphrase fragment");
+                return false;
+            }
+            if (!base64UrlDecode(part.mid(equals + 1), &bundle.wrappedSecret, error))
+                return false;
+            haveWrapped = true;
+        }
     }
-    if (!haveSecret) {
-        *error = QStringLiteral("link has no key fragment");
+    if (haveSecret && haveWrapped) {
+        *error = QStringLiteral("link has both a key and a passphrase fragment");
         return false;
     }
-    if (bundle.secret.size() != Crypto::KeySize) {
+    if (!haveSecret && !haveWrapped) {
+        *error = QStringLiteral("link has no key and no passphrase fragment");
+        return false;
+    }
+    if (haveWrapped) {
+        // The blob is opaque here: all this build can check without a passphrase
+        // is that it is the shape it knows, which is enough to say "damaged"
+        // rather than "wrong passphrase" later.
+        int iterations = 0;
+        if (bundle.wrappedSecret.size() != WrappedSize
+            || !wrappedParameters(bundle.wrappedSecret, &iterations, 0)) {
+            *error = QStringLiteral("the passphrase block in this link is not one this version knows");
+            return false;
+        }
+    } else if (bundle.secret.size() != Crypto::KeySize) {
         *error = QStringLiteral("secret is not 32 bytes");
         return false;
     }
@@ -381,13 +425,157 @@ bool decode(const QString &text, Bundle *out, QString *error)
     }
 
     // The sealed block is authoritative — it is what this build mints, and the
-    // recipient needs the address in it to reach the publisher at all.
-    if (!sealedLocations.isEmpty()
-        && !openLocations(bundle.secret, bundle.bundleId, sealedLocations,
-                          &bundle.lan, &bundle.name, &bundle.page, error))
-        return false;
+    // recipient needs the address in it to reach the publisher at all. A
+    // passphrase link cannot open it yet: the block is sealed under the secret
+    // the passphrase unwraps, so it stays closed until unlock().
+    if (!sealedLocations.isEmpty()) {
+        if (bundle.secret.isEmpty()) {
+            bundle.sealedLocations = sealedLocations;
+        } else if (!openLocations(bundle.secret, bundle.bundleId, sealedLocations,
+                                  &bundle.lan, &bundle.name, &bundle.page, error)) {
+            return false;
+        }
+    }
 
     *out = bundle;
+    return true;
+}
+
+bool needsPassphrase(const Bundle &bundle)
+{
+    return bundle.secret.isEmpty() && !bundle.wrappedSecret.isEmpty();
+}
+
+bool wrappedParameters(const QByteArray &blob, int *iterations, QByteArray *salt)
+{
+    if (blob.size() != WrappedSize)
+        return false;
+    if (quint8(blob.at(0)) != quint8(WrappedVersion))
+        return false;
+    const quint32 count = (quint32(quint8(blob.at(1))) << 24)
+        | (quint32(quint8(blob.at(2))) << 16)
+        | (quint32(quint8(blob.at(3))) << 8)
+        | quint32(quint8(blob.at(4)));
+    if (count == 0)
+        return false;
+    if (iterations)
+        *iterations = int(count);
+    if (salt)
+        *salt = blob.mid(5, SaltSize);
+    return true;
+}
+
+QByteArray wrapSecret(const QByteArray &secret, const QByteArray &bundleId,
+                      const QString &passphrase, int iterations, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (secret.size() != Crypto::KeySize) {
+        *error = QStringLiteral("the key to wrap is not 32 bytes");
+        return QByteArray();
+    }
+    if (bundleId.size() != Crypto::Sha256Size) {
+        *error = QStringLiteral("the bundle id is not 32 bytes");
+        return QByteArray();
+    }
+    if (iterations <= 0)
+        iterations = DefaultIterations;
+    if (iterations > MaxIterations) {
+        *error = QStringLiteral("that cost is above what this version mints");
+        return QByteArray();
+    }
+
+    const QByteArray salt = Crypto::randomBytes(SaltSize);
+    const QByteArray nonce = Crypto::randomBytes(Crypto::NonceSize);
+    if (salt.size() != SaltSize || nonce.size() != Crypto::NonceSize) {
+        *error = QStringLiteral("no randomness available");
+        return QByteArray();
+    }
+
+    QByteArray key;
+    if (!Crypto::pbkdf2Sha256(passphraseBytes(passphrase), salt, iterations,
+                              Crypto::KeySize, &key)) {
+        *error = QStringLiteral("the passphrase could not be used");
+        return QByteArray();
+    }
+
+    QByteArray wrapped;
+    // The bundle id is the authenticated data, so a wrapped key cannot be moved
+    // onto another bundle's link.
+    if (!Crypto::aes256GcmEncrypt(key, nonce, secret, bundleId, &wrapped)) {
+        *error = QStringLiteral("the key could not be wrapped");
+        return QByteArray();
+    }
+
+    QByteArray blob;
+    blob.append(char(WrappedVersion));
+    blob.append(char((iterations >> 24) & 0xFF));
+    blob.append(char((iterations >> 16) & 0xFF));
+    blob.append(char((iterations >> 8) & 0xFF));
+    blob.append(char(iterations & 0xFF));
+    blob.append(salt);
+    blob.append(nonce);
+    blob.append(wrapped);
+    return blob;
+}
+
+bool unlock(Bundle *bundle, const QString &passphrase, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (!bundle) {
+        *error = QStringLiteral("no link to unlock");
+        return false;
+    }
+    if (bundle->wrappedSecret.isEmpty()) {
+        if (!bundle->secret.isEmpty())
+            return true;                    // an ordinary link is already open
+        *error = QStringLiteral("this link has no key to unlock");
+        return false;
+    }
+
+    int iterations = 0;
+    QByteArray salt;
+    if (!wrappedParameters(bundle->wrappedSecret, &iterations, &salt)) {
+        *error = QStringLiteral("the passphrase block in this link is not one this version knows");
+        return false;
+    }
+    // A link is untrusted input and the derivation is meant to be slow, so the
+    // cost is bounded: a hostile link must not be able to hang the app.
+    if (iterations > MaxIterations) {
+        *error = QStringLiteral("this link asks for more work than is allowed");
+        return false;
+    }
+
+    QByteArray key;
+    if (!Crypto::pbkdf2Sha256(passphraseBytes(passphrase), salt, iterations,
+                              Crypto::KeySize, &key)) {
+        *error = QStringLiteral("the passphrase could not be used");
+        return false;
+    }
+
+    const QByteArray nonce = bundle->wrappedSecret.mid(WrappedHeaderSize, Crypto::NonceSize);
+    const QByteArray body = bundle->wrappedSecret.mid(WrappedHeaderSize + Crypto::NonceSize);
+    QByteArray secret;
+    if (!Crypto::aes256GcmDecrypt(key, nonce, body, bundle->bundleId, &secret)) {
+        // The tag is the only thing that can tell: a wrong passphrase and a
+        // blob moved onto another bundle's link both land here.
+        *error = QStringLiteral("that passphrase does not open this link");
+        return false;
+    }
+    if (secret.size() != Crypto::KeySize) {
+        *error = QStringLiteral("the unwrapped key is not 32 bytes");
+        return false;
+    }
+    bundle->secret = secret;
+
+    // Now that the secret is known, the hints decode() could not read.
+    if (!bundle->sealedLocations.isEmpty()
+        && !openLocations(bundle->secret, bundle->bundleId, bundle->sealedLocations,
+                          &bundle->lan, &bundle->name, &bundle->page, error))
+        return false;
     return true;
 }
 

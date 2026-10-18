@@ -27,6 +27,15 @@ QByteArray randomBytes(int count);
 bool hkdfSha256(const QByteArray &ikm, const QByteArray &salt,
                 const QByteArray &info, int length, QByteArray *out);
 
+// PBKDF2-HMAC-SHA256 (RFC 8018). Only used for passphrase links (design §12.3),
+// where the point is that the derivation is *expensive*: the cost is the only
+// thing standing between a passphrase and a stolen link, and it travels in the
+// link so it can be raised later without breaking links already handed out.
+// `iterations` must be at least 1; upper bounds are the caller's business (see
+// kelp_link.h, which refuses an implausible count from a link).
+bool pbkdf2Sha256(const QByteArray &passphrase, const QByteArray &salt,
+                  int iterations, int length, QByteArray *out);
+
 // HMAC-SHA256 (RFC 2104). Used to prove possession of the swarm token at
 // tunnel setup (wire spec §8), and to prove that possession without putting the
 // token itself on the wire.

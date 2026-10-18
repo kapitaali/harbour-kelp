@@ -17,10 +17,10 @@ on-device verification; nothing here is a rewrite of something that already work
 | K3 | The lazy fetch in the preview (`KelpSource` behind a session) | medium | §5.1's stated gap: a missing object is a `503` even when it could be fetched |
 | K4 | Passphrase links (§12.3) | large | Links carry their key, so a link is a secret; a passphrase link is not |
 
-**Status.** K1 and K2 are built, tested and verified on the emulator (see each section's
+**Status.** K1, K2 and K4 are built, tested and verified on the emulator (see each section's
 "Built" note). **K3 has moved to the back of the queue, deliberately** — see its section: the
 situation it fixes cannot arise yet, because nothing opens a session over a store that can be
-incomplete. K4 is next.
+incomplete. All three built pieces are committed; nothing here is left half-done.
 
 **Order and reason.** K1 first because K2 has to read the toggles from somewhere durable. K2 next
 because it is the half the user's option led with. K3 and K4 are independent of K1/K2 and of each
@@ -358,9 +358,13 @@ after unlocking is the flow that already exists.
   link*, so it can be raised for new links without breaking old ones.
 - The **salt** is 16 random bytes from the same RNG the sealing already uses.
 - The **nonce is random** and the *wrapped blob is stored in the share row* (`shares.json`, `0600`,
-  beside the secret it already holds). Re-minting a link after a restart therefore reproduces the
-  **same** link text, rather than a fresh wrapping of the same secret: a link that changed on every
-  restart would be worse than useless.
+  beside the secret it already holds). Re-minting a link after a restart therefore re-mints the
+  **same capability**: the same bundle id, the same secret and the same 43-byte bearer token, so a
+  link handed out before a restart still opens after it. The link text is *not* byte-identical —
+  `q=` is sealed under a fresh random nonce at every mint, exactly as for ordinary links — and the
+  address is minted afresh, so the copy the user should send is the current one. What holds is that
+  the *old* link still fetches, because the listener's port does not change across a
+  pause/resume.
 - The passphrase itself is **never stored**. It is asked for once, used to derive, and forgotten.
 - Any passphrase is accepted (a length floor of 8 characters, with the UI saying plainly that the
   link is only as strong as the passphrase). Refusing short passphrases would push people to write
@@ -373,35 +377,51 @@ namespace Kelp { namespace Link {
 struct Bundle {
     …
     QByteArray wrappedSecret;   // non-empty when the link is passphrase-protected
-    int iterations = 0;
-    QByteArray salt;
 };
 
-// decode() fills the fields but leaves `secret` empty for a #p= link.
+// decode() fills the fields but leaves `secret` empty for a #p= link, stashing the
+// sealed q= blob for unlock() to open once there is a key.
 bool decode(const QString &text, Bundle *out, QString *error);
 
-// unlock() derives the key and unwraps; false with a reason on a wrong passphrase
-// (the GCM tag fails) or a malformed blob.
-bool unlock(Bundle *bundle, const QString &passphrase, QString *error);
-
 bool needsPassphrase(const Bundle &bundle);
+
+// A permissive read of a blob's own header (version, size, nonzero iterations) —
+// it does not derive anything, so it is safe on untrusted input. unlock() is what
+// enforces the iteration cap.
+bool wrappedParameters(const QByteArray &blob, int *iterations, QByteArray *salt);
+
+// The passphrase -> key derivation, exposed so the app can mint a link.
+QByteArray wrapSecret(const QByteArray &secret, const QByteArray &bundleId,
+                      const QString &passphrase, int iterations, QString *error);
+
+// unlock() derives the key and unwraps; false with a reason on a wrong passphrase
+// (the GCM tag fails), a malformed blob, or an iteration count above the cap.
+bool unlock(Bundle *bundle, const QString &passphrase, QString *error);
 }}
 ```
 
-`Kelp::Link::encode()` emits `#p=` when `wrappedSecret` is set, and takes the passphrase that
-produced it so the UI can mint both halves at once.
+`Kelp::Link::encode()` emits `#p=` when `wrappedSecret` is set and **fails closed**: it will not
+fall back to a plaintext `#k=`, so a share cannot become an ordinary link by accident.
 
 ### What each side does
 
-- **Sharing.** `AddPage`'s webpage/folder/file flow gains one optional field on the *Share…* sheet:
-  *Protect the link with a passphrase*. Filled in, the sealed bundle's link is minted as a
-  passphrase link and the row records the wrapped blob, iterations and salt. Empty, nothing changes.
-- **Opening.** `OpenLinkPage` sees `needsPassphrase` and shows one masked field and one button
-  before it asks the sender for anything (so a wrong passphrase never costs a network round trip).
-  Wrong passphrase → "that passphrase does not open this link". Once unlocked, the page is the page
-  it always was — download, or view-only for a webpage share.
+- **Sharing.** `AddPage` gains a *Protect the link* section at the top — above the three share
+  buttons, because tapping one seals and shares in the same gesture — holding one switch and one
+  masked field. Filled in, every share made from that page is minted as a passphrase link and the
+  row records the wrapped blob (`passBlob`, base64url) beside its secret; empty, nothing changes.
+  The three buttons are disabled while a passphrase is typed but too short, and `KelpBundles::seal`
+  refuses it too (8 characters), so no caller can mint one by accident. The passphrase is cleared
+  from the field as soon as the share is sealed successfully.
+- **Opening.** `OpenLinkPage` sees `needsPassphrase` and shows one masked field and one *Unlock*
+  button *instead of* everything it normally says — there is no name to print and no address to
+  dial — so a wrong passphrase never costs a network round trip. The unlock's answer is held as the
+  page's reading of the link, which is the only thing the existing bindings read, so once it is
+  unlocked the page is the page it always was: download, or view-only for a webpage share. The
+  passphrase is handed to the fetch when it starts and is not remembered afterwards.
 - **Everything downstream** takes the unlocked `secret` as it does today: `q=` decryption, the
-  swarm token, the fetch, the preview, the row. No other component knows passphrase links exist.
+  swarm token, the fetch, the preview, the row. No other component knows passphrase links exist,
+  except the row, which carries the blob so a restart can mint the same link again
+  (`republish(…, passBlob)`).
 
 ### Failure modes
 
@@ -411,19 +431,45 @@ produced it so the UI can mint both halves at once.
 | A passphrase with a space or a non-ASCII character | Normalized (NFC) and otherwise used verbatim; the same passphrase typed the same way is the only requirement |
 | Link damaged (a truncated `#p=`) | Decode fails: "this link is damaged" |
 | Link hand-edited to move a `#p=` blob onto another bundle | Refused: the bundle id is authenticated data |
-| An app version that predates `#p=` sees one | "This link needs a newer Kelp" — decode already refuses unknown fragments with a reason, and this is the same path |
+| An app version that predates `#p=` sees one | It finds no `#k=` fragment and refuses the link as one with no key. That is the safe direction: there is nothing in the clear for it to dial, and the sensible answer for the user is to update |
+| A blob from a future version, or with an absurd work factor | Decode refuses the version it does not know; `unlock` refuses more than 10 000 000 iterations, so a hand-edited link cannot hang the app |
 | The user forgets the passphrase | The link is dead; nothing on any device can recover it (the bundle's own secret was never written down anywhere but the share row that minted it) |
 | A passphrase-protected share is paused and resumed | Re-minted from the stored blob, so the wrapped secret and the address are the same as before — the old link still opens (the sealed `q=` blob is re-nonced, as for any link) |
 
 ### Tests
 
-`tst_kelp` (libkelp): PBKDF2 against a published vector (checked against `openssl kdf` on the host
+`tst_kelp` (libkelp): PBKDF2 against published vectors (checked against `openssl kdf` on the host
 before pinning), wrap/unwrap round trips, wrong passphrase, AAD binding across bundles, malformed
-blobs, `#k=`/`#p=` both-present refusal, encode→decode→unlock round trip, and
-`needsPassphrase`. `tst_kelpclient` gains the unlocked-secret path. On the emulator, end to end:
-share with a passphrase, fetch the link with the passphrase on a second store, then try without it
-and watch it refuse. The wiring spec (`META-INF/kelp-wire-spec.md`) gets the `#p=` form, the blob
-layout and the KDF parameters.
+blobs and headers, `#k=`/`#p=` both-present refusal, encode→decode→unlock round trip, the iteration
+cap, and `needsPassphrase`/`wrappedParameters`. `tst_kelpbundles` covers the app's own half: a
+passphrase share whose link says nothing (not the address, not the label, not the kind), the
+`passBlob` being exactly the link's blob, a restore through `republish` that is still opened by the
+same passphrase, a corrupted stored blob being refused rather than published as an ordinary link,
+and the 8-character floor. `tst_kelpclient` covers the fetch: no passphrase and a wrong passphrase
+each refused with the **publisher never dialled**, the right one fetching normally, and the
+passphrase not being remembered. The wire spec (`META-INF/kelp-swarm-wire-spec.md` §5.1) gets the
+`#p=` form, the blob layout and the KDF parameters.
+
+### Built (2026-10-18)
+
+Landed as one commit, because the libkelp half alone would be tested code with no caller — the same
+reason K3 was deferred. `libkelp`: `Crypto::pbkdf2Sha256` (OpenSSL `PKCS5_PBKDF2_HMAC`, RFC 7914
+vectors pinned from `openssl kdf`); `Kelp::Link` gains `WrappedVersion`/`WrappedHeaderSize`/
+`WrappedSize`/`SaltSize`/`DefaultIterations`/`MaxIterations`, `wrapSecret`, `unlock`,
+`needsPassphrase`, `wrappedParameters`, and a `decode` that accepts either fragment, refuses both,
+and stashes `q=` for `unlock`. App: `KelpBundles::seal` gained the passphrase (and the floor),
+`publish`/`republish` gained the wrapped secret, `linkInfo` gained `needsPassphrase`, and
+`unlockLink` is new; `KelpClient::fetch`/`fetchForViewing` gained the passphrase and unlock before a
+source is created. UI: the *Protect the link* section in `AddPage`, the passphrase prompt in
+`OpenLinkPage`, `passBlob` in the row and through `restoreShares`/`resumeShare`/the policy resume.
+Tests: libkelp 497 checks (was 420), `tst_kelpbundles` 211 (159), `tst_kelpclient` 152 (128), all
+suites green in both bundle modes.
+
+Verified on the emulator end to end: a passphrase share was minted, its link was shown to carry
+`#p=` and to name neither the address nor the label; a direct fetch of it without the passphrase was
+refused locally (no request in the publisher's log) and with the passphrase it fetched; a restart
+re-minted the same capability from the stored blob, and the same passphrase opened the new link.
+The on-device detail and the exact commands are in `PROGRESS-20261016.md` §3.29.
 
 ---
 

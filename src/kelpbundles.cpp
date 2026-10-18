@@ -21,6 +21,13 @@ namespace {
 // Deep enough for any real folder; there to stop a symlink loop.
 const int kMaxDepth = 64;
 
+// The shortest passphrase a share will be protected with (design §12.3). It is a
+// floor, not a policy: what makes a passphrase work is the 600 000-iteration
+// derivation, and any promise about *quality* would be a promise this code cannot
+// keep. Eight characters is the point below which a passphrase is usually a
+// typo.
+const int kMinPassphraseLength = 8;
+
 // The object ids the shares on this device are made of. Strict on purpose: if one
 // share cannot be walked, the whole computation fails. "Not in this set" has to
 // mean "safe to delete", and an object this device merely cannot account for —
@@ -334,7 +341,7 @@ void KelpBundles::stopServing(const QString &bundleId)
 
 QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secretText,
                                    const QString &name, int objects, int files,
-                                   quint64 bytes, bool page)
+                                   quint64 bytes, bool page, const QString &passBlob)
 {
     QVariantMap result;
     result.insert(QStringLiteral("ok"), false);
@@ -353,12 +360,26 @@ QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secre
         return result;
     }
 
+    // The row's wrapped secret, put back exactly as it was: the same blob in the
+    // same link, so the passphrase that opened the share before still opens it.
+    QByteArray wrappedSecret;
+    if (!passBlob.isEmpty()) {
+        if (!Kelp::Link::base64UrlDecode(passBlob, &wrappedSecret, &error)
+            || wrappedSecret.size() != Kelp::Link::WrappedSize) {
+            result.insert(QStringLiteral("error"),
+                          QStringLiteral("stored passphrase block is not usable"));
+            return result;
+        }
+    }
+
     const Kelp::Link::Bundle link =
-        publish(rootId, secret, name, objects, files, bytes, page);
+        publish(rootId, secret, name, objects, files, bytes, page, wrappedSecret);
     const QString linkText = Kelp::Link::encode(link);
 
     qInfo() << "KelpBundles: restored" << name << "->" << objects << "objects,"
-            << files << "files," << bytes << "bytes";
+            << files << "files," << bytes << "bytes"
+            << (wrappedSecret.isEmpty() ? QString()
+                                        : QStringLiteral("(protected by a passphrase)"));
 
     // A restored share mints a fresh link (its address may have changed since the
     // row was written), so the link a script reads from the log is this one, by
@@ -392,6 +413,7 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
         info.insert(QStringLiteral("lan"), QString());
         info.insert(QStringLiteral("name"), QString());
         info.insert(QStringLiteral("page"), false);
+        info.insert(QStringLiteral("needsPassphrase"), false);
         return info;
     }
 
@@ -399,6 +421,54 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
     info.insert(QStringLiteral("bundleId"),
                 QString::fromLatin1(Kelp::Link::base32Encode(parsed.bundleId)));
     info.insert(QStringLiteral("relays"), parsed.relays);
+    info.insert(QStringLiteral("lan"), parsed.lan);
+    info.insert(QStringLiteral("name"), parsed.name);
+    info.insert(QStringLiteral("page"), parsed.page);
+    // A passphrase link: everything above except the id and the relays is empty,
+    // because all of it is sealed under the secret the passphrase unwraps.
+    info.insert(QStringLiteral("needsPassphrase"), Kelp::Link::needsPassphrase(parsed));
+    return info;
+}
+
+QVariantMap KelpBundles::unlockLink(const QString &link, const QString &passphrase)
+{
+    QVariantMap info;
+    info.insert(QStringLiteral("ok"), false);
+    info.insert(QStringLiteral("bundleId"), QString());
+    info.insert(QStringLiteral("relays"), QStringList());
+    info.insert(QStringLiteral("lan"), QString());
+    info.insert(QStringLiteral("name"), QString());
+    info.insert(QStringLiteral("page"), false);
+    info.insert(QStringLiteral("needsPassphrase"), false);
+
+    Kelp::Link::Bundle parsed;
+    QString error;
+    if (!Kelp::Link::decode(link, &parsed, &error)) {
+        info.insert(QStringLiteral("error"), error);
+        return info;
+    }
+
+    info.insert(QStringLiteral("bundleId"),
+                QString::fromLatin1(Kelp::Link::base32Encode(parsed.bundleId)));
+    info.insert(QStringLiteral("relays"), parsed.relays);
+
+    if (!Kelp::Link::needsPassphrase(parsed)) {
+        info.insert(QStringLiteral("error"),
+                    QStringLiteral("this link does not need a passphrase"));
+        return info;
+    }
+
+    info.insert(QStringLiteral("needsPassphrase"), true);
+    if (!Kelp::Link::unlock(&parsed, passphrase, &error)) {
+        // A wrong passphrase is the only thing that gets this far, so the reason
+        // is worth passing on as it is: the derivation is what tells them apart,
+        // and it says "that passphrase does not open this link".
+        info.insert(QStringLiteral("error"), error);
+        return info;
+    }
+
+    info.insert(QStringLiteral("ok"), true);
+    info.insert(QStringLiteral("needsPassphrase"), false);
     info.insert(QStringLiteral("lan"), parsed.lan);
     info.insert(QStringLiteral("name"), parsed.name);
     info.insert(QStringLiteral("page"), parsed.page);
@@ -451,7 +521,8 @@ bool KelpBundles::collect(const QString &path, const QString &name, int depth,
     return true;
 }
 
-QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, bool page)
+QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, bool page,
+                              const QString &passphrase)
 {
     QVariantMap result;
     result.insert(QStringLiteral("ok"), false);
@@ -462,6 +533,14 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
     }
     if (paths.isEmpty()) {
         result.insert(QStringLiteral("error"), QStringLiteral("nothing to share"));
+        return result;
+    }
+    // Checked before anything is sealed: refusing afterwards would leave a bundle
+    // in the store that nothing is going to serve.
+    if (!passphrase.isEmpty() && passphrase.length() < kMinPassphraseLength) {
+        result.insert(QStringLiteral("error"),
+                      QStringLiteral("a passphrase needs at least %1 characters")
+                          .arg(kMinPassphraseLength));
         return result;
     }
 
@@ -505,16 +584,35 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
         return result;
     }
 
+    // A passphrase link (design §12.3). Wrapping happens *before* publishing,
+    // because publishing is what mints the link, and the link has to know to carry
+    // `#p=` rather than `#k=`. The passphrase itself goes no further than this
+    // call: what the row keeps is the wrapped blob, which is enough to mint the
+    // same link again and not enough to read anything without the passphrase.
+    QByteArray wrappedSecret;
+    if (!passphrase.isEmpty()) {
+        QString wrapError;
+        wrappedSecret = Kelp::Link::wrapSecret(secret, sealed.rootId, passphrase,
+                                               Kelp::Link::DefaultIterations, &wrapError);
+        if (wrappedSecret.isEmpty()) {
+            qWarning() << "KelpBundles: cannot protect" << name << ":" << wrapError;
+            result.insert(QStringLiteral("error"), wrapError);
+            return result;
+        }
+    }
+
     const Kelp::Link::Bundle link =
         publish(sealed.rootId, secret, name, sealed.objectCount, sealed.fileCount,
-                sealed.totalBytes, page);
+                sealed.totalBytes, page, wrappedSecret);
 
     const QString linkText = Kelp::Link::encode(link);
 
     const QString label = page ? name + QStringLiteral(" (webpage)") : name;
     qInfo() << "KelpBundles: sealed" << label << "->"
             << sealed.objectCount << "objects," << sealed.fileCount << "files,"
-            << sealed.totalBytes << "bytes in" << timer.elapsed() << "ms";
+            << sealed.totalBytes << "bytes in" << timer.elapsed() << "ms"
+            << (wrappedSecret.isEmpty() ? QString()
+                                        : QStringLiteral("(protected by a passphrase)"));
 
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("link"), linkText);
@@ -532,18 +630,29 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
     result.insert(QStringLiteral("skippedLinks"), skippedLinks);
     result.insert(QStringLiteral("lan"), link.lan);
     result.insert(QStringLiteral("page"), page);
+    // The wrapped secret, not the passphrase: it is what the row keeps, so a
+    // restart can mint the same passphrase link again (republish). Empty for an
+    // ordinary share.
+    result.insert(QStringLiteral("passBlob"),
+                  wrappedSecret.isEmpty() ? QString()
+                                          : Kelp::Link::base64UrlEncode(wrappedSecret));
     return result;
 }
 
 Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArray &secret,
                                         const QString &name, int objects, int files,
-                                        quint64 bytes, bool page)
+                                        quint64 bytes, bool page,
+                                        const QByteArray &wrappedSecret)
 {
     Kelp::Link::Bundle link;
     link.bundleId = rootId;
     link.secret = secret;
     link.name = name;
     link.page = page;
+    // A passphrase link carries `#p=` instead of `#k=`. The publisher still holds
+    // the secret — it is what it serves with — and still seals the hints under it;
+    // the recipient has to unlock to read them (§12.3).
+    link.wrappedSecret = wrappedSecret;
 
     // Publish on the LAN before minting the link, so `l=` is in it. Failing to
     // listen is not fatal: the objects are sealed either way, the link simply

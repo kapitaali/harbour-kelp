@@ -868,6 +868,149 @@ static void testWebpageShare()
         CHECK_EQ(info.value(QStringLiteral("page")).toBool(), false);
     }
 
+    section("a passphrase share: the link opens nothing on its own");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("protected-site"), false,
+                                                QStringLiteral("correct horse battery staple"));
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        const QString link = sealed.value(QStringLiteral("link")).toString();
+        CHECK(link.contains(QStringLiteral("#p=")));
+        CHECK(!link.contains(QStringLiteral("#k=")));
+        CHECK_EQ(link.count(QStringLiteral("#")), 1);
+
+        // Nothing readable is left: not the address, not the label — and not even
+        // that this folder holds a page. Everything but the content address and
+        // the relay names is sealed under the key the passphrase unwraps.
+        const QString lan = sealed.value(QStringLiteral("lan")).toString();
+        CHECK(!lan.isEmpty());
+        CHECK(!link.contains(lan));
+        CHECK(!link.contains(QStringLiteral("protected-site")));
+
+        // What the row keeps is the wrapped blob, and the link carries the same
+        // bytes: that is what lets a restart mint the same link again without
+        // anyone re-typing the passphrase.
+        const QString passBlob = sealed.value(QStringLiteral("passBlob")).toString();
+        CHECK(!passBlob.isEmpty());
+        QByteArray blob;
+        CHECK(Kelp::Link::base64UrlDecode(passBlob, &blob, &error));
+        CHECK_EQ(blob.size(), int(Kelp::Link::WrappedSize));
+        CHECK_EQ(blob.size(), 81);
+        CHECK_EQ(blob.left(1), QByteArray(1, char(Kelp::Link::WrappedVersion)));
+        int iterations = 0;
+        QByteArray salt;
+        CHECK(Kelp::Link::wrappedParameters(blob, &iterations, &salt));
+        CHECK_EQ(iterations, int(Kelp::Link::DefaultIterations));
+        CHECK_EQ(iterations, 600000);
+        CHECK_EQ(salt.size(), int(Kelp::Link::SaltSize));
+
+        // What the link can still say about itself: the content address, the relay
+        // names, and that it needs a passphrase. Everything else is empty because
+        // decode() has no key to open it with.
+        const QVariantMap info = bundles.linkInfo(link);
+        CHECK(info.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(info.value(QStringLiteral("needsPassphrase")).toBool(), true);
+        CHECK_EQ(info.value(QStringLiteral("bundleId")).toString(),
+                 sealed.value(QStringLiteral("bundleId")).toString());
+        CHECK_EQ(info.value(QStringLiteral("lan")).toString(), QString());
+        CHECK_EQ(info.value(QStringLiteral("name")).toString(), QString());
+        CHECK_EQ(info.value(QStringLiteral("page")).toBool(), false);
+
+        // Unlock: a wrong passphrase is refused, the right one opens exactly the
+        // hints that were sealed under the key.
+        const QVariantMap wrong = bundles.unlockLink(link, QStringLiteral("wrong"));
+        CHECK_EQ(wrong.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(!wrong.value(QStringLiteral("error")).toString().isEmpty());
+        CHECK_EQ(wrong.value(QStringLiteral("needsPassphrase")).toBool(), true);
+
+        const QVariantMap opened =
+            bundles.unlockLink(link, QStringLiteral("correct horse battery staple"));
+        CHECK(opened.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(opened.value(QStringLiteral("needsPassphrase")).toBool(), false);
+        CHECK_EQ(opened.value(QStringLiteral("lan")).toString(), lan);
+        CHECK_EQ(opened.value(QStringLiteral("name")).toString(),
+                 QStringLiteral("protected-site"));
+        CHECK_EQ(opened.value(QStringLiteral("bundleId")).toString(),
+                 sealed.value(QStringLiteral("bundleId")).toString());
+
+        // An ordinary share carries no wrapped secret at all, and is not something
+        // to unlock.
+        const QVariantMap ordinary = bundles.seal(QStringList() << (base + "/web/site"),
+                                                  QStringLiteral("plain-site"), false);
+        CHECK(ordinary.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(ordinary.value(QStringLiteral("passBlob")).toString(), QString());
+        CHECK(linkNamesLan(ordinary.value(QStringLiteral("link")).toString()));
+        CHECK_EQ(bundles
+                     .unlockLink(ordinary.value(QStringLiteral("link")).toString(),
+                                 QStringLiteral("anything"))
+                     .value(QStringLiteral("ok"))
+                     .toBool(),
+                 false);
+    }
+
+    section("a restored passphrase share is still protected, by the same blob");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("protected-restored"), false,
+                                                QStringLiteral("a long enough passphrase"));
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        const QString passBlob = sealed.value(QStringLiteral("passBlob")).toString();
+        CHECK(!passBlob.isEmpty());
+
+        const QVariantMap again = bundles.republish(
+            sealed.value(QStringLiteral("bundleId")).toString(),
+            sealed.value(QStringLiteral("secret")).toString(),
+            QStringLiteral("protected-restored"),
+            sealed.value(QStringLiteral("objectCount")).toInt(),
+            sealed.value(QStringLiteral("fileCount")).toInt(),
+            sealed.value(QStringLiteral("totalBytes")).toLongLong(), false, passBlob);
+        CHECK(again.value(QStringLiteral("ok")).toBool());
+        const QString link = again.value(QStringLiteral("link")).toString();
+        CHECK(link.contains(QStringLiteral("#p=")));
+
+        // The blob is the row's, byte for byte, and the link still carries it in
+        // the wrapped form rather than the key.
+        Kelp::Link::Bundle parsed;
+        CHECK(Kelp::Link::decode(link, &parsed, &error));
+        CHECK_EQ(Kelp::Link::base64UrlEncode(parsed.wrappedSecret), passBlob);
+        CHECK_EQ(parsed.secret.size(), 0);
+        CHECK(Kelp::Link::needsPassphrase(parsed));
+
+        // The passphrase a recipient was told still opens it; nothing else does.
+        const QVariantMap opened =
+            bundles.unlockLink(link, QStringLiteral("a long enough passphrase"));
+        CHECK(opened.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(opened.value(QStringLiteral("name")).toString(),
+                 QStringLiteral("protected-restored"));
+        CHECK_EQ(bundles.unlockLink(link, QStringLiteral("a long enough passphras"))
+                     .value(QStringLiteral("ok"))
+                     .toBool(),
+                 false);
+
+        // A stored blob that cannot be read is refused rather than published as an
+        // ordinary link: failing open would hand out the key.
+        const QVariantMap bad = bundles.republish(
+            sealed.value(QStringLiteral("bundleId")).toString(),
+            sealed.value(QStringLiteral("secret")).toString(),
+            QStringLiteral("protected-restored"), 1, 1, 1, false,
+            QStringLiteral("not-a-blob"));
+        CHECK_EQ(bad.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(!bad.value(QStringLiteral("error")).toString().isEmpty());
+        CHECK_EQ(bad.value(QStringLiteral("link")).toString(), QString());
+    }
+
+    section("a passphrase shorter than the floor is refused before sealing");
+    {
+        const QVariantMap refused = bundles.seal(QStringList() << (base + "/web/plain"),
+                                                 QStringLiteral("too-short"), false,
+                                                 QStringLiteral("short"));
+        CHECK_EQ(refused.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(refused.value(QStringLiteral("error")).toString()
+                  .contains(QStringLiteral("8")));
+        CHECK_EQ(refused.value(QStringLiteral("link")).toString(), QString());
+        CHECK_EQ(refused.value(QStringLiteral("bundleId")).toString(), QString());
+    }
+
     QDir(base + "/web").removeRecursively();
     QFile::remove(KelpSettings::filePath());
 }
