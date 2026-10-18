@@ -151,6 +151,12 @@ emulator link reachable at all from another device — and `kelp-probe.py` fetch
 link the way a recipient would without printing its key. Both are documented in
 `PROGRESS-<date>.md` §4.5.
 
+To try a *webpage* share end to end — the one thing that needs something to look at — the repo
+carries `demo/`: a three-file page with no external reference at all, which is what a viewed page
+has to be (the preview serves it offline, design §5.1/§12.11). Copy the folder in and point
+*Share… → Share webpage* at it; it is also the honest test of relative sub-resources resolving
+through a bundle (§3.24).
+
 ## Checks before committing
 
 1. Build the target you changed (both, if the change is shared).

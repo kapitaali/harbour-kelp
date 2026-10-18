@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kelp — a page shared by link</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <img src="kelp.svg" alt="" width="56" height="56">
+  <div>
+    <h1>Kelp</h1>
+    <p class="tagline">a web page shared from someone else's phone</p>
+  </div>
+</header>
+
+<main>
+
+  <section class="card live">
+    <h2>You are reading this from your own device</h2>
+    <p>
+      This page was not downloaded from a website. It arrived as a <code>kelp://</code> link,
+      was fetched object by object, and is being served to <em>this</em> browser from
+      <code id="origin">127.0.0.1</code> on the device in your hand.
+    </p>
+    <p class="quote">&ldquo;It is not on the internet. It is on the two phones at the ends of the link.&rdquo;</p>
+  </section>
+
+  <section class="card">
+    <h2>How it got here</h2>
+    <ol class="steps">
+      <li><strong>Sealed.</strong> The sender's phone encrypted this page and cut it into
+          addressable objects. The key went into the link's fragment, after the
+          <code>#</code> — a part a browser never sends anywhere.</li>
+      <li><strong>Checked.</strong> Each object was verified against its <code>SHA-256</code>
+          address before it was kept. One altered byte and the object is refused, not used.</li>
+      <li><strong>Fetched.</strong> Your device asked the sender's phone for the objects it
+          needed, following the manifests inside the bundle until nothing was missing.</li>
+      <li><strong>Served.</strong> What you see is served from a loopback address on your own
+          device — the same mechanism the sender used to preview it before sharing it.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>What this page cannot do</h2>
+    <ul class="plain">
+      <li>It cannot reach the internet. No CDN, no analytics, no fonts from anywhere, no
+          invisible pixel reporting that you opened it. Everything here — the stylesheet, the
+          leaf above, this text — came out of the bundle.</li>
+      <li>It cannot see where you are, who you are, or what else is on the device.</li>
+      <li>It cannot follow you after you leave. Nothing was written: no file, no cache entry,
+          no record in the app's storage. The copy you are reading lives in memory and is
+          dropped when the preview session ends.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>What the sender learns</h2>
+    <p>
+      Serving the page was the sender's phone answering a request, so it saw that
+      <em>something</em> connected, from which address, and how much was transferred — one line
+      in its log, a bare <code>address:port</code>, not a name and not a location. The rest of
+      the link told that log nothing: the address the page was served from and the fact that it
+      is a page travelled sealed inside the link, readable only with the key from its fragment.
+      The only part in the open is the bundle's identity at the front of the link, and that is
+      just a hash of the contents.
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  <p>
+    A demonstration page for <strong>Kelp</strong>, a peer-to-peer file and page sharer for
+    Sailfish OS. Three files, no external references, 100% of it from the bundle.
+  </p>
+</footer>
+
+<script>
+  // Show the loopback origin this page is really being served from. Only the host and port,
+  // never the path: the path holds the session's token, which is a capability like the link.
+  (function () {
+    var el = document.getElementById("origin");
+    if (el && location.host) {
+      el.textContent = location.host;
+    }
+  })();
+</script>
+
+</body>
+</html>

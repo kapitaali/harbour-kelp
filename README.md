@@ -52,7 +52,8 @@ and test.
   own link, so sharing three files means choosing three times. *Share webpage…*
   first checks the chosen folder really holds a page — by the same rule that finds
   a page in a bundle (design §5.3) — and refuses a folder that holds none instead
-  of sharing something a recipient could not open. Also carries the per-share *Let
+  of sharing something a recipient could not open. (The repo's `demo/` folder is a page made to
+  be shared this way: one small offline site, three files.) Also carries the per-share *Let
   peers help serve what I share here* choice.
 - **Open a link** — paste a `kelp://` link and download the bundle. The link is
   explained before anything happens (name, content address, where it will be
@@ -317,6 +318,12 @@ src/
   kelptls.{h,cpp}        KelpTls, the TLS 1.3 + ALPN "kelp/1" session the tunnel
                          is built on (OpenSSL 3, because Qt 5.6 cannot)
 ```
+
+`demo/` holds a small self-contained web page — `index.html`, `style.css`, `kelp.svg` — to
+share as a webpage share when showing Kelp to someone. It has no external reference at all
+(no CDN, no webfont, no image from anywhere), which is what a page shared this way has to be:
+the preview serves a received bundle offline. Its three files are the point as well —
+relative sub-resources resolve through the bundle's own objects.
 
 The relay itself is a separate program in `relay/`, not part of the app package.
 

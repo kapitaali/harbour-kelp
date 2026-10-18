@@ -1,0 +1,108 @@
+/* Kelp's demo page — no @import, no font from anywhere: the whole stylesheet is one
+   object out of the bundle, and the fonts are the device's own. */
+
+:root {
+    --ink:        #e8f2ec;
+    --ink-dim:    #9fb3a8;
+    --leaf:       #46c08a;
+    --leaf-deep:  #0d1f18;
+    --card:       #14211c;
+    --line:       #23342c;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--leaf-deep); }
+
+body {
+    margin: 0;
+    padding: 1.25rem;
+    max-width: 42rem;
+    margin-left: auto;
+    margin-right: auto;
+    background: var(--leaf-deep);
+    color: var(--ink);
+    font: 1rem/1.6 system-ui, -apple-system, "Source Sans Pro", "Noto Sans", sans-serif;
+    -webkit-text-size-adjust: 100%;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.75rem 0 1.25rem;
+}
+
+header img { flex: 0 0 auto; }
+
+h1 {
+    margin: 0;
+    font-size: 1.9rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.tagline {
+    margin: 0.1rem 0 0;
+    color: var(--ink-dim);
+    font-size: 0.95rem;
+    font-style: italic;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+    padding: 1.1rem 1.1rem 0.6rem;
+    margin: 0 0 1rem;
+}
+
+.card.live { border-color: var(--leaf); }
+
+h2 {
+    margin: 0 0 0.6rem;
+    font-size: 1.12rem;
+    font-weight: 600;
+    color: var(--leaf);
+}
+
+p { margin: 0 0 0.9rem; }
+
+.card p:last-child, .card ol:last-child, .card ul:last-child { margin-bottom: 0.5rem; }
+
+code {
+    font-family: "Source Code Pro", "DejaVu Sans Mono", monospace;
+    font-size: 0.88em;
+    background: #0b1712;
+    border: 1px solid var(--line);
+    border-radius: 0.3rem;
+    padding: 0.05rem 0.32rem;
+    word-break: break-word;
+}
+
+#origin { color: var(--ink); }
+
+.quote {
+    border-left: 3px solid var(--leaf);
+    padding-left: 0.8rem;
+    color: var(--ink-dim);
+    font-style: italic;
+}
+
+.steps { margin: 0 0 0.9rem; padding-left: 1.2rem; }
+.steps li { margin-bottom: 0.7rem; }
+
+.plain { margin: 0 0 0.9rem; padding-left: 1.1rem; }
+.plain li { margin-bottom: 0.7rem; }
+
+strong { color: var(--ink); font-weight: 600; }
+
+footer {
+    margin: 0.4rem 0 1.5rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line);
+    color: var(--ink-dim);
+    font-size: 0.85rem;
+}
+
+footer strong { color: var(--leaf); }
