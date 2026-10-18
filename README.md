@@ -65,8 +65,10 @@ and test.
   page on `127.0.0.1`, and hands that URL to the browser. Nothing is left behind:
   the copy is gone when the preview session ends (an idle sweep after about 30
   minutes), and pressing the button again re-opens the same session rather than
-  fetching a second time. A page larger than 32 MiB is refused before anything is
-  transferred, and says so.
+  fetching a second time. The page is served **offline**: it can use its own files and
+  its own inline CSS and scripts, but nothing from another host, so a page that expects
+  something from a CDN renders without it (design §12.11). A page larger than 32 MiB is
+  refused before anything is transferred, and says so.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
   permission), relay address, *Include my local address in the link*, **Storage**
   (what the object store holds, what the shares need, and a *Remove unused

@@ -922,15 +922,19 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   session is live, not only while a share is served. Nothing is persisted, so §12.13 stays
   open. Verified by fetching a real bundle on the emulator and `curl`-ing the session there
   (no browser to hand it to), then with a real browser on the C2.
-- **C4a.2 — view-only webpage links (§5.5, recipient half).** **Built and verified on the
-  emulator.** For a link carrying `p`, the Open-link page shows no *Save to* and no *Download*:
+- **C4a.2 — view-only webpage links (§5.5, recipient half).** **Built; verified on the emulator and
+  through a real browser on the C2.** For a link carrying `p`, the Open-link page shows no *Save to* and no *Download*:
   one **Open in browser**, fetching into a session-owned `MemoryStore` and opening the preview
   on the same single `KelpPreviewServer` — whose `open()` takes the store, so a session becomes
   a store plus a key, and one listener still serves shares and received pages alike. The store
   dies with the session, so nothing is left; a ceiling refuses an oversized page before fetching
   and names the workaround; `KeepAlive` is held while the session is live. Verified on the
   emulator by fetching a real page link and `curl`-ing the session (and checking the app's store
-  never grew), then with a real browser on the C2.
+  never grew), and then **from a real browser on the C2** (2026-10-18): the page came up in the
+  browser and nothing was written. The C2 pass also showed what §12.11 is about: the demo page had
+  been fetched from a site and expects Tailwind and an icon font from two CDNs, so with the
+  preview's CSP honouring the recommendation — no off-origin subresource, ever — it rendered
+  *unstyled*. Its content and its links are all there; what it wants from other hosts is not.
 - **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
   in-browser decryption of a real bundle.
@@ -1075,7 +1079,16 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    nothing is remembered for a prompt to be about; the prompt is for the day a received bundle
    is kept.)*
 11. **A page's network reach** — offline forever, enforced by the CSP in §5.1 *(recommended)*,
-   or an explicit per-preview "let this page use the internet" switch?
+   or an explicit per-preview "let this page use the internet" switch? *(2026-10-18: the first
+   real-browser pass makes the trade visible. A page saved from a website and shared as it stands
+   expects the site's own CSS and fonts — Tailwind and an icon font from two CDNs here — and
+   `default-src 'self'` refuses all of it, so the page *renders unstyled*. That is the recommended
+   answer doing its job: the recipient's device never talks to a third party the sender chose, and
+   the sender's page cannot learn that it was opened (which is what a CDN request would tell it).
+   The demo problem is better solved by sharing a self-contained page. If the switch is ever built,
+   it belongs with the sender's declaration and the recipient's consent — §5.5 already established
+   that a page share is a *kind* the sender declares and the reader can see — never silently in the
+   preview.)*
 12. **Download-all in the gateway** — a ZIP assembled in the browser (no `CompressionStream`
    guarantee in the engine; STORE + CRC32 in JS works), or per-file downloads only?
 13. **Keeping what a recipient receives** — a bundle fetched from a link is written out as
