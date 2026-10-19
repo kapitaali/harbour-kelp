@@ -1087,7 +1087,10 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    in Downloads, so deleting their cached objects costs a re-download, not the content. The walk
    is strict: a share whose manifests cannot be read fails the whole operation, because "not in
    the set" must mean "safe to delete" and an object that merely cannot be accounted for is not
-   junk. See §11 and `Kelp::bundleObjects`, `KelpBundles::storeUsage/pruneStore`.)*
+   junk. The sharded tree takes a shard directory with its last object, and the same
+   clean-up sweeps the empty shards earlier builds left; the store does not accumulate
+   empty directories. See §11 and `Kelp::bundleObjects`,
+   `KelpBundles::storeUsage/pruneStore`.)*
 8. **Background serving** — *(partly resolved, 2026-10-17.)* Two questions were
    hiding under one word.
 

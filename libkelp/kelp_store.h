@@ -22,6 +22,11 @@ public:
     virtual bool put(const QByteArray &objectBytes, QByteArray *id) = 0;
     virtual bool get(const QByteArray &id, QByteArray *objectBytes) = 0;
     virtual bool contains(const QByteArray &id) = 0;
+
+    // Housekeeping for a store that keeps objects in directories: drop any
+    // directory that no longer holds one and answer how many went. A store
+    // with no directories (memory, say) answers 0.
+    virtual int removeEmptyDirectories() { return 0; }
 };
 
 class MemoryStore : public ObjectStore

@@ -288,6 +288,12 @@ QVariantMap KelpBundles::pruneStore(const QVariantList &shares)
         freed += size;
     }
 
+    // Shards emptied by earlier builds (an object's removal used to leave its
+    // directory behind) go here, where the user already asked for a clean-up.
+    const int emptyShards = m_store->removeEmptyDirectories();
+    if (emptyShards > 0)
+        qInfo() << "KelpBundles: dropped" << emptyShards << "empty object shard(s)";
+
     qInfo() << "KelpBundles: cleaned up" << removed << "unused object(s)," << freed
             << "bytes";
 

@@ -46,6 +46,11 @@ public:
     qint64 objectSize(const QByteArray &id) const;
     bool remove(const QByteArray &id);
 
+    // Drops shard directories that hold no object. `remove` already takes the
+    // shard of its last object with it; this is for the ones left by earlier
+    // builds, and runs as part of a clean-up.
+    int removeEmptyDirectories() override;
+
 private:
     QString m_root;
 };

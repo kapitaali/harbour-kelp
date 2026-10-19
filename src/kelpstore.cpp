@@ -139,7 +139,30 @@ bool KelpObjectStore::remove(const QByteArray &id)
     const QString path = pathForId(id);
     if (path.isEmpty())
         return false;
-    return QFile::remove(path);
+    if (!QFile::remove(path))
+        return false;
+
+    // A shard that has just lost its last object would otherwise stay behind
+    // for ever: pruning a bundle leaves one empty directory per byte value it
+    // used (117 of them after one clean-up, §12.7). rmdir only succeeds when
+    // the directory really is empty, so a shard that still holds an object is
+    // left alone.
+    QDir().rmdir(QFileInfo(path).absolutePath());
+    return true;
+}
+
+int KelpObjectStore::removeEmptyDirectories()
+{
+    const QDir root(m_root);
+    const QStringList shards = root.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    int removed = 0;
+    for (int i = 0; i < shards.size(); ++i) {
+        // rmdir refuses a directory that still has anything in it, which is
+        // exactly the rule wanted: only the empty ones go.
+        if (root.rmdir(shards.at(i)))
+            ++removed;
+    }
+    return removed;
 }
 
 bool KelpFileSource::read(const QString &path, qint64 offset, qint64 length,

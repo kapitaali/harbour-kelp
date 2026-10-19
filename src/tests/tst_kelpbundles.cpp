@@ -23,6 +23,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QHostAddress>
 #include <QList>
 #include <QStandardPaths>
@@ -403,6 +404,29 @@ static void testStoreManagement()
         const QVariantMap again = bundles.pruneStore(shares);
         CHECK(again.value(QStringLiteral("ok")).toBool());
         CHECK_EQ(again.value(QStringLiteral("removed")).toInt(), 0);
+
+        // A shard that loses its last object goes with it: the store is a tree
+        // of one-directory-per-byte-value, and pruning must not leave a
+        // growing pile of empty ones behind (§12.7).
+        QDir(base + "/lone/objects").removeRecursively();
+        KelpObjectStore lone(base + "/lone/objects");
+        CHECK(lone.initialise(&error));
+        QByteArray loneId;
+        CHECK(lone.put(QByteArray("the only object in this store"), &loneId));
+        const QString loneShard = QFileInfo(lone.pathForId(loneId)).absolutePath();
+        CHECK(QDir(loneShard).exists());
+        CHECK(lone.remove(loneId));
+        CHECK(!QDir(loneShard).exists());
+
+        // A shard left empty by an older build goes on the next clean-up, not
+        // only when its last object is removed: the sweep is what makes an
+        // already-untidy store tidy again.
+        const QString staleShard = store.rootPath() + QStringLiteral("/00");
+        QDir().mkpath(staleShard);
+        CHECK(QDir(staleShard).exists());
+        const QVariantMap swept = bundles.pruneStore(shares);
+        CHECK(swept.value(QStringLiteral("ok")).toBool());
+        CHECK(!QDir(staleShard).exists());
     }
 
     section("storage: a share that cannot be read stops the clean-up");
