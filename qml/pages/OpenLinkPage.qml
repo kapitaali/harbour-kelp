@@ -492,15 +492,21 @@ Page {
                             width: parent.width
                             spacing: Theme.paddingMedium
 
+                            // The client is shared by every link, so "busy" can be
+                            // someone else's transfer. Then nothing is happening
+                            // *here*: no spinner, and no Cancel — that button
+                            // would kill a transfer this page does not own.
                             BusyIndicator {
                                 id: spinner
                                 size: BusyIndicatorSize.Small
-                                running: openPage.busy
+                                visible: kelpClient.isHandling(openPage.link)
+                                running: visible
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
                             Label {
-                                width: busyRow.width - spinner.width - busyRow.spacing
+                                width: busyRow.width
+                                       - (spinner.visible ? spinner.width + busyRow.spacing : 0)
                                 anchors.verticalCenter: parent.verticalCenter
                                 wrapMode: Text.Wrap
                                 text: !kelpClient.isHandling(openPage.link)
@@ -519,7 +525,7 @@ Page {
 
                     Button {
                         width: parent.width
-                        visible: openPage.busy
+                        visible: openPage.busy && kelpClient.isHandling(openPage.link)
                         text: qsTr("Cancel")
                         onClicked: kelpClient.cancel()
                     }
