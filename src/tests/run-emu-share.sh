@@ -41,8 +41,10 @@
 #                   as the address it advertises, then carry on as below. Also
 #                   clears any forward left over from a previous run, whose port
 #                   the restart has just invalidated.
-#   --redact        print links with the #k= fragment removed, for logs or
-#                   screenshots. The fragment is the decryption key.
+#   --redact        print links with the key fragment removed, for logs or
+#                   screenshots. That is `#k=` (the decryption key itself) and
+#                   also `#p=` (the key wrapped under a passphrase) — the second
+#                   is half a capability and must not be pasted around either.
 #   --qr DIR        also write one PNG QR code per share into DIR. These contain
 #                   the full link, key included, so they can be scanned straight
 #                   into a phone. Treat the files as secrets.
@@ -158,11 +160,11 @@ if [ "$RELAUNCH" = "1" ]; then
         echo "the app is up but serving nothing: it holds no share, or every share" >&2
         echo "is paused. Its log since the restart:" >&2
         $SSH "tail -n +$((FRESH_FROM + 1)) '$DATA_DIR/kelp.log'" 2>/dev/null \
-            | sed 's/#k=[^ ]*/#k=<redacted>/g' | tail -12 >&2
+            | sed -E 's/#[kp]=[^ ]*/#<redacted>/g' | tail -12 >&2
         exit 1
     fi
     # Address and port only; the log is still read through the same redaction.
-    printf '%s\n' "$SERVING_LINE" | sed 's/#k=[^ ]*/#k=<redacted>/g'
+    printf '%s\n' "$SERVING_LINE" | sed -E 's/#[kp]=[^ ]*/#<redacted>/g'
 fi
 
 if [ -n "$FRESH_FROM" ]; then
@@ -235,7 +237,7 @@ echo
 if [ -n "$QR_DIR" ]; then
     mkdir -p "$QR_DIR"
 fi
-echo "links (sealed by the app; #k= is the key):"
+echo "links (sealed by the app; #k= is the key, #p= the key under a passphrase):"
 printf '%s' "$LOG" | python3 -c '
 import json, os, re, sys
 shares_raw, redact, qr_dir = sys.argv[1], sys.argv[2] == "1", sys.argv[3]
@@ -254,7 +256,9 @@ for row in json.loads(shares_raw):
     if not link:
         print("%s\n  no link in the log — share it with links logging on" % name)
         continue
-    shown = re.sub(r"#k=.*$", "#k=<redacted>", link) if redact else link
+    # Both fragments are capability material: `#k=` is the key, `#p=` is the key
+    # wrapped under a passphrase. --redact takes them both off.
+    shown = re.sub(r"#[kp]=.*$", "#<redacted>", link) if redact else link
     print("%s\n  %s" % (name, shown))
     if qr_dir:
         import qrcode
