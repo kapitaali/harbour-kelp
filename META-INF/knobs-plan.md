@@ -465,11 +465,14 @@ source is created. UI: the *Protect the link* section in `AddPage`, the passphra
 Tests: libkelp 497 checks (was 420), `tst_kelpbundles` 211 (159), `tst_kelpclient` 152 (128), all
 suites green in both bundle modes.
 
-Verified on the emulator end to end: a passphrase share was minted, its link was shown to carry
-`#p=` and to name neither the address nor the label; a direct fetch of it without the passphrase was
-refused locally (no request in the publisher's log) and with the passphrase it fetched; a restart
-re-minted the same capability from the stored blob, and the same passphrase opened the new link.
-The on-device detail and the exact commands are in `PROGRESS-20261016.md` §3.29.
+Verified on the emulator end to end, with the app's own publisher and recipient (installed-QML
+hooks, never committed): the minted link carried `#p=` and no `#k=`, and `linkInfo` named neither
+the address nor the label; a fetch without the passphrase and one with a wrong passphrase were
+each refused **before the publisher was dialled** (the only tally line the publisher wrote belongs
+to the successful fetch), and with the right passphrase it fetched two files byte-identical to
+the source; a restart re-minted the link from the stored blob on a new port, and the same
+passphrase opened and fetched *that* one. The on-device detail and the exact commands are in
+`PROGRESS-20261016.md` §3.29.
 
 ---
 

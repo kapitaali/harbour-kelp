@@ -376,10 +376,18 @@ QVariantMap KelpBundles::republish(const QString &bundleId, const QString &secre
         publish(rootId, secret, name, objects, files, bytes, page, wrappedSecret);
     const QString linkText = Kelp::Link::encode(link);
 
-    qInfo() << "KelpBundles: restored" << name << "->" << objects << "objects,"
-            << files << "files," << bytes << "bytes"
-            << (wrappedSecret.isEmpty() ? QString()
-                                        : QStringLiteral("(protected by a passphrase)"));
+    // One composed line, because a streamed empty `QString()` would end every
+    // ordinary share's line in a bare "" (PROGRESS §6). The name is concatenated
+    // rather than substituted, so a share called "50%2" cannot eat a placeholder,
+    // and noquote() is what keeps QDebug from wrapping the whole line in quotes —
+    // every QString with a space in it gets quoted otherwise.
+    QString line = QStringLiteral("KelpBundles: restored \"");
+    line += name;
+    line += QStringLiteral("\" -> %1 objects, %2 files, %3 bytes")
+                .arg(objects).arg(files).arg(bytes);
+    if (!wrappedSecret.isEmpty())
+        line += QStringLiteral(" \"(protected by a passphrase)\"");
+    qInfo().noquote() << line;
 
     // A restored share mints a fresh link (its address may have changed since the
     // row was written), so the link a script reads from the log is this one, by
@@ -608,11 +616,14 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
     const QString linkText = Kelp::Link::encode(link);
 
     const QString label = page ? name + QStringLiteral(" (webpage)") : name;
-    qInfo() << "KelpBundles: sealed" << label << "->"
-            << sealed.objectCount << "objects," << sealed.fileCount << "files,"
-            << sealed.totalBytes << "bytes in" << timer.elapsed() << "ms"
-            << (wrappedSecret.isEmpty() ? QString()
-                                        : QStringLiteral("(protected by a passphrase)"));
+    QString line = QStringLiteral("KelpBundles: sealed \"");
+    line += label;
+    line += QStringLiteral("\" -> %1 objects, %2 files, %3 bytes in %4 ms")
+                .arg(sealed.objectCount).arg(sealed.fileCount)
+                .arg(sealed.totalBytes).arg(timer.elapsed());
+    if (!wrappedSecret.isEmpty())
+        line += QStringLiteral(" \"(protected by a passphrase)\"");
+    qInfo().noquote() << line;
 
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("link"), linkText);
