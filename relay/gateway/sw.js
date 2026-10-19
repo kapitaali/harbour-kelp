@@ -59,10 +59,15 @@ function serve(file) {
     // relay token, verify the bytes against the object id *before* decrypting,
     // and hand back the plaintext (it retries once when the relay says the
     // object is already in flight for another reader).
-    var fetcher = G.makeFetcher(G.base32Decode(session.bundleId), session.token,
-                               session.key, fetch);
-    return fetcher(G.base32Decode(file.id)).then(function (plain) {
-        return new Response(plain, {
+    var fetcher = G.sessionFetcher(session, fetch);
+    // A file is its chunks, in order — not its manifest, and not just its first
+    // chunk. (Serving the manifest is what a blank page looked like: the browser
+    // rendered a file manifest as HTML.)
+    return Promise.all(file.chunks.map(function (id) {
+        return fetcher(G.base32Decode(id));
+    })).then(function (parts) {
+        var body = new Blob(parts, { type: file.mime || 'application/octet-stream' });
+        return new Response(body, {
             status: 200,
             headers: {
                 'Content-Type': file.mime || 'application/octet-stream',

@@ -497,6 +497,58 @@
         return apiBase(bundleId, token) + '/object/' + base32Encode(hash);
     }
 
+    // --- the bootstrap's handover to the worker ------------------------------
+    //
+    // Both keys travel as the bytes they are. apiBase() encodes the relay token
+    // itself, so handing its base64url text across would encode it a second time
+    // and the relay would answer 401 — which is exactly what happened the first
+    // time this ran in a real browser, and the reason this is a function with a
+    // test rather than two literals at either end that have to agree.
+
+    function sessionMessage(bundleIdText, keys, entryUrl, files) {
+        return {
+            type: 'kelp-session',
+            bundleId: bundleIdText,
+            token: keys.relayToken,
+            key: keys.contentKey,
+            entry: entryUrl,
+            files: files
+        };
+    }
+
+    // The worker's side of it: one fetcher for the whole bundle, built from the
+    // session the bootstrap posted.
+    function sessionFetcher(session, doFetch) {
+        return makeFetcher(base32Decode(session.bundleId), session.token, session.key,
+                           doFetch);
+    }
+
+    // The files a worker serves: every URL in the bundle's space, each named by
+    // the object ids of its *chunks*, in order. A file's own address is its
+    // manifest's address, and a manifest is not the file — handing that to the
+    // worker made every page serve its own manifest as HTML, which is the second
+    // bug the emulator found. Chunks in order also mean a file longer than one
+    // chunk arrives whole.
+    function pageFiles(files, webRoot) {
+        var space = urlSpace(files, webRoot);
+        var out = {};
+        Object.keys(space).forEach(function (url) {
+            var file = space[url];
+            out[url] = {
+                chunks: file.chunks.map(base32Encode),
+                mime: mimeFor(file),
+                size: file.size
+            };
+        });
+        return out;
+    }
+
+    function pageSession(bundleIdText, keys, tree, entry) {
+        var webRoot = webRootOf(entry);
+        return sessionMessage(bundleIdText, keys, entry.path.slice(webRoot.length),
+                              pageFiles(tree.files, webRoot));
+    }
+
     // `doFetch` is passed in rather than reached for, so the Node tests can drive
     // the walk from a fixture with no network, and the browser code is honest
     // about its one input.
@@ -568,6 +620,10 @@
         isHtml: isHtml,
         apiBase: apiBase,
         objectUrl: objectUrl,
+        sessionMessage: sessionMessage,
+        sessionFetcher: sessionFetcher,
+        pageFiles: pageFiles,
+        pageSession: pageSession,
         makeFetcher: makeFetcher,
         prepare: prepare,
         fullTree: fullTree,

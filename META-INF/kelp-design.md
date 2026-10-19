@@ -523,6 +523,16 @@ URL space (§5.3), so relative URLs, `fetch` and XHR work as the sender wrote th
 sketch still gets right and the build keeps: the relay sees ciphertext only, the key never leaves
 the fragment, and a relay that lies about an object is caught by the id check before decryption.
 
+*Built (2026-10-19, in a real browser on the emulator) — `PROGRESS-<date>.md` §3.36.* The one
+seam those tests could not see is what the bootstrap hands the worker, and the first run in an
+actual browser found both halves of it wrong: the relay token crossed as base64url text (so the
+worker encoded it a second time and every object was a 401), and each file was named by its
+manifest's address (so the worker served the manifest as the page, and a blank page was the
+result; a multi-chunk file would have been truncated). The handover is now one function in the
+core — `pageSession()` — rather than two agreeing literals: both keys cross as the bytes they are,
+and every URL in the bundle's space is named by its **chunks, in order**, which the worker
+concatenates exactly as the file list download does.
+
 ### 5.3 Which file is the page — the shared convention
 
 Both routes need one answer, and it is deliberately not a new wire field:
@@ -978,7 +988,9 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   *unstyled*. Its content and its links are all there; what it wants from other hosts is not.
 - **C4b** — Relay gateway (§5.2): the decrypting loader, the relay's `/b/<bundle-id>` route,
   ALPN `http/1.1` beside `kelp/1`, a browser-acceptable certificate, and verified
-  in-browser decryption of a real bundle.
+  in-browser decryption of a real bundle. **Built and opened in the emulator's own browser**
+  (2026-10-19, §3.35–3.36); the deployment half — a domain and a browser-trusted certificate —
+  is still open.
 - **C5** — UI integration (pages/cover/settings), encryption UX, passphrase links.
 - **C5.1 — share kinds (§5.5, publisher half).** **Built and verified on the emulator.** The
   main-page button is **Share…**; the page it opens carries three actions — *Share file*, *Share

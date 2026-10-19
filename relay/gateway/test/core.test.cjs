@@ -47,6 +47,17 @@ function hex(bytes) {
     return Buffer.from(bytes).toString('hex');
 }
 
+function join(parts) {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const whole = new Uint8Array(total);
+    let at = 0;
+    parts.forEach((part) => {
+        whole.set(part, at);
+        at += part.length;
+    });
+    return whole;
+}
+
 // What the browser's `fetch` would do, answered out of the fixture: the URL
 // shape is the relay's own, so the JavaScript builds and parses the real thing.
 function shim(bundle, options) {
@@ -248,6 +259,61 @@ async function run() {
         check(where + 'the info URL is the relay\'s',
               G.apiBase(rootId, keys.relayToken) ===
                   '/v1/relay/' + bundle.token + '/bundle/' + bundle.bundle);
+
+        // 11. The handover from the bootstrap to the worker — the two bugs a real
+        //     browser found. Both keys must cross as bytes: the URL builder
+        //     encodes the token itself, so base64url text here was one encoding
+        //     too many and the relay answered 401. And every file must be named
+        //     by its chunks, in order: naming it by its manifest (file.hash)
+        //     served the manifest as the page, which rendered blank.
+        if (entry) {
+            const session = G.pageSession(bundle.bundle, keys, tree, entry);
+            check(where + 'the session carries the relay token as bytes',
+                  session.token instanceof Uint8Array && session.token.length === 32,
+                  'token is a ' + (session.token && session.token.constructor
+                      ? session.token.constructor.name : typeof session.token));
+            check(where + 'the session carries the content key as bytes',
+                  session.key instanceof Uint8Array && session.key.length === 32);
+
+            const webRoot = G.webRootOf(entry);
+            const sessionFile = session.files[session.entry];
+            const entryFile = tree.files.find((file) => file.path === entry.path);
+            check(where + 'the entry is named by its chunks, not its manifest',
+                  sessionFile && sameNames(sessionFile.chunks,
+                                           entryFile.chunks.map(G.base32Encode))
+                      && sessionFile.chunks.indexOf(G.base32Encode(entryFile.hash)) < 0,
+                  sessionFile ? sessionFile.chunks.join(',') : '(no entry file)');
+
+            // Serve every URL the way sw.js does: all chunks, in order, then the
+            // digest libkelp computed over the plaintext it sealed.
+            let sessionAgrees = true;
+            for (const url of Object.keys(session.files)) {
+                const file = session.files[url];
+                const want = bundle.files.find((candidate) => candidate.path === webRoot + url);
+                const workerShim = shim(bundle);
+                const fetcher = G.sessionFetcher(session, workerShim.doFetch);
+                const parts = await Promise.all(file.chunks.map(
+                    (id) => fetcher(G.base32Decode(id))));
+                const digest = G.base64UrlEncode(await G.sha256(join(parts)));
+                if (!want || digest !== want.sha256) {
+                    sessionAgrees = false;
+                    console.log('       ' + url + ': ' + digest + ' != ' +
+                                (want ? want.sha256 : '(no such file)'));
+                }
+            }
+            check(where + 'a page\'s files are served as their whole content',
+                  sessionAgrees);
+
+            // The URL a worker builds is the URL the loader built: one token.
+            const workerShim = shim(bundle);
+            const chunk = G.base32Decode(session.files[session.entry].chunks[0]);
+            await G.sessionFetcher(session, workerShim.doFetch)(chunk);
+            check(where + 'a worker fetch puts the token in the URL once',
+                  workerShim.asked.length === 1
+                      && workerShim.asked[0].url === G.objectUrl(rootId, keys.relayToken, chunk)
+                      && workerShim.asked[0].token === bundle.token,
+                  workerShim.asked.length ? workerShim.asked[0].url : '(no fetch happened)');
+        }
     }
 
     // 11. The byte-level helpers, which everything above rests on.

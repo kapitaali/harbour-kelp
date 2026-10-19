@@ -158,31 +158,13 @@
             return;
         }
 
-        var webRoot = G.webRootOf(entry);
-        var space = G.urlSpace(tree.files, webRoot);
-        var files = {};
-        Object.keys(space).forEach(function (url) {
-            var file = space[url];
-            files[url] = {
-                id: G.base32Encode(file.hash),
-                mime: G.mimeFor(file),
-                size: file.size
-            };
-        });
-        var entryUrl = entry.path.slice(webRoot.length);
+        var session = G.pageSession(bundleIdText, keys, tree, entry);
 
         setStatus('Preparing the page', 'busy');
         return navigator.serviceWorker.register('.kelp/sw.js', { scope: prefix })
             .then(function (registration) { return navigator.serviceWorker.ready; })
             .then(function (registration) {
-                registration.active.postMessage({
-                    type: 'kelp-session',
-                    bundleId: bundleIdText,
-                    token: G.base64UrlEncode(keys.relayToken),
-                    key: keys.contentKey,
-                    entry: entryUrl,
-                    files: files
-                });
+                registration.active.postMessage(session);
                 if (navigator.serviceWorker.controller) {
                     location.reload();
                     return new Promise(function () {});   // the reload replaces us

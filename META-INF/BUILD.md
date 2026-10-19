@@ -142,13 +142,22 @@ needs `sfdk` *and* `node`, and is run from the host, not inside `build-shell`:
 
 ```sh
 sh relay/gateway/test/run-gateway-test.sh
-# ALL PASS (61 checks)
+# ALL PASS (71 checks)
 ```
 
 The point of the seam is that one format is read in two languages: the JavaScript must
 reach the same answers as `libkelp/kelp_web.cpp` and `Kelp::Object::open`, or a recipient's
 browser would disagree with the app about a link they were both handed. The fixture is a
 build artifact (`.build/fixture.json`, gitignored), and its secret is synthetic.
+
+The last group of checks is the bootstrap→worker handover, and it exists because the unit
+tests alone missed two bugs that a real browser found (PROGRESS §3.36): the relay token
+must cross to the worker as 32 raw bytes (the URL builder encodes it itself, so base64url
+text there is one encoding too many and every object is a 401), and each URL must be named
+by its file's **chunks, in order** — naming it by the file manifest's address (`file.hash`)
+serves the manifest as the page, which renders blank and truncates anything multi-chunk.
+`pageSession()`/`sessionFetcher()` are the only way that message is built, so the two ends
+cannot drift apart again without a test failing.
 
 **Run the suites in both bundle modes.** Two of them check a default that
 follows the build, so a run only covers one side of it:
