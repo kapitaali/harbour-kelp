@@ -33,8 +33,10 @@
 #                              [--qr DIR] [--fetch]
 #
 #   --host ADDRESS  an address recipients can reach THIS machine on. Defaults to
-#                   the host's primary LAN IPv4. It has to match the
-#                   KELP_ADVERTISE_HOST the app was launched with.
+#                   the host's primary LAN IPv4 (the default route's), and says
+#                   so when the host has more than one — a phone on its own
+#                   hotspot often needs --host <the other one>. It has to match
+#                   the KELP_ADVERTISE_HOST the app was launched with.
 #   --relaunch      stop the app in the guest and start it again with this host
 #                   as the address it advertises, then carry on as below. Also
 #                   clears any forward left over from a previous run, whose port
@@ -83,6 +85,21 @@ if [ -z "$HOST" ]; then
     HOST="$(ip -4 route get 1.1.1.1 2>/dev/null \
             | sed -n 's/.* src \([0-9][0-9.]*\).*/\1/p' | head -1)"
     [ -n "$HOST" ] || { echo "cannot work out this host's address; pass --host" >&2; exit 1; }
+
+    # The default route is only one guess. A recipient can be on another of
+    # this host's networks (the phone's own hotspot, say), and a forward bound
+    # to the wrong one answers nothing — so name the alternatives rather than
+    # leave the link looking broken. Bridges and the docker/vbox nets are not
+    # candidates for a recipient.
+    OTHERS="$(ip -4 -o addr show up 2>/dev/null \
+              | awk -v h="$HOST" '$2 !~ /^(docker|br-|vbox|virbr|lo)/ {
+                    a = $4; sub(/\/.*/, "", a); if (a != h) print a }' \
+              | tr '\n' ' ')"
+    if [ -n "$OTHERS" ]; then
+        echo "note: this host also answers on ${OTHERS% }" >&2
+        echo "      advertising $HOST (the default route); if the recipient is on" >&2
+        echo "      one of the others, pass --host <address>." >&2
+    fi
 fi
 
 # --relaunch: the two halves of the recipe above, done here. The app is stopped
