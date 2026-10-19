@@ -151,6 +151,26 @@ emulator link reachable at all from another device — and `kelp-probe.py` fetch
 link the way a recipient would without printing its key. Both are documented in
 `PROGRESS-<date>.md` §4.5.
 
+`run-qml-smoke.sh` covers what the suites cannot: a page is compiled only when
+it is pushed, so a page that assigns a property its Silica type does not have —
+Sailfish's `TextField` has no `accepted` signal, which is how §3.30 shipped —
+starts the app fine and only shows *Could not load page* when a person taps the
+menu. The script appends a temporary timer to the tree's `harbour-kelp.qml`,
+installs it over the guest's copy, restarts the app, compiles every `.qml` under
+`qml/` (the list comes from the tree), restores the installed file, and proves
+its md5 is the tree's again:
+
+```sh
+src/tests/run-qml-smoke.sh
+# QML smoke: 9/9 pages Component.Ready
+# installed harbour-kelp.qml restored to the tree (62cd959a08dad869233d21400b03fc2a)
+```
+
+It restarts the app, so re-run `run-emu-share.sh --relaunch` afterwards when you
+need a reachable link. It checks the *installed* pages, so install the build
+first. Negative control run: re-adding `onAccepted` to the installed
+`OpenLinkPage.qml` makes it exit 1 and name the file, line and error.
+
 That reachability only holds for the app instance the script started. Start Kelp from the
 guest's own app grid instead — or restart it, or install a package — and it goes back to
 advertising the guest's `10.0.2.15`, so its links read `10.0.2.15:<port>` and nothing
