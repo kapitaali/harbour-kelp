@@ -342,7 +342,9 @@ Page {
                     inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
                     text: openPage.passphrase
                     onTextChanged: openPage.passphrase = text
-                    onAccepted: openPage.unlockNow()
+                    // Sailfish's TextField has no "accepted" signal, so there is
+                    // no return-key submit to hook; the Unlock button below is
+                    // the way in.
                 }
 
                 Button {
