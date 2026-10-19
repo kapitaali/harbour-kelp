@@ -130,7 +130,25 @@ sfdk -c target=SailfishOS-5.1.0.11-i486 build-shell sh "$PWD/src/tests/run-all-t
 | `src/tests/run-kelpbundles-test.sh` | seal, webpage shares (`page` in the row and `p` in the link), passphrase shares (`#p=` in the link, `passBlob` in the row, restores and the 8-character floor), the local-address gate, the link-log gate, storage management (including a shard going with its last object and the empty-shard sweep), pause/resume, the preview seam | 219 |
 | `src/tests/run-kelppreview-test.sh` | the §5.3 page convention, path → objects, the URL space (`404` vs `503`), `Range`/`HEAD`, the security headers, an expiring session and `has()` for a caller that kept a URL, the 404 body that says the link can be opened again | 206 |
 | `src/tests/run-kelpclient-test.sh` | receiving a link: a view writes nothing (the app store is byte-identical before and after), the page ceiling from `/info` and while storing, a link whose bundle has no page, the save path, a passphrase link refused without (and with the wrong) passphrase before the publisher is dialled, that a second view does not free the first session's store, that a swept session is re-minted rather than handed out dead, and that a finished fetch knows which link it belongs to | 152 |
-| `relay/test/run-relay-test.sh` | the relay end to end, publisher and recipient both played | 6 cases |
+| `relay/test/run-relay-test.sh` | the relay end to end, publisher and recipient both played, plus 11 browser-shaped cases over ALPN `http/1.1` from `openssl s_client` against the same port: the `/b/<id>` redirect, the loader and its two scripts, the worker's scope header, 404s for a malformed bundle id and for a bundle's own file, `/info` and an object fetched through the *derived* relay token, a wrong token refused, the relay's own `ALPN "http/1.1"` line, and two requests on one kept-alive connection | 6 + 11 cases |
+
+**The gateway's JavaScript is a suite too, and it runs on the host.** Its half is
+JavaScript, so it cannot run in the build engine; and its fixture must be real seals, so
+that half cannot run in Node. `run-gateway-test.sh` therefore does both: it builds and runs
+`relay/gateway/test/makefixture` inside the engine (three bundles sealed by libkelp, with
+libkelp's own answers — the entry document, the web root, the MIME types, the relay token —
+recorded beside them), then runs `node relay/gateway/test/core.test.cjs` on the host. It
+needs `sfdk` *and* `node`, and is run from the host, not inside `build-shell`:
+
+```sh
+sh relay/gateway/test/run-gateway-test.sh
+# ALL PASS (61 checks)
+```
+
+The point of the seam is that one format is read in two languages: the JavaScript must
+reach the same answers as `libkelp/kelp_web.cpp` and `Kelp::Object::open`, or a recipient's
+browser would disagree with the app about a link they were both handed. The fixture is a
+build artifact (`.build/fixture.json`, gitignored), and its secret is synthetic.
 
 **Run the suites in both bundle modes.** Two of them check a default that
 follows the build, so a run only covers one side of it:

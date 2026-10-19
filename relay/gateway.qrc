@@ -1,0 +1,15 @@
+<!--
+  The gateway's own files, compiled into the relay (design §5.2, C4b-plan.md).
+
+  Embedded rather than read from disk so a relay binary is one file and serves
+  the same loader wherever it is run. The paths the relay answers with are
+  /b/<bundle-id>/ (loader.html) and /b/<bundle-id>/.kelp/{core,page,sw}.js.
+-->
+<RCC>
+  <qresource prefix="/kelp/gateway">
+    <file alias="loader.html">gateway/loader.html</file>
+    <file alias="core.js">gateway/core.js</file>
+    <file alias="page.js">gateway/page.js</file>
+    <file alias="sw.js">gateway/sw.js</file>
+  </qresource>
+</RCC>

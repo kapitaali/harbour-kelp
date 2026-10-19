@@ -510,6 +510,19 @@ self-signed certificate the app clicks through (§11, C3.1) is not enough. That 
 a C4b detail: the relay must accept ALPN `http/1.1` beside `kelp/1`, since a browser
 negotiates the former.
 
+*Built (first slice, 2026-10-19) — `META-INF/C4b-plan.md`, `PROGRESS-<date>.md` §3.35.* Three
+decisions there are worth carrying back into this sketch. **The loader is not an object**: it is
+the relay's own four files, served from a small path space of its own (`/b/<id>/` and
+`/b/<id>/.kelp/{core,page,sw}.js`), because the page has to exist before any key-derived thing
+can be fetched. **The browser presents the relay token**, not a token-less path: the fragment
+holds the secret, WebCrypto derives `relay_token` from it exactly as the app does, and every
+object fetch goes through C3's existing token-gated endpoints — so the gateway adds no data path,
+and object ids stay as unguessable-over-the-network as they are for the app. And **the page is
+served through a service worker**, not by rewriting URLs: a worker answers in the bundle's own
+URL space (§5.3), so relative URLs, `fetch` and XHR work as the sender wrote them. What the
+sketch still gets right and the build keeps: the relay sees ciphertext only, the key never leaves
+the fragment, and a relay that lies about an object is caught by the id check before decryption.
+
 ### 5.3 Which file is the page — the shared convention
 
 Both routes need one answer, and it is deliberately not a new wire field:

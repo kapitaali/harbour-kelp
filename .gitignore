@@ -20,6 +20,10 @@ RPMS/
 # The relay's self-signed test certificate is generated on demand, not committed.
 /relay/test/certs/
 
+# The gateway's (C4b) fixture writer builds in place, and the fixture it mints is
+# a sealed test bundle, not a source file.
+/relay/gateway/test/.build/
+
 # The app-layer test harness (src/tests/*.pro) also builds out of source.
 /src/tests/.build/
 

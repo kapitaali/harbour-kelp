@@ -22,17 +22,37 @@ const unsigned char kAlpnWire[] = { 6, 'k', 'e', 'l', 'p', '/', '1' };
 // How much of a record we are willing to move in one call.
 const int kTransferChunk = 16 * 1024;
 
-// The relay is chosen by ALPN, so a peer that does not offer "kelp/1" is not a
-// Kelp peer — refuse the connection rather than negotiate something else.
+// The relay is chosen by ALPN, so a peer that does not offer a protocol this
+// side accepts is not a peer of ours — refuse the connection rather than
+// negotiate something else. A relay accepts "kelp/1" for tunnels and peers and
+// "http/1.1" so a browser can open the gateway (design §5.2, C4b). The offer is
+// the QByteArray the connection owns, passed as the callback's own argument.
 int alpnSelect(SSL *, const unsigned char **out, unsigned char *outlen,
-               const unsigned char *in, unsigned int inlen, void *)
+               const unsigned char *in, unsigned int inlen, void *arg)
 {
+    const QByteArray *offer = static_cast<const QByteArray *>(arg);
     const int result = SSL_select_next_proto(
         const_cast<unsigned char **>(out), outlen,
-        kAlpnWire, int(sizeof(kAlpnWire)), in, inlen);
+        reinterpret_cast<const unsigned char *>(offer->constData()),
+        static_cast<unsigned int>(offer->size()), in, inlen);
     if (result == OPENSSL_NPN_NEGOTIATED)
         return SSL_TLSEXT_ERR_OK;
     return SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+// The wire form of a protocol list, or an empty array if any entry is unusable
+// (empty, longer than a length byte can say, or not ASCII).
+QByteArray alpnWire(const QStringList &protocols)
+{
+    QByteArray wire;
+    for (int i = 0; i < protocols.size(); ++i) {
+        const QByteArray bytes = protocols.at(i).toLatin1();
+        if (bytes.isEmpty() || bytes.size() > 255)
+            return QByteArray();
+        wire.append(char(bytes.size()));
+        wire.append(bytes);
+    }
+    return wire;
 }
 
 } // namespace
@@ -50,6 +70,31 @@ KelpTls::KelpTls(QObject *parent)
       m_closedNotified(false),
       m_failed(false)
 {
+    // The one protocol the protocol family is pinned to. A server may add to
+    // this list before start(); a client never does.
+    m_alpnProtocols << QString::fromLatin1(kAlpnName);
+    m_alpnWire = alpnWire(m_alpnProtocols);
+}
+
+void KelpTls::setAlpnProtocols(const QStringList &protocols)
+{
+    if (m_ssl) {
+        qWarning() << "KelpTls: setAlpnProtocols after start() is ignored";
+        return;
+    }
+    if (protocols.isEmpty()) {
+        qWarning() << "KelpTls: an empty ALPN list is refused; keeping"
+                   << m_alpnProtocols;
+        return;
+    }
+    const QByteArray wire = alpnWire(protocols);
+    if (wire.isEmpty()) {
+        qWarning() << "KelpTls: unusable ALPN protocol in" << protocols
+                   << "; keeping" << m_alpnProtocols;
+        return;
+    }
+    m_alpnProtocols = protocols;
+    m_alpnWire = wire;
 }
 
 KelpTls::~KelpTls()
@@ -125,7 +170,7 @@ bool KelpTls::start(Mode mode, QTcpSocket *socket, QString *error)
     SSL_CTX_set_verify(m_ctx, SSL_VERIFY_NONE, nullptr);
 
     if (mode == Server) {
-        SSL_CTX_set_alpn_select_cb(m_ctx, alpnSelect, nullptr);
+        SSL_CTX_set_alpn_select_cb(m_ctx, alpnSelect, &m_alpnWire);
 
         if (m_certificatePem.isEmpty() || m_keyPem.isEmpty()) {
             *error = QStringLiteral("the server needs a certificate and key before it starts");
@@ -342,10 +387,17 @@ void KelpTls::pump()
             ? QString::fromLatin1(reinterpret_cast<const char *>(protocol), int(length))
             : QString();
 
-        if (m_alpn != QLatin1String(kAlpnName)) {
+        // A client only ever offered "kelp/1", so that is what it must get. A
+        // server accepts whatever it listed: the relay lists "kelp/1" and
+        // "http/1.1", and which one was chosen is the caller's business.
+        const bool acceptable = m_mode == Client
+            ? m_alpn == QLatin1String(kAlpnName)
+            : m_alpnProtocols.contains(m_alpn);
+        if (!acceptable) {
             fail(m_alpn.isEmpty()
-                 ? QStringLiteral("the peer did not negotiate ALPN \"kelp/1\"")
-                 : QStringLiteral("the peer negotiated ALPN \"%1\", not \"kelp/1\"").arg(m_alpn));
+                 ? QStringLiteral("the peer did not negotiate a protocol this side accepts")
+                 : QStringLiteral("the peer negotiated ALPN \"%1\", which this side "
+                                  "does not accept").arg(m_alpn));
             return;
         }
 

@@ -22,4 +22,8 @@ HEADERS += \
     relay.h \
     ../src/kelptls.h
 
+# The browser gateway's own files (design §5.2, C4b-plan.md): a loader page, its
+# core, and a service worker, served under /b/<bundle-id>/.
+RESOURCES += gateway.qrc
+
 LIBS += -lssl -lcrypto

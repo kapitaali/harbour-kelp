@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 QT_BEGIN_NAMESPACE
 class QTcpSocket;
@@ -55,6 +56,14 @@ public:
     bool setCertificate(const QByteArray &certificatePem, const QByteArray &keyPem,
                         QString *error);
 
+    // Server side, before start(): which ALPN protocols to accept, most
+    // preferred first. Defaults to "kelp/1" alone. A relay that also serves
+    // browsers lists "http/1.1" here (design §5.2, C4b) — a browser does not
+    // speak "kelp/1", and a page that never loads is not a gateway. The client
+    // end offers, and still requires, "kelp/1": nothing about the tunnel's
+    // guarantee changes.
+    void setAlpnProtocols(const QStringList &protocols);
+
     // Takes over an already-connected (Client) or already-accepted (Server)
     // socket. The socket must outlive this object. Returns false only when the
     // session cannot even be set up; a handshake that fails later arrives as the
@@ -101,6 +110,8 @@ private:
     QTcpSocket *m_socket;
     ssl_ctx_st *m_ctx;
     ssl_st *m_ssl;
+    QStringList m_alpnProtocols;   // server: what to accept; client: "kelp/1"
+    QByteArray m_alpnWire;         // the same list, in ALPN wire form
     bio_st *m_rbio;              // owned by m_ssl once SSL_set_bio has been called
     bio_st *m_wbio;
 

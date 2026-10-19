@@ -36,7 +36,13 @@ class QTimer;
  * substitute one: the recipient verifies every object against its id, so a
  * lying relay produces a failed download, not a wrong file.
  *
- * A browser/gateway that cannot do ALPN is future work (C4).
+ * It is also a gateway for a recipient with no app at all (design §5.2): the
+ * same port and the same token-gated object paths, plus a loader page served
+ * under /b/<bundle-id>/ that a browser opens. The loader derives the relay token
+ * from the link's fragment itself (WebCrypto HKDF), so the gateway needs no data
+ * path of its own and the relay still sees ciphertext only. A browser speaks
+ * ALPN "http/1.1", so the ALPN list here is "kelp/1" and "http/1.1"; a tunnel
+ * still has to negotiate "kelp/1".
  */
 class Relay : public QObject
 {
@@ -66,8 +72,10 @@ private:
         QByteArray buffer;              // only until the role is decided / request is whole
         Kelp::Wire::FrameReader reader; // tunnels only
         bool busy;                      // recipient: a request is being served
+        bool closeAfter;                // recipient: this answer ends the connection
 
-        Connection() : socket(nullptr), tls(nullptr), role(Unknown), busy(false) {}
+        Connection() : socket(nullptr), tls(nullptr), role(Unknown), busy(false),
+                       closeAfter(false) {}
     };
 
     struct Bundle {
@@ -92,14 +100,16 @@ private:
     void onData(Connection *connection);
     void decide(Connection *connection);
     void feedReader(Connection *connection, const QByteArray &data);
-    void tryRequest(Connection *connection);
 
     void onTunnelFrame(Connection *connection, quint8 type, const QByteArray &payload);
     void dropTunnel(Connection *connection);
 
     void handleRequest(Connection *connection, const QByteArray &request);
+    void handleGatewayRequest(Connection *connection, const QString &path);
+    bool tryRequest(Connection *connection);
     void respond(Connection *connection, int status, const char *reason,
-                 const char *contentType, const QByteArray &body);
+                 const char *contentType, const QByteArray &body,
+                 const QByteArray &extraHeaders = QByteArray());
     void answerPending(const QByteArray &objectId, const QByteArray &bytes, bool found);
     void retire(Connection *connection);
 
@@ -107,6 +117,12 @@ private:
     QTimer *m_sweeper;
     QByteArray m_certificatePem;
     QByteArray m_keyPem;
+
+    // The gateway's own files, from the qrc (relay/gateway.qrc).
+    QByteArray m_loaderHtml;
+    QByteArray m_coreJs;
+    QByteArray m_pageJs;
+    QByteArray m_swJs;
 
     QList<Connection *> m_connections;
     QHash<QByteArray, Bundle> m_bundles;              // bundle_id -> bundle

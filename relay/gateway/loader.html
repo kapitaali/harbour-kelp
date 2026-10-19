@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<!--
+  The gateway's bootstrap page — design §5.2, C4b-plan.md.
+
+  Served by the relay for /b/<bundle-id>/ and by nothing else. It holds no key
+  and no secret: the key is the part of the URL after "#", which no browser ever
+  sends to a server. Everything below is done here, in the reader's browser.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kelp</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem 1.25rem 3rem;
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #10161c; color: #e6edf3;
+  }
+  main { max-width: 44rem; margin: 0 auto; }
+  h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; margin: 0 0 .25rem; }
+  h1 span { color: #4fd1c5; }
+  #status { color: #9fb0bf; margin: .25rem 0 1.25rem; min-height: 1.5em; }
+  #status.error { color: #ff9a9a; }
+  #status.busy::after { content: "…"; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    display: flex; align-items: baseline; gap: .75rem;
+    padding: .6rem .25rem; border-bottom: 1px solid #1d2833;
+  }
+  li .name { flex: 1 1 auto; word-break: break-all; }
+  li .size { color: #7d8f9e; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  button {
+    font: inherit; color: #10161c; background: #4fd1c5; border: 0;
+    border-radius: .35rem; padding: .3rem .7rem; cursor: pointer;
+  }
+  button[disabled] { opacity: .5; cursor: default; }
+  footer {
+    max-width: 44rem; margin: 2.5rem auto 0;
+    color: #7d8f9e; font-size: .82rem;
+  }
+  a { color: #7fb7e8; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span>Kelp</span></h1>
+  <p id="status" class="busy">Reading the link</p>
+  <ul id="files"></ul>
+</main>
+<footer>
+  <p>
+    This page came from the relay, not from the sender's device. The relay carries
+    only encrypted bytes and cannot read them, but a malicious relay could hand you
+    this page itself. For a link from someone you trust, the
+    <strong>Kelp app</strong> is the safer way in.
+  </p>
+</footer>
+<script src=".kelp/core.js"></script>
+<script src=".kelp/page.js"></script>
+</body>
+</html>

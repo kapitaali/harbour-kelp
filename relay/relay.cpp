@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QFile>
 #include <QHostAddress>
 #include <QStringList>
 #include <QTcpServer>
@@ -20,6 +21,18 @@ const qint64 kPendingTimeoutMs = 20000;
 
 // A request line plus headers; anything longer is not a request we will read.
 const int kMaxRequestBytes = 8 * 1024;
+
+// The gateway's files are compiled into the binary (relay/gateway.qrc) so a
+// relay is one file and serves the same loader wherever it runs.
+QByteArray readResource(const char *path)
+{
+    QFile file(QString::fromLatin1(path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "Relay: cannot read" << path << "from the compiled-in resources";
+        return QByteArray();
+    }
+    return file.readAll();
+}
 
 bool constantTimeEquals(const QByteArray &a, const QByteArray &b)
 {
@@ -48,6 +61,12 @@ Relay::Relay(QObject *parent)
       m_sweeper(new QTimer(this))
 {
     connect(m_server, &QTcpServer::newConnection, this, &Relay::onConnection);
+
+    // The gateway's own files (design §5.2, C4b-plan.md).
+    m_loaderHtml = readResource(":/kelp/gateway/loader.html");
+    m_coreJs = readResource(":/kelp/gateway/core.js");
+    m_pageJs = readResource(":/kelp/gateway/page.js");
+    m_swJs = readResource(":/kelp/gateway/sw.js");
 
     m_sweeper->setInterval(5000);
     connect(m_sweeper, &QTimer::timeout, this, &Relay::sweep);
@@ -94,6 +113,14 @@ void Relay::setup(QTcpSocket *socket)
     connection->tls = new KelpTls(this);
     m_connections.append(connection);
 
+    // A browser opens the gateway over this same port and speaks "http/1.1",
+    // not "kelp/1" — a page that never loads is not a gateway. A publisher or
+    // recipient tunnel still has to negotiate "kelp/1"; the role decision in
+    // decide() is what keeps the two apart.
+    connection->tls->setAlpnProtocols(QStringList()
+                                      << QStringLiteral("kelp/1")
+                                      << QStringLiteral("http/1.1"));
+
     QString error;
     if (!connection->tls->setCertificate(m_certificatePem, m_keyPem, &error)
         || !connection->tls->start(KelpTls::Server, socket, &error)) {
@@ -131,7 +158,12 @@ void Relay::onData(Connection *connection)
         return;
     }
     connection->buffer += incoming;
-    tryRequest(connection);
+    // One connection may carry several requests — a browser reuses it, and a
+    // client may have sent the next one already — so serve every whole one. A
+    // request that has to ask the origin sets busy, which stops the loop until
+    // the answer arrives.
+    while (!connection->busy && tryRequest(connection)) {
+    }
 }
 
 void Relay::decide(Connection *connection)
@@ -142,7 +174,8 @@ void Relay::decide(Connection *connection)
     if (looksLikeHttp(connection->buffer.at(0))) {
         connection->role = Recipient;
         qInfo() << "Relay: recipient connected";
-        tryRequest(connection);
+        while (!connection->busy && tryRequest(connection)) {
+        }
         return;
     }
 
@@ -167,22 +200,23 @@ void Relay::feedReader(Connection *connection, const QByteArray &data)
     }
 }
 
-void Relay::tryRequest(Connection *connection)
+bool Relay::tryRequest(Connection *connection)
 {
-    if (connection->busy)
-        return;
+    if (connection->busy || connection->closeAfter)
+        return false;
 
     const int end = connection->buffer.indexOf("\r\n\r\n");
     if (end < 0) {
         if (connection->buffer.size() > kMaxRequestBytes)
             respond(connection, 400, "Bad Request", "text/plain; charset=utf-8",
                     QByteArrayLiteral("request headers too large\n"));
-        return;
+        return false;
     }
 
     const QByteArray request = connection->buffer.left(end);
     connection->buffer.remove(0, end + 4);
     handleRequest(connection, request);
+    return true;
 }
 
 void Relay::handleRequest(Connection *connection, const QByteArray &request)
@@ -196,7 +230,37 @@ void Relay::handleRequest(Connection *connection, const QByteArray &request)
         return;
     }
 
-    const QString path = QString::fromUtf8(requestLine.at(1).trimmed());
+    // Who wants the connection kept open. A browser speaking HTTP/1.1 does unless
+    // it says otherwise; an HTTP/1.0 client does not unless it says so. Either
+    // way the answer says which, and the connection ends when it said it would —
+    // so a client that waits for the end of the response is not left waiting.
+    const bool http11 = requestLine.value(2).trimmed() == QByteArrayLiteral("HTTP/1.1");
+    bool keepAlive = http11;
+    for (int i = 1; i < lines.size(); ++i) {
+        const QByteArray line = lines.at(i).trimmed();
+        const int colon = line.indexOf(':');
+        if (colon <= 0)
+            continue;
+        if (line.left(colon).trimmed().toLower() != QByteArrayLiteral("connection"))
+            continue;
+        keepAlive = line.mid(colon + 1).trimmed().toLower()
+                        .contains(QByteArrayLiteral("keep-alive"));
+    }
+    connection->closeAfter = !keepAlive;
+
+    QString path = QString::fromUtf8(requestLine.at(1).trimmed());
+    const int query = path.indexOf(QLatin1Char('?'));
+    if (query >= 0)
+        path.truncate(query);
+
+    // The gateway a browser opens (design §5.2): its own small path space under
+    // /b/, and nothing else. Every bundle object still travels the token-gated
+    // /v1/relay/ paths below, which the loader derives the token for itself.
+    if (path == QLatin1String("/b") || path.startsWith(QLatin1String("/b/"))) {
+        handleGatewayRequest(connection, path);
+        return;
+    }
+
     const QStringList segments = path.split(QLatin1Char('/'), QString::SkipEmptyParts);
     // /v1/relay/<token>/bundle/<bundle_id>/<info|object/<object_id>>
     if (segments.size() < 6 || segments.at(0) != QLatin1String("v1")
@@ -272,6 +336,77 @@ void Relay::handleRequest(Connection *connection, const QByteArray &request)
 
     respond(connection, 404, "Not Found", "text/plain; charset=utf-8",
             QByteArrayLiteral("no such endpoint\n"));
+}
+
+// The gateway a browser with no app opens: design §5.2. This is the loader page
+// and the two scripts it needs, and nothing else. Nothing here is secret — the
+// key is in the fragment, which no browser sends — and nothing here says whether
+// a bundle exists: the page is public, its objects are not.
+//
+// The bundle's own files are never served here. The page's URL space is the
+// bundle's path space (§5.3), and it is the *service worker in the reader's
+// browser* that answers for it, decrypting what the token-gated paths below
+// hand it.
+void Relay::handleGatewayRequest(Connection *connection, const QString &path)
+{
+    const QString bundleId = path.section(QLatin1Char('/'), 2, 2);
+    QByteArray id;
+    QString error;
+    if (bundleId.isEmpty()
+        || !Kelp::Link::base32Decode(bundleId, &id, &error) || id.size() != 32) {
+        respond(connection, 404, "Not Found", "text/plain; charset=utf-8",
+                QByteArrayLiteral("no such bundle\n"));
+        return;
+    }
+
+    const QString prefix = QStringLiteral("/b/") + bundleId;
+    const QString rest = path.mid(prefix.length());
+
+    // One slash further, so the page's relative URLs and the worker's scope land
+    // under the bundle's own prefix.
+    if (rest.isEmpty()) {
+        respond(connection, 301, "Moved Permanently", "text/plain; charset=utf-8",
+                QByteArrayLiteral("the gateway page is one slash further\n"),
+                QByteArrayLiteral("Location: ") + prefix.toUtf8() + "/\r\n");
+        return;
+    }
+
+    if (rest == QLatin1String("/")) {
+        if (m_loaderHtml.isEmpty()) {
+            respond(connection, 500, "Internal Server Error", "text/plain; charset=utf-8",
+                    QByteArrayLiteral("this relay was built without its gateway files\n"));
+            return;
+        }
+        // The loader pulls nothing from outside itself: what it would fetch from
+        // elsewhere is the sender's, and the sender is inside the bundle.
+        respond(connection, 200, "OK", "text/html; charset=utf-8", m_loaderHtml,
+                QByteArrayLiteral("Content-Security-Policy: default-src 'self'; "
+                                  "img-src 'self' data: blob:; "
+                                  "media-src 'self' blob:; "
+                                  "style-src 'self' 'unsafe-inline'; "
+                                  "connect-src 'self'"));
+        return;
+    }
+
+    if (rest == QLatin1String("/.kelp/core.js")) {
+        respond(connection, 200, "OK", "text/javascript; charset=utf-8", m_coreJs);
+        return;
+    }
+    if (rest == QLatin1String("/.kelp/page.js")) {
+        respond(connection, 200, "OK", "text/javascript; charset=utf-8", m_pageJs);
+        return;
+    }
+    if (rest == QLatin1String("/.kelp/sw.js")) {
+        // A worker script may only claim a scope above its own directory when its
+        // response says so; that is what makes the bundle's own URL space — the
+        // whole of /b/<id>/ — the space the worker answers in (§5.3).
+        respond(connection, 200, "OK", "text/javascript; charset=utf-8", m_swJs,
+                QByteArrayLiteral("Service-Worker-Allowed: ") + prefix.toUtf8() + "/\r\n");
+        return;
+    }
+
+    respond(connection, 404, "Not Found", "text/plain; charset=utf-8",
+            QByteArrayLiteral("only the gateway page is served here\n"));
 }
 
 // --- publisher tunnels --------------------------------------------------
@@ -366,19 +501,31 @@ void Relay::answerPending(const QByteArray &objectId, const QByteArray &bytes, b
         respond(pending.recipient, 404, "Not Found", "text/plain; charset=utf-8",
                 QByteArrayLiteral("the origin does not have that object\n"));
     }
-    tryRequest(pending.recipient);                // a pipelined request may be waiting
+    // A pipelined request may be waiting on this same connection.
+    while (pending.recipient && !pending.recipient->busy && tryRequest(pending.recipient)) {
+    }
 }
 
 void Relay::respond(Connection *connection, int status, const char *reason,
-                    const char *contentType, const QByteArray &body)
+                    const char *contentType, const QByteArray &body,
+                    const QByteArray &extraHeaders)
 {
     if (!connection || !connection->tls)
         return;
     QByteArray head = "HTTP/1.1 " + QByteArray::number(status) + ' ' + reason + "\r\n";
     head += "Content-Type: " + QByteArray(contentType) + "\r\n";
     head += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+    if (connection->closeAfter)
+        head += "Connection: close\r\n";
+    // Extra headers carry their own CRLF endings; they are only ever ours.
+    head += extraHeaders;
     head += "\r\n";
     connection->tls->write(head + body);
+    if (connection->closeAfter) {
+        // Written through OpenSSL and Qt's socket buffer, which disconnectFromHost
+        // drains before the connection ends.
+        connection->tls->close();
+    }
 }
 
 void Relay::retire(Connection *connection)
@@ -393,6 +540,16 @@ void Relay::retire(Connection *connection)
             if (m_bundles.value(bundles.at(i)).tunnel == connection->tls)
                 m_bundles.remove(bundles.at(i));
         }
+    }
+
+    // A recipient that is gone is not waiting for anything either: drop its
+    // entries before anything can answer them. Browsers abandon requests
+    // readily (a closed tab, a cancelled navigation), so this is the common
+    // case, not the rare one.
+    const QList<QByteArray> requests = m_pending.keys();
+    for (int i = 0; i < requests.size(); ++i) {
+        if (m_pending.value(requests.at(i)).recipient == connection)
+            m_pending.remove(requests.at(i));
     }
 
     // Anything waiting on a bundle that no longer has a tunnel is never arriving.
