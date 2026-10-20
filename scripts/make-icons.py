@@ -67,7 +67,7 @@ def make_master():
 
 def main():
     master = make_master()
-    master.save(os.path.join(ROOT, "docs", "icon-512.png"))
+    master.save(os.path.join(ROOT, "icons", "icon-512.png"))
     for size in (86, 108, 128, 172, 256):
         dest = os.path.join(ROOT, "icons", f"{size}x{size}", "harbour-kelp.png")
         master.resize((size, size), Image.LANCZOS).save(dest)

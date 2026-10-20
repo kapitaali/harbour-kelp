@@ -2,7 +2,7 @@
 
 **Secure, minimal peer-to-peer file sharing for Sailfish OS.**
 
-<p align="center"><img src="docs/icon-512.png" width="160" alt="Kelp icon"></p>
+<p align="center"><img src="icons/icon-512.png" width="160" alt="Kelp icon"></p>
 
 Share a folder or file from the phone as a `kelp://` link. A recipient pastes the
 link into Kelp and it fetches the bundle. Content-addressed and encrypted by default,
