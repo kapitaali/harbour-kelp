@@ -1,16 +1,17 @@
-# Download all as a ZIP — plan (design §12.12)
+# Downloading the folder as one ZIP — plan (design §12.12)
 
 **Status: proposed, nothing built.** Written before any code, as this project requires.
 
 ## 1. What it is
 
-The gateway's **file list** — the view a recipient gets for a bundle that has no page, and the
-fallback when a page cannot be served — gains one action:
+A bundle with no page **is a folder**. The gateway's file list — the view a recipient gets for such
+a bundle, and the fallback when a page cannot be served — gains one action:
 
-> **Download all (12 files, 24.6 MiB)**
+> **Download folder (12 files, 24.6 MiB)**
 
-one archive, with the bundle's folder structure inside it, instead of pressing *Download* twelve
-times. The per-file buttons stay exactly as they are; the ZIP is an addition, not a replacement.
+**One press, one archive, whatever the number of files.** The archive is that folder: its contents,
+with its folder structure, named after it. The per-file buttons stay as an alternative, for someone
+who wants one file without the rest; they are not the flow.
 
 **Not** for bundles that are served as a page: the sender's own document replaces the bootstrap page
 there, so there is no file list and nothing to add a button to.
@@ -39,7 +40,7 @@ already works under `default-src 'self'`); the only difference is `application/z
   corrupt archive.
 - Fixed timestamp (1980-01-01 00:00, the DOS epoch) rather than "now": the builder stays a pure
   function of its inputs, which is what makes it testable byte for byte.
-- UTF-8 names with the language-encoding flag (0x0800) set; directory entries for the tree's folders,
+- UTF-8 names with the language-encoding flag (0x0800) set; folder entries for the tree's folders,
   so empty folders survive.
 - Each file's byte count is checked against its manifest before its header is written; a manifest
   that lies aborts the archive instead of writing a header with the wrong size.
@@ -62,7 +63,8 @@ already works under `default-src 'self'`); the only difference is `application/z
   sentence and *no* partial archive. Cancel is checked between files.
 - While the archive runs, the per-file buttons are disabled (and the archive button is disabled
   while a per-file download runs), so two large fetches cannot compete.
-- One file in the bundle: no ZIP button (a one-file archive is a slower Download button).
+- The caps are safety limits, not a per-file flow: below them the number of files does not change
+  the interaction at all — one press, one archive.
 
 ## 5. Names — the part that has to be right
 
@@ -80,10 +82,18 @@ extractors, which add rules of their own. So every entry name is built component
   `uniquePath()` in the app. Directories and files share one namespace.
 - The archive's own file name is sanitised by the same rule (it is written into `a.download`).
 
-**Archive name:** `kelp-<first 8 of the bundle id>.zip`. The bundle does not carry its own name — the
-human label travels to the relay sealed in the link's `q=`, and the browser is deliberately not told
-it. A follow-up could return the label from `/info` so the archive is called what the sender called
-it; that is an API and metadata decision of its own, not part of this feature.
+**Archive name: the folder's name, from the link itself.** The link's `q=` block is not opaque to the
+browser: it is sealed under `HKDF(secret, "kelp/v1/link")` with the 32-byte bundle id as associated
+data and carries `{l: address, n: label, p: is-a-page}`. The label `n` is the share's name — for a
+folder share, the folder's name. The browser already holds the secret and the bundle id, so it can
+open `q=` with a small `openLocations()` beside the existing HKDF and the existing CBOR reader:
+no relay change, no extra metadata exposed (the relay is not asked for anything; the link already
+carried this), and the archive is `<folder>.zip`, which is what zipping that folder would give.
+
+If the link carries no `q=`, no label, or the block does not open (an older link, a passphrase link
+whose hints were omitted, a key that does not match), the archive falls back to
+`kelp-<first 8 of the bundle id>.zip`. A name is never a reason to refuse the download. The label is
+sender-controlled text like any path, so it goes through the same sanitiser.
 
 ## 6. Where the code goes
 
@@ -95,6 +105,8 @@ it; that is an API and metadata decision of its own, not part of this feature.
   it writes local headers, the central directory and the EOCD, and stores references (no copy);
 - `zipBundle(fetcher, files, dirs, options)` — caps, names, the sequential fetch loop, the size check,
   `onProgress`, a `cancelled()` check; returns the same `{parts, bytes, entries}`;
+- `openLocations(secret, bundleId, blob)` — opens the link's `q=` block (the `kelp/v1/link` HKDF, the
+  GCM, the existing CBOR reader) and returns `{name, page, lan}`; the archive name comes from it;
 - `ZIP_MAX_BYTES`, `ZIP_MAX_ENTRIES`.
 
 `walk()` gains a `dirs` array (relative paths, root excluded). The existing `directories` count stays,
@@ -108,7 +120,7 @@ tag, and the worker is untouched).
 
 | State | Text |
 |---|---|
-| file list, idle | *12 files in this bundle* + **Download all (12 files, 24.6 MiB)** |
+| file list, idle | *This folder has 12 files* + **Download folder (12 files, 24.6 MiB)** |
 | too big | button disabled, muted line: *This bundle is too large for one archive (over 128 MiB). Download files one by one.* |
 | too many | *This bundle has too many files for one archive. Download files one by one.* |
 | running | status *Fetching 3 of 12 (4.2 MiB of 24.6 MiB)*, button reads **Cancel** |
@@ -131,6 +143,10 @@ that can corrupt an object):
   every file matches the fixture's own recorded `sha256` for each file;
 - folder entries present; a safe-name table (absolute-looking, `..`, backslash, control characters,
   trailing dot, drive prefix, NFC, case collision, duplicate) produces exactly the expected names;
+- the archive is named after the link's label: the fixture gains the **real link** that libkelp mints
+  (one `Kelp::Link::encode` call), and `openLocations()` must return the same name and page flag
+  libkelp sealed into `q=`; a link without `q=`, and a `q=` opened with the wrong bundle id, both fall
+  back to `kelp-<8>` instead of failing the download;
 - a file whose fetched bytes disagree with its manifest size aborts;
 - the corrupt-object shim aborts the build and returns no archive;
 - a bundle over either cap is refused **before the fetcher is called**;
@@ -140,7 +156,7 @@ Existing checks and the relay harness must stay green (`71` checks today; the re
 browser-shaped cases do not execute page JS, so they are unchanged).
 
 **Live, in a real browser** (the emulator's `sailfish-browser`, as the earlier gateway runs used):
-open a bundle's gateway link, press *Download all*, then pull the downloaded file back to the host
+open a bundle's gateway link, press *Download folder*, then pull the downloaded file back to the host
 and run `unzip -t` plus a byte-for-byte comparison against the sealed source. Also: Cancel halfway
 (no file left behind), and a bundle above the cap (button disabled, sentence shown, per-file still
 works). The click is the one thing Node cannot prove; the same blob-download path already works for
@@ -171,8 +187,11 @@ when S2 lands.
 - **File sizes come from two places** (the manifest and the fetched bytes); they must agree, or the
   archive's headers lie.
 - **Empty files** (size 0) are legal entries: CRC 0, no data.
-- **A directory and a file that sanitise to the same name** must not both be written; dedupe across
+- **A folder and a file that sanitise to the same name** must not both be written; dedupe across
   the whole archive, not per folder.
+- **The label is optional and sender-controlled**: a `q=` may be absent (an older link, a passphrase
+  link that omitted its hints), may fail to open, and may be a strange string. All three end at the
+  fallback name, never at a failed download — and the label is sanitised like a path.
 
 ## 11. What it does not do
 
@@ -180,7 +199,7 @@ when S2 lands.
   the transfer; the saved copy is plaintext, exactly like the app's own saves).
 - No server-side archive, no new endpoint, no key or plaintext to the relay.
 - No archive button on a bundle that is served as a page.
-- No name from the sender's label (see §5); no change to `/info`.
+- No change to `/info`: the name comes from the link the browser already holds, not from the relay.
 
 ## 12. The two choices worth your nod
 
