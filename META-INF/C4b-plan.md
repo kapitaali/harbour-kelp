@@ -139,9 +139,10 @@ nothing is read from disk at runtime.
 
 ### The app, later and small
 
-`BundlePage` gains **Copy browser link** for a webpage share when Settings → Relay names one: it
-is `<relay>/b/<bundleId>#k=<secret>`. Same rule as everywhere else: the fragment is never logged.
-Not in the first slice — the emulator test constructs the URL by hand.
+`BundlePage` gains **Copy browser link** for a webpage share: it is
+`https://<relay>/b/<bundleId>#k=<secret>`. Same rule as everywhere else: the fragment is never
+logged. **Built** in slice 4 (below) — the relay is the share's own, not the Settings field, and a
+passphrase share is never offered one.
 
 ## Failure modes, each mapped to the code that answers it
 
@@ -204,7 +205,7 @@ are available. If the guest browser will not trust a local CA, the honest fallba
 - **ZIP download** of a non-page bundle (D7).
 - **Passphrase links at the gateway** (D4).
 - **Swarm at the gateway.** The recipient path is a tunnel; peer swarms are C7.
-- **The app's Copy browser link** button (the seam above is written down, not built).
+- ~~**The app's Copy browser link** button~~ — built in slice 4.
 - **h2/HTTP/2.** A browser offering `h2,http/1.1` is given `http/1.1`.
 
 ## Risks and traps
@@ -243,3 +244,55 @@ are available. If the guest browser will not trust a local CA, the honest fallba
 Roughly a week of careful work, in four slices: (1) ALPN + loader endpoints with relay tests,
 (2) the core JS with Node fixtures, (3) the SW and the page/file-list UI, (4) the emulator
 browser test and the app's Copy browser link.
+
+**Status:** slices 1–3 are built (PROGRESS §3.35), the browser handover was fixed from a real
+browser (§3.36), and slice 4 is built and device-tested (§3.37).
+
+## Slice 4 — the app's *Copy browser link* (designed 2026-10-20)
+
+The emulator test built the URL by hand. A sender should not have to: on a webpage share's page,
+one button puts the browser's door on the clipboard. The slice is small, but four choices in it
+are not obvious, so they are settled here first.
+
+**S4-1 — The relay comes from the share's own link, not from Settings.** The address is
+
+```
+https://<relay>/b/<bundle-id>#k=<secret>
+```
+
+and `<relay>` is `linkParts.relays[0]` — the relay named in *this share's* `r=`. Settings is only
+what the next share will be published on: `KelpBundles::setRelays()` stores the list and stops
+there, so changing Settings does not move an existing share's tunnel, and a URL built from the
+setting would point at a relay that never heard of the bundle. When the link names several relays
+the first is used, because a browser URL names one.
+
+**S4-2 — `https://`, with the port always spelled out.** The relay is TLS-only, and a browser
+gateway needs a secure context for WebCrypto and a service worker, so no other scheme can work.
+The tunnel's parser (`kelpRelayHostPort`) accepts `host` and supplies the relay's default port
+9443; a browser has no such default, so the URL writes `host:9443` explicitly. Everything else the
+parser accepts is kept as typed (including a bracketed IPv6 host).
+
+**S4-3 — A passphrase share gets no browser link.** The app holds the share's plaintext secret
+(it serves with it), so minting `#k=` would hand out precisely what the passphrase withholds — and
+D4 already refuses `#p=` at the gateway. The button is therefore absent, replaced by one sentence
+saying that a browser cannot ask for the passphrase, so this share opens in Kelp only.
+
+**S4-4 — No relay, no address.** A LAN listener serves objects, not a loader, so without a relay
+there is no door for a browser at all. Rather than a dead button, the page says what to do (set a
+relay in Settings, then share again). A share restored or re-shared after that carries the relay
+in its new link.
+
+**S4-5 — The URL is copied, never logged or displayed.** It carries the secret. The click writes a
+log line naming the share and nothing more.
+
+**S4-6 — The button follows the same serving states as the `kelp://` link**: disabled when paused
+(nothing is served, and the paused note already says why), enabled under a policy stop (the link is
+kept and comes back by itself), and only ever present on a share the publisher declared a webpage
+(§5.5) — the same rule that governs *Open in browser*.
+
+**Where it lives.** `KelpBundles::browserUrl(bundleId, secret, relay)` returns
+`{ ok, error, url }` — the checks (32-byte bundle id, 32-byte key, usable relay) and the
+normalisation are testable in `tst_kelpbundles`, not in QML. `BundlePage` gains the button beside
+*Open in browser*, plus the one-line note for each of the three states (offered / no relay /
+passphrase).
+

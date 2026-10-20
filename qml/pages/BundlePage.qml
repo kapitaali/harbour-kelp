@@ -75,6 +75,65 @@ Page {
     property bool isWebpage: !!bundlePage.entry && bundlePage.entry.page === true
                              && bundlePage.page !== null && bundlePage.page.hasPage
 
+    /*
+     * The browser's door to this share (design §5.2, C4b-plan.md slice 4):
+     * https://<relay>/b/<bundle-id>#k=<secret>, for a recipient with no app.
+     *
+     * Offered only where it can work. The relay is the one this share is
+     * published on — its own link's `r=` — because Settings only decides where
+     * the next share goes. A passphrase share is never offered one: the app
+     * holds the plaintext secret, so minting `#k=` would hand out what the
+     * passphrase withholds, and a browser has no way to ask for it.
+     */
+    property bool browserLinkOffered: isWebpage && !paused
+                                      && linkParts && linkParts.ok
+                                      && !linkParts.needsPassphrase
+                                      && linkParts.relays.length > 0
+
+    /*
+     * The command behind the button, named so it can be driven by name (the
+     * device test calls it) and so the guard is not repeated.
+     *
+     * The URL is copied and never logged: it carries the secret. browserUrl()
+     * does the checks and the port normalisation, so this only reports what it
+     * says.
+     */
+    function copyBrowserLink() {
+        // The button is disabled whenever this is false; the guard is here as
+        // well so no other path — a test, an accessibility action — can mint a
+        // key-bearing URL on a share that must not offer one.
+        if (!browserLinkOffered)
+            return
+        if (!entry || !linkParts || linkParts.relays.length === 0)
+            return
+        var built = kelpBundles.browserUrl(entry.bundleId, entry.secret,
+                                           linkParts.relays[0])
+        if (!built.ok) {
+            toast.show(built.error.length > 0
+                       ? built.error : qsTr("Could not build a browser link"))
+            return
+        }
+        Clipboard.text = built.url
+        kelpLog.info("BundlePage: browser link copied for \"" + entry.name + "\"")
+        toast.show(qsTr("Browser link copied"))
+    }
+
+    function browserLinkNote() {
+        if (!bundlePage.isWebpage)
+            return ""
+        // A paused row has no link at all (pauseShare drops it), so this has to
+        // come before the "cannot be read" branch or a pause looks like damage.
+        if (bundlePage.paused)
+            return qsTr("Resume this share to copy a browser link: nothing is being served while it is paused.")
+        if (!bundlePage.linkParts || !bundlePage.linkParts.ok)
+            return qsTr("This share's link cannot be read, so there is no address a browser could use.")
+        if (bundlePage.linkParts.needsPassphrase)
+            return qsTr("A browser cannot ask for the passphrase, so this share opens in Kelp only.")
+        if (bundlePage.linkParts.relays.length === 0)
+            return qsTr("A browser link needs a relay. This share was made without one, so there is no address a browser could open — set a relay in Settings and share again.")
+        return qsTr("Copy this for someone who has no Kelp: their browser fetches the page from the relay and decrypts it there. It works only while this share is being served, and it carries the same key as the link above.")
+    }
+
     function lookForPage() {
         page = null
         if (!bundlePage.entry || !bundlePage.entry.secret || bundlePage.entry.secret.length === 0)
@@ -316,46 +375,81 @@ Page {
                 }
             }
 
-            // Wrapped in an Item so the button keeps the page margin inside the
+            // Wrapped in an Item so the buttons keep the page margin inside the
             // Column (positioners ignore child anchors).
             Item {
                 visible: bundlePage.isWebpage
                 width: parent.width
-                height: previewButton.height
+                height: webButtons.height
 
-                Button {
-                    id: previewButton
+                Column {
+                    id: webButtons
                     anchors {
                         left: parent.left
                         right: parent.right
                         leftMargin: Theme.horizontalPageMargin
                         rightMargin: Theme.horizontalPageMargin
                     }
-                    text: qsTr("Open in browser")
-                    onClicked: {
-                        if (!bundlePage.entry)
-                            return
-                        var opened = kelpBundles.previewPage(bundlePage.entry.bundleId,
-                                                             bundlePage.entry.secret,
-                                                             bundlePage.entry.name,
-                                                             bundlePage.page ? bundlePage.page.entry : "")
-                        if (!opened.ok) {
-                            kelpLog.warn("Preview: \"" + bundlePage.entry.name + "\": "
-                                         + opened.error)
-                            toast.show(opened.error.length > 0
-                                       ? opened.error
-                                       : qsTr("Could not open the page"))
-                            return
+                    spacing: Theme.paddingMedium
+
+                    Button {
+                        id: previewButton
+                        width: parent.width
+                        text: qsTr("Open in browser")
+                        onClicked: {
+                            if (!bundlePage.entry)
+                                return
+                            var opened = kelpBundles.previewPage(bundlePage.entry.bundleId,
+                                                                 bundlePage.entry.secret,
+                                                                 bundlePage.entry.name,
+                                                                 bundlePage.page ? bundlePage.page.entry : "")
+                            if (!opened.ok) {
+                                kelpLog.warn("Preview: \"" + bundlePage.entry.name + "\": "
+                                             + opened.error)
+                                toast.show(opened.error.length > 0
+                                           ? opened.error
+                                           : qsTr("Could not open the page"))
+                                return
+                            }
+                            // Logged without the URL: the address carries the token that
+                            // is the capability (the app writes it to the log only in a
+                            // dev build that asks for links in the log).
+                            kelpLog.info("Preview: serving \"" + opened.entry
+                                         + "\" and handing it to the browser")
+                            Qt.openUrlExternally(opened.url)
+                            toast.show(qsTr("Opening in the browser"))
                         }
-                        // Logged without the URL: the address carries the token that
-                        // is the capability (the app writes it to the log only in a
-                        // dev build that asks for links in the log).
-                        kelpLog.info("Preview: serving \"" + opened.entry
-                                     + "\" and handing it to the browser")
-                        Qt.openUrlExternally(opened.url)
-                        toast.show(qsTr("Opening in the browser"))
+                    }
+
+                    /*
+                     * The same page for a recipient who has no Kelp at all: the
+                     * relay serves a loader, the browser derives the relay token
+                     * from the fragment and decrypts every object itself, so the
+                     * relay still sees ciphertext only.
+                     *
+                     * The URL is copied and never logged: it carries the secret.
+                     * browserUrl() does the checks and the port normalisation, so
+                     * this handler only reports what it says.
+                     */
+                    Button {
+                        objectName: "copyBrowserLink"
+                        width: parent.width
+                        text: qsTr("Copy browser link")
+                        enabled: bundlePage.browserLinkOffered
+                        onClicked: bundlePage.copyBrowserLink()
                     }
                 }
+            }
+
+            Label {
+                objectName: "browserLinkNote"
+                visible: bundlePage.isWebpage
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: bundlePage.browserLinkNote()
             }
 
             SectionHeader { text: qsTr("Sources") }

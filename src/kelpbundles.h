@@ -125,6 +125,28 @@ public:
     Q_INVOKABLE QVariantMap unlockLink(const QString &link, const QString &passphrase);
 
     /*
+     * The browser's door to one of *this device's* shares (design §5.2, C4b).
+     *
+     * A recipient with no app opens https://<relay>/b/<bundle-id>#k=<secret> in a
+     * browser; the relay serves a loader, and the browser derives the relay token
+     * from the fragment and decrypts every object itself. This builds that URL
+     * from the two things a share row keeps — its bundle id and its secret — and
+     * from the relay the share is actually published on, which is the one named in
+     * its own link's `r=` (Settings only decides where *future* shares go).
+     *
+     * The port is always written out: kelpRelayHostPort() supplies the tunnel's
+     * default 9443, but a browser has no such default. https:// is the only form
+     * that can work — WebCrypto and a service worker need a secure context — and
+     * the relay speaks TLS either way.
+     *
+     * Returns { ok, error, url }. Never for a passphrase share: the app holds the
+     * plaintext secret, and minting `#k=` would undo the passphrase (D4 refuses
+     * `#p=` at the gateway), so the caller must not offer this there.
+     */
+    Q_INVOKABLE QVariantMap browserUrl(const QString &bundleId, const QString &secret,
+                                       const QString &relay);
+
+    /*
      * The loopback preview (design §5.1).
      *
      * A browser cannot decrypt from the sender: WebCrypto needs a secure context,

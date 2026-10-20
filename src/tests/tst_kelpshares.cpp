@@ -68,7 +68,8 @@ void checkEqual(const A &actual, const B &expected, const char *expression, int 
 #define CHECK_EQ(actual, expected) checkEqual((actual), (expected), #actual " == " #expected, __LINE__)
 
 QVariantMap makeRow(const QString &name, const QString &bundleId, const QString &secret,
-                    int objects, int files, qint64 bytes, bool swarm)
+                    int objects, int files, qint64 bytes, bool swarm,
+                    bool page = false, const QString &passBlob = QString())
 {
     QVariantMap row;
     row.insert(QStringLiteral("name"), name);
@@ -78,6 +79,12 @@ QVariantMap makeRow(const QString &name, const QString &bundleId, const QString 
     row.insert(QStringLiteral("bytes"), bytes);
     row.insert(QStringLiteral("path"), QStringLiteral("/home/defaultuser/") + name);
     row.insert(QStringLiteral("swarm"), swarm);
+    // The two fields a restart acts on besides the key: whether the share is a
+    // webpage (§5.5), and the wrapped secret that keeps a passphrase share
+    // protected (§12.3). Dropping the second would quietly turn a protected share
+    // into a plain #k= one at the next launch.
+    row.insert(QStringLiteral("page"), page);
+    row.insert(QStringLiteral("passBlob"), passBlob);
     row.insert(QStringLiteral("objects"), objects);
     row.insert(QStringLiteral("bundleId"), bundleId);
     row.insert(QStringLiteral("secret"), secret);
@@ -106,7 +113,8 @@ void testShares()
         rows.append(makeRow(QStringLiteral("holiday.jpg"), QStringLiteral("aaaa"),
                             QStringLiteral("c2VjcmV0LWE"), 11, 1, 2136168, false));
         rows.append(makeRow(QStringLiteral("receipts"), QStringLiteral("bbbb"),
-                            QStringLiteral("c2VjcmV0LWI"), 7, 3, 4096, true));
+                            QStringLiteral("c2VjcmV0LWI"), 7, 3, 4096, true, true,
+                            QStringLiteral("d3JhcHBlZC1zZWNyZXQ")));
         CHECK(shares.save(rows));
         CHECK(QFile::exists(path));
     }
@@ -140,6 +148,12 @@ void testShares()
         CHECK_EQ(second.value(QStringLiteral("swarm")).toBool(), true);
         CHECK_EQ(second.value(QStringLiteral("secret")).toString(),
                  QStringLiteral("c2VjcmV0LWI"));
+        // A passphrase share is only still a passphrase share if the blob that
+        // wraps its key survives. Without it the next launch mints a plain link
+        // and the passphrase the user set is gone.
+        CHECK_EQ(second.value(QStringLiteral("page")).toBool(), true);
+        CHECK_EQ(second.value(QStringLiteral("passBlob")).toString(),
+                 QStringLiteral("d3JhcHBlZC1zZWNyZXQ"));
     }
 
     section("owner-only");

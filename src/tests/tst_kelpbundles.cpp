@@ -885,6 +885,70 @@ static void testWebpageShare()
         CHECK_EQ(info.value(QStringLiteral("page")).toBool(), true);
     }
 
+    /*
+     * A browser with no app opens https://<relay>/b/<id>#k=<secret>; this is that
+     * URL, built from what the row keeps (C4b-plan.md, slice 4). The relay is the
+     * share's own — the one its link names — because Settings only decides where
+     * the *next* share is published. The port is always written out: the tunnel
+     * parser supplies 9443, but a browser has no default.
+     */
+    section("a browser link is built from the share's own relay");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("browser-door"), true);
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        const QString bundleId = sealed.value(QStringLiteral("bundleId")).toString();
+        const QString secret = sealed.value(QStringLiteral("secret")).toString();
+        const QString link = sealed.value(QStringLiteral("link")).toString();
+
+        const QVariantMap made =
+            bundles.browserUrl(bundleId, secret, QStringLiteral("relay.example"));
+        CHECK(made.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(made.value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://relay.example:9443/b/%1#k=%2")
+                     .arg(bundleId, secret));
+        // The fragment is the very key the kelp:// link carries, not a copy of it.
+        CHECK(link.endsWith(QStringLiteral("#k=") + secret));
+
+        // A port that was given is kept as given.
+        CHECK_EQ(bundles.browserUrl(bundleId, secret,
+                                    QStringLiteral("relay.example:8443"))
+                     .value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://relay.example:8443/b/%1#k=%2")
+                     .arg(bundleId, secret));
+        // The address a share was published on is exactly the shape that works.
+        const QString relay = QStringLiteral("192.0.2.10:9443");
+        CHECK_EQ(bundles.browserUrl(bundleId, secret, relay)
+                     .value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://192.0.2.10:9443/b/%1#k=%2").arg(bundleId, secret));
+
+        // No relay, no address — and the answer says so rather than minting a URL
+        // that opens nothing.
+        const QVariantMap none = bundles.browserUrl(bundleId, secret, QString());
+        CHECK_EQ(none.value(QStringLiteral("ok")).toBool(), false);
+        CHECK(!none.value(QStringLiteral("error")).toString().isEmpty());
+        CHECK_EQ(none.value(QStringLiteral("url")).toString(), QString());
+        // A scheme or a path is not a host:port, so it is refused, not mangled.
+        CHECK_EQ(bundles.browserUrl(bundleId, secret,
+                                    QStringLiteral("https://relay.example"))
+                     .value(QStringLiteral("ok")).toBool(), false);
+        CHECK_EQ(bundles.browserUrl(bundleId, secret, QStringLiteral("relay.example/b"))
+                     .value(QStringLiteral("ok")).toBool(), false);
+
+        // A row whose id or key cannot be read must not mint a URL either.
+        CHECK_EQ(bundles.browserUrl(QStringLiteral("not-base32"), secret,
+                                    QStringLiteral("relay.example"))
+                     .value(QStringLiteral("ok")).toBool(), false);
+        CHECK_EQ(bundles.browserUrl(bundleId, QStringLiteral("not a key"),
+                                    QStringLiteral("relay.example"))
+                     .value(QStringLiteral("ok")).toBool(), false);
+        // A key that decodes but is not 32 bytes.
+        CHECK_EQ(bundles.browserUrl(bundleId,
+                                    Kelp::Link::base64UrlEncode(QByteArray(16, 'x')),
+                                    QStringLiteral("relay.example"))
+                     .value(QStringLiteral("ok")).toBool(), false);
+    }
+
     section("a link that cannot be read still answers the question");
     {
         const QVariantMap info = bundles.linkInfo(QStringLiteral("https://example.invalid/"));

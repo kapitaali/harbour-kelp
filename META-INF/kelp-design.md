@@ -418,6 +418,16 @@ is in the bundle: the kind is what the browser is for, and a folder share stays 
 dropped 2026-10-18). No menu was added: a labelled section on the page is where the design put
 it, and the whole flow is one button.
 
+**Second button: *Copy browser link* (built 2026-10-20).** The §5.2 gateway needs an address a
+sender would otherwise have to assemble by hand, so the same section now has one more button that
+puts `https://<relay>/b/<bundle-id>#k=<secret>` on the clipboard. It is built from the relay named
+in the share's *own* link — Settings only decides where the next share is published — with the
+port always written out (`:9443` when omitted) and `https` only, because the relay is TLS-only and
+the browser needs a secure context. It is **never offered for a passphrase share**: the app holds
+the plaintext secret, so a `#k=` URL would undo the passphrase, and D4 already refuses `#p=` at
+the gateway. No relay, no address; a paused share resumes before it has one. The URL carries the
+key, so it is copied and never logged. `PROGRESS-<date>.md` §3.37 has the device evidence.
+
 **What is not built yet.** The lazy fetch through `KelpSource`, so a preview serves exactly what
 the store already holds and answers `503` for anything else. The per-bundle confirmation
 (§12.10) — deferred until the page being opened is someone else's. The *recipient* side needs no
@@ -532,6 +542,14 @@ result; a multi-chunk file would have been truncated). The handover is now one f
 core — `pageSession()` — rather than two agreeing literals: both keys cross as the bytes they are,
 and every URL in the bundle's space is named by its **chunks, in order**, which the worker
 concatenates exactly as the file list download does.
+
+*Built (2026-10-20, the app's half) — `PROGRESS-<date>.md` §3.37.* A sender no longer assembles the
+URL by hand: **Copy browser link** on a webpage share's page mints
+`https://<relay>/b/<id>#k=<secret>` from the relay the share's *own* link names (Settings only
+decides where the next share goes). It is never offered for a passphrase share — the app holds the
+plaintext secret, so `#k=` would undo the passphrase, and D4 keeps `#p=` out of the gateway — and a
+share with no relay has no browser address at all, which the page says rather than offering a dead
+button.
 
 ### 5.3 Which file is the page — the shared convention
 

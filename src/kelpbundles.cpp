@@ -10,6 +10,7 @@
 #include "kelp_link.h"
 #include "kelp_web.h"
 #include "kelpbuild.h"
+#include "kelpfetch.h"
 #include "kelppreviewserver.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
@@ -442,6 +443,48 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
     // because all of it is sealed under the secret the passphrase unwraps.
     info.insert(QStringLiteral("needsPassphrase"), Kelp::Link::needsPassphrase(parsed));
     return info;
+}
+
+QVariantMap KelpBundles::browserUrl(const QString &bundleId, const QString &secret,
+                                    const QString &relay)
+{
+    QVariantMap out;
+    out.insert(QStringLiteral("ok"), false);
+    out.insert(QStringLiteral("url"), QString());
+
+    QByteArray id;
+    QString error;
+    if (!Kelp::Link::base32Decode(bundleId, &id, &error)
+        || id.size() != int(Kelp::Crypto::Sha256Size)) {
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("this share has no usable bundle id"));
+        return out;
+    }
+
+    // The secret is the fragment, so it must be the 32 bytes a fragment carries —
+    // checked here rather than trusted, because a row whose key cannot be read
+    // must not mint a URL that silently opens nothing.
+    QByteArray key;
+    if (!Kelp::Link::base64UrlDecode(secret, &key, &error)
+        || key.size() != int(Kelp::Crypto::Sha256Size)) {
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("this share has no usable key"));
+        return out;
+    }
+
+    QString host;
+    quint16 port = 0;
+    if (!kelpRelayHostPort(relay, &host, &port)) {
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("a browser link needs a relay"));
+        return out;
+    }
+
+    out.insert(QStringLiteral("ok"), true);
+    out.insert(QStringLiteral("url"),
+               QStringLiteral("https://%1:%2/b/%3#k=%4")
+                   .arg(host).arg(int(port)).arg(bundleId, secret));
+    return out;
 }
 
 QVariantMap KelpBundles::unlockLink(const QString &link, const QString &passphrase)
