@@ -86,6 +86,26 @@ Page {
     property bool busy: kelpClient.busy
     property string phase: kelpClient.phase
 
+    // What the busy row says. Two different questions, so two different answers:
+    // a transfer this page did not start names the bundle it is waiting on
+    // (§3.38) — `kelpClient.name` is the transfer in flight, and a link that
+    // carried no name leaves the sentence as it was rather than showing an
+    // identifier nobody can match — while this page's own transfer reports its
+    // phase (§3.32).
+    property string busyText: !kelpClient.isHandling(openPage.link)
+                              ? (kelpClient.name.length > 0
+                                 ? qsTr("Another transfer is still running: “%1”")
+                                   .arg(kelpClient.name)
+                                 : qsTr("Another transfer is still running…"))
+                              : openPage.phase === "checking"
+                                ? qsTr("Asking the sender…")
+                                : openPage.phase === "saving"
+                                  ? qsTr("Saving the files…")
+                                  : kelpClient.total > 0
+                                    ? qsTr("Fetched %1 of %2 objects")
+                                      .arg(kelpClient.fetched).arg(kelpClient.total)
+                                    : qsTr("Fetched %1 objects").arg(kelpClient.fetched)
+
     // A webpage link is a view, not a save: no folder, no Download, nothing
     // written. One action, and it is the browser's.
     property bool viewOnly: openPage.facts !== null && openPage.facts.ok
@@ -499,7 +519,8 @@ Page {
                             // The client is shared by every link, so "busy" can be
                             // someone else's transfer. Then nothing is happening
                             // *here*: no spinner, and no Cancel — that button
-                            // would kill a transfer this page does not own.
+                            // would kill a transfer this page does not own — and
+                            // the sentence names the bundle instead (§3.38).
                             BusyIndicator {
                                 id: spinner
                                 size: BusyIndicatorSize.Small
@@ -513,16 +534,7 @@ Page {
                                        - (spinner.visible ? spinner.width + busyRow.spacing : 0)
                                 anchors.verticalCenter: parent.verticalCenter
                                 wrapMode: Text.Wrap
-                                text: !kelpClient.isHandling(openPage.link)
-                                      ? qsTr("Another transfer is still running…")
-                                      : openPage.phase === "checking"
-                                        ? qsTr("Asking the sender…")
-                                        : openPage.phase === "saving"
-                                          ? qsTr("Saving the files…")
-                                          : kelpClient.total > 0
-                                            ? qsTr("Fetched %1 of %2 objects")
-                                              .arg(kelpClient.fetched).arg(kelpClient.total)
-                                            : qsTr("Fetched %1 objects").arg(kelpClient.fetched)
+                                text: openPage.busyText
                             }
                         }
                     }
