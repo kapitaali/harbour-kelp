@@ -33,10 +33,11 @@
 #                              [--qr DIR] [--fetch]
 #
 #   --host ADDRESS  an address recipients can reach THIS machine on. Defaults to
-#                   the host's primary LAN IPv4 (the default route's), and says
-#                   so when the host has more than one — a phone on its own
-#                   hotspot often needs --host <the other one>. It has to match
-#                   the KELP_ADVERTISE_HOST the app was launched with.
+#                   the Wi-Fi LAN's address when the host has one — a phone is
+#                   usually there, often on its own hotspot — else to the
+#                   default route's. It prints which one it picked when the host
+#                   has more than one; --host overrides. It has to match the
+#                   KELP_ADVERTISE_HOST the app was launched with.
 #   --relaunch      stop the app in the guest and start it again with this host
 #                   as the address it advertises, then carry on as below. Also
 #                   clears any forward left over from a previous run, whose port
@@ -84,13 +85,37 @@ SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel
      -p $SSH_PORT -i $SSH_KEY defaultuser@127.0.0.1"
 
 if [ -z "$HOST" ]; then
-    HOST="$(ip -4 route get 1.1.1.1 2>/dev/null \
+    DEFAULT="$(ip -4 route get 1.1.1.1 2>/dev/null \
             | sed -n 's/.* src \([0-9][0-9.]*\).*/\1/p' | head -1)"
+
+    # The default route is the wrong guess on a machine that also carries a
+    # phone's network: a recipient phone is almost always on Wi-Fi — often its
+    # own hotspot — while the default route usually leaves by wire, so a link
+    # that names the wired address is dead for the phone while the forward is
+    # perfectly healthy. Prefer the Wi-Fi LAN when there is one; a host whose
+    # default route *is* its Wi-Fi gets the same answer either way.
+    WIFI=""
+    for marker in /sys/class/net/*/wireless; do
+        [ -e "$marker" ] || continue
+        NAME="$(basename "$(dirname "$marker")")"
+        ADDR="$(ip -4 -o addr show dev "$NAME" 2>/dev/null \
+                | sed -n 's/.* inet \([0-9][0-9.]*\)\/.*/\1/p' | head -1)"
+        if [ -n "$ADDR" ]; then
+            WIFI="$ADDR"
+            break
+        fi
+    done
+    HOST="${WIFI:-$DEFAULT}"
     [ -n "$HOST" ] || { echo "cannot work out this host's address; pass --host" >&2; exit 1; }
 
-    # The default route is only one guess. A recipient can be on another of
-    # this host's networks (the phone's own hotspot, say), and a forward bound
-    # to the wrong one answers nothing — so name the alternatives rather than
+    if [ -n "$WIFI" ] && [ "$WIFI" != "$DEFAULT" ]; then
+        echo "note: advertising $WIFI, the Wi-Fi LAN — a phone is usually there;" >&2
+        echo "      the default route is $DEFAULT." >&2
+    fi
+
+    # Whatever was picked is still only a guess about where the recipient is.
+    # A recipient can be on another of this host's networks, and a forward
+    # bound to the wrong one answers nothing — so name the rest rather than
     # leave the link looking broken. Bridges and the docker/vbox nets are not
     # candidates for a recipient.
     OTHERS="$(ip -4 -o addr show up 2>/dev/null \
@@ -99,8 +124,8 @@ if [ -z "$HOST" ]; then
               | tr '\n' ' ')"
     if [ -n "$OTHERS" ]; then
         echo "note: this host also answers on ${OTHERS% }" >&2
-        echo "      advertising $HOST (the default route); if the recipient is on" >&2
-        echo "      one of the others, pass --host <address>." >&2
+        echo "      advertising $HOST; if the recipient is on one of the others," >&2
+        echo "      pass --host <address>." >&2
     fi
 fi
 

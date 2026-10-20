@@ -176,7 +176,11 @@ Two of the harnesses under `src/tests/` are tools rather than test suites:
 `run-emu-share.sh` bridges an emulator share to the LAN and can fetch from it — and with
 `--relaunch` it restarts the guest app advertising this host first, which is what makes an
 emulator link reachable at all from another device — and `kelp-probe.py` fetches from a
-link the way a recipient would without printing its key. Both are documented in
+link the way a recipient would without printing its key. The address it advertises is
+chosen for a phone recipient: the **Wi-Fi** address when this host has one (a phone is
+nearly always on Wi-Fi, often its own hotspot, while a machine's default route usually
+leaves by wire), else the default route's. It prints which address it picked and the
+others the host answers on; `--host` overrides. Both are documented in
 `PROGRESS-<date>.md` §4.5.
 
 `run-qml-smoke.sh` covers what the suites cannot: a page is compiled only when
