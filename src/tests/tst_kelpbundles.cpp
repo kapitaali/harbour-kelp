@@ -949,6 +949,59 @@ static void testWebpageShare()
                      .value(QStringLiteral("ok")).toBool(), false);
     }
 
+    /*
+     * The link's sealed `q=` block rides in the browser URL's fragment as well
+     * (§12.12): the gateway opens it with the fragment's key, so a folder share's
+     * archive is named after the label libkelp sealed. It is the same block, not
+     * a second seal, so the two links cannot disagree about the name.
+     */
+    section("the browser link carries the link's sealed q=");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/plain"),
+                                                QStringLiteral("notes-folder"), false);
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+        const QString bundleId = sealed.value(QStringLiteral("bundleId")).toString();
+        const QString secret = sealed.value(QStringLiteral("secret")).toString();
+        const QString link = sealed.value(QStringLiteral("link")).toString();
+
+        const int question = link.indexOf(QLatin1Char('?'));
+        const int hash = link.indexOf(QLatin1Char('#'));
+        QString q;
+        const QStringList parts = link.mid(question + 1, hash - question - 1)
+                                      .split(QLatin1Char('&'), QString::SkipEmptyParts);
+        for (int i = 0; i < parts.size(); ++i) {
+            if (parts.at(i).startsWith(QStringLiteral("q=")))
+                q = parts.at(i).mid(2);
+        }
+        CHECK_EQ(q.isEmpty(), false);
+
+        CHECK_EQ(bundles.browserUrl(bundleId, secret, QStringLiteral("relay.example"), link)
+                     .value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://relay.example:9443/b/%1#q=%2&k=%3")
+                     .arg(bundleId, q, secret));
+        // Without the link, the old shape: no q, and the gateway names the archive
+        // after the bundle id instead.
+        CHECK_EQ(bundles.browserUrl(bundleId, secret, QStringLiteral("relay.example"))
+                     .value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://relay.example:9443/b/%1#k=%2")
+                     .arg(bundleId, secret));
+        // Another share's link is not borrowed: its block would not open here.
+        const QVariantMap other = bundles.seal(QStringList() << (base + "/web/plain"),
+                                               QStringLiteral("other-folder"), false);
+        CHECK(other.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(bundles.browserUrl(bundleId, secret, QStringLiteral("relay.example"),
+                                    other.value(QStringLiteral("link")).toString())
+                     .value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://relay.example:9443/b/%1#k=%2")
+                     .arg(bundleId, secret));
+        // Nor is a link that does not decode.
+        CHECK_EQ(bundles.browserUrl(bundleId, secret, QStringLiteral("relay.example"),
+                                    QStringLiteral("kelp://not-a-link"))
+                     .value(QStringLiteral("url")).toString(),
+                 QStringLiteral("https://relay.example:9443/b/%1#k=%2")
+                     .arg(bundleId, secret));
+    }
+
     section("a link that cannot be read still answers the question");
     {
         const QVariantMap info = bundles.linkInfo(QStringLiteral("https://example.invalid/"));

@@ -446,7 +446,7 @@ QVariantMap KelpBundles::linkInfo(const QString &link)
 }
 
 QVariantMap KelpBundles::browserUrl(const QString &bundleId, const QString &secret,
-                                    const QString &relay)
+                                    const QString &relay, const QString &link)
 {
     QVariantMap out;
     out.insert(QStringLiteral("ok"), false);
@@ -480,10 +480,42 @@ QVariantMap KelpBundles::browserUrl(const QString &bundleId, const QString &secr
         return out;
     }
 
+    // The link's sealed metadata (`q=`), so the gateway can name the archive after
+    // the folder (§12.12). It is only reused when it is this share's own block:
+    // the gateway opens it with this bundle id as associated data, so a stale
+    // row's block would fail there and silently fall back to `kelp-<8>.zip`; not
+    // handing it over at all is the same outcome, only honest.
+    QString hints;
+    if (!link.isEmpty()) {
+        Kelp::Link::Bundle parsed;
+        QString linkError;
+        if (Kelp::Link::decode(link, &parsed, &linkError)
+            && parsed.bundleId == id && parsed.secret == key) {
+            const int question = link.indexOf(QLatin1Char('?'));
+            const int hash = link.indexOf(QLatin1Char('#'));
+            if (question >= 0) {
+                const QString query = link.mid(question + 1, hash < 0 ? -1 : hash - question - 1);
+                const QStringList parts =
+                    query.split(QLatin1Char('&'), QString::SkipEmptyParts);
+                for (int i = 0; i < parts.size(); ++i) {
+                    if (parts.at(i).startsWith(QStringLiteral("q="))) {
+                        hints = parts.at(i).mid(2);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    QString fragment;
+    if (!hints.isEmpty())
+        fragment = QStringLiteral("q=") + hints + QLatin1Char('&');
+    fragment += QStringLiteral("k=") + secret;
+
     out.insert(QStringLiteral("ok"), true);
     out.insert(QStringLiteral("url"),
-               QStringLiteral("https://%1:%2/b/%3#k=%4")
-                   .arg(host).arg(int(port)).arg(bundleId, secret));
+               QStringLiteral("https://%1:%2/b/%3#%4")
+                   .arg(host).arg(int(port)).arg(bundleId, fragment));
     return out;
 }
 

@@ -112,9 +112,18 @@
 
     var keys = null;
     var tree = null;
+    // The link's own metadata — the label the archive is named after, and the
+    // page hint — sealed in `q=` under a key derived from the secret. Absent or
+    // unreadable is not an error: the archive falls back to its bundle id.
+    var locations = null;
 
     G.prepare(secret).then(function (derived) {
         keys = derived;
+        if (!fields.q)
+            return null;
+        return G.openLocations(secret, bundleId, fields.q).catch(function () { return null; });
+    }).then(function (opened) {
+        locations = opened;
         // One cheap question first, so "the sender is not online" is said in
         // those words rather than as a failed object.
         return fetch(G.apiBase(bundleId, keys.relayToken) + '/info');
@@ -178,12 +187,116 @@
             });
     }
 
-    // --- no page: the file list (plan D7) -----------------------------------
+    // --- no page: the folder (plan D7, §12.12) -----------------------------
+    //
+    // A bundle with no page is a folder. One button hands over all of it as one
+    // stored ZIP, named after the folder the link names; the per-file buttons
+    // stay for the single file someone actually wanted.
+
+    function saveBlob(blob, name) {
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    }
+
+    function folderArchiveName() {
+        var fallback = 'kelp-' + bundleIdText.slice(0, 8);
+        var label = locations && locations.name ? String(locations.name) : '';
+        var safe = G.zipSafeName(label).replace(/\//g, '_');
+        if (!safe)
+            return fallback + '.zip';
+        return /\.zip$/i.test(safe) ? safe : safe + '.zip';
+    }
 
     function showFileList() {
-        setStatus(tree.files.length + ' file' + (tree.files.length === 1 ? '' : 's')
-                  + ' in this bundle', '');
+        var totalBytes = 0;
+        tree.files.forEach(function (file) { totalBytes += file.size; });
+        var files = tree.files.length;
+        var dirs = tree.dirs ? tree.dirs.length : 0;
+        var tooMany = files + dirs > G.ZIP_MAX_ENTRIES;
+        var tooBig = totalBytes > G.ZIP_MAX_BYTES;
+        var fits = !tooMany && !tooBig;
+
+        setStatus('This folder has ' + files + ' file' + (files === 1 ? '' : 's'), '');
         var fetcher = G.makeFetcher(bundleId, keys.relayToken, keys.contentKey, fetch);
+
+        var archiveLabel = 'Download folder (' + files + ' file' + (files === 1 ? '' : 's')
+            + ', ' + humanBytes(totalBytes) + ')';
+        var all = document.createElement('button');
+        all.textContent = archiveLabel;
+        all.disabled = !fits;
+
+        var note = document.createElement('p');
+        note.className = 'note';
+        if (tooMany)
+            note.textContent = 'This folder has too many files for one archive. '
+                + 'Download files one by one.';
+        else if (tooBig)
+            note.textContent = 'This folder is too large for one archive (over '
+                + humanBytes(G.ZIP_MAX_BYTES) + '). Download files one by one.';
+
+        var bar = document.createElement('div');
+        bar.className = 'allbar';
+        bar.appendChild(all);
+        if (note.textContent)
+            bar.appendChild(note);
+        filesEl.parentNode.insertBefore(bar, filesEl);
+
+        var buttons = [];
+        var building = false;
+        var cancelWanted = false;
+
+        function setRowsEnabled(enabled) {
+            buttons.forEach(function (button) { button.disabled = !enabled; });
+        }
+
+        all.addEventListener('click', function () {
+            if (building) {
+                cancelWanted = true;
+                all.textContent = 'Cancelling…';
+                all.disabled = true;
+                return;
+            }
+            if (!fits)
+                return;
+            building = true;
+            cancelWanted = false;
+            all.textContent = 'Cancel';
+            setRowsEnabled(false);
+            setStatus('Preparing the archive', 'busy');
+            // One file at a time, chunks in parallel inside a file: the working
+            // set is one file, and the archive is only handed over when every
+            // byte has been verified and appended.
+            G.zipBundle(fetcher, tree.files, tree.dirs || [], {
+                cancelled: function () { return cancelWanted; },
+                onProgress: function (done, total, bytes, sum) {
+                    setStatus('Fetching ' + done + ' of ' + total + ' ('
+                              + humanBytes(bytes) + ' of ' + humanBytes(sum) + ')', 'busy');
+                }
+            }).then(function (zip) {
+                var name = folderArchiveName();
+                saveBlob(new Blob(zip.parts, { type: 'application/zip' }), name);
+                setStatus('Saved ' + name + ' (' + humanBytes(zip.bytes) + ')', '');
+            }).catch(function (error) {
+                if (error && error.cancelled)
+                    setStatus('Cancelled — nothing was saved.', '');
+                else
+                    showError('Could not build the archive: '
+                              + (error && error.message ? error.message : error)
+                              + ' Nothing was saved.');
+            }).then(function () {
+                building = false;
+                cancelWanted = false;
+                all.textContent = archiveLabel;
+                all.disabled = false;
+                setRowsEnabled(true);
+            });
+        });
 
         tree.files.forEach(function (file) {
             var row = document.createElement('li');
@@ -198,27 +311,23 @@
 
             var button = document.createElement('button');
             button.textContent = 'Download';
+            buttons.push(button);
             button.addEventListener('click', function () {
                 button.disabled = true;
+                all.disabled = true;
                 setStatus('Fetching ' + file.path, 'busy');
                 // Every chunk is verified against its id before it is decrypted,
                 // so a lying relay produces a failed download, not a wrong file.
                 Promise.all(file.chunks.map(fetcher)).then(function (parts) {
-                    var blob = new Blob(parts, { type: G.mimeFor(file) });
-                    var url = URL.createObjectURL(blob);
-                    var link = document.createElement('a');
-                    link.href = url;
-                    link.download = file.path.split('/').pop() || 'file';
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-                    button.disabled = false;
+                    saveBlob(new Blob(parts, { type: G.mimeFor(file) }),
+                             file.path.split('/').pop() || 'file');
                     setStatus('Saved ' + file.path, '');
                 }).catch(function (error) {
-                    button.disabled = false;
                     showError('Could not fetch ' + file.path + ': '
                               + (error && error.message ? error.message : error));
+                }).then(function () {
+                    button.disabled = false;
+                    all.disabled = !fits;
                 });
             });
 

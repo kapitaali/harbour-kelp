@@ -1276,6 +1276,17 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    preview.)*
 12. **Download-all in the gateway** — a ZIP assembled in the browser (no `CompressionStream`
    guarantee in the engine; STORE + CRC32 in JS works), or per-file downloads only?
+   *(**2026-10-20: built.** A bundle with no page is a folder, and its file list now opens
+   with one action — *Download folder (N files, size)* — that builds a STORE + CRC-32 ZIP in
+   the reader's browser from the objects it already verified and decrypts none the less for
+   it; the per-file buttons remain. Caps 128 MiB / 65 535 entries, no ZIP64, no partial
+   archive, cancel between files; nothing on the relay changes. The archive is named after
+   the folder from the link's sealed `q=` label, which forced a second fix: the app's
+   `browserUrl()` had minted only `#k=`, so the real browser link never carried `q=` — it now
+   does (`#q=…&k=…`, and only when the link decodes to that very id and secret). Verified in a
+   real Gecko and with `unzip -t`, the extracted files matching libkelp's own digests;
+   PROGRESS §3.39, recipe §4.8. `#p=` at the gateway is still open, as is a browser-trusted
+   domain/certificate.)*
 13. **Keeping what a recipient receives** — a bundle fetched from a link is written out as
    ordinary files in Downloads, and the app keeps no key and no record of it: its objects are
    stored while it is verified (§11 C2b), but nothing points at them once the fetch ends, so

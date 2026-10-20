@@ -107,7 +107,7 @@ Page {
         if (!entry || !linkParts || linkParts.relays.length === 0)
             return
         var built = kelpBundles.browserUrl(entry.bundleId, entry.secret,
-                                           linkParts.relays[0])
+                                           linkParts.relays[0], entry.link)
         if (!built.ok) {
             toast.show(built.error.length > 0
                        ? built.error : qsTr("Could not build a browser link"))

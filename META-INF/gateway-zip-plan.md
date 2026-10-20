@@ -1,6 +1,8 @@
 # Downloading the folder as one ZIP — plan (design §12.12)
 
-**Status: proposed, nothing built.** Written before any code, as this project requires.
+**Status: built** — S1 (`core.js`) and S2 (`page.js`/`loader.html`) are in the tree, with the
+gateway suite, `unzip`, the QML smoke, the emulator's browser and a real Firefox behind the
+evidence in PROGRESS §3.39. One seam was fixed during the build and is noted in §5.
 
 ## 1. What it is
 
@@ -94,6 +96,15 @@ If the link carries no `q=`, no label, or the block does not open (an older link
 whose hints were omitted, a key that does not match), the archive falls back to
 `kelp-<first 8 of the bundle id>.zip`. A name is never a reason to refuse the download. The label is
 sender-controlled text like any path, so it goes through the same sanitiser.
+
+**Amended during the build (§3.39): the browser link must actually carry `q=`.** "The browser
+already holds the secret and the bundle id" was true, but not the *block*: `browserUrl()` minted
+`https://…/b/<id>#k=<secret>` only, so a real gateway would never have seen a `q=` to open and every
+archive would have fallen back to `kelp-<8>.zip`. The app's `KelpBundles::browserUrl` now takes the
+share's own link as a fourth argument and moves its `q=` into the fragment (`#q=…&k=…`) — only when
+that link decodes to the same bundle id and secret, so a stale row cannot lend a foreign block. The
+fixture test could not catch this because it opened the link's `q=` directly; the unit test now
+covers both URL shapes.
 
 ## 6. Where the code goes
 

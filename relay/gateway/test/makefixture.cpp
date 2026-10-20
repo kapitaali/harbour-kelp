@@ -308,6 +308,15 @@ int main(int argc, char *argv[])
         json += QByteArrayLiteral("      \"secret\": ") + jsonString(QString::fromLatin1(b64url(f.secret))) + QByteArrayLiteral(",\n");
         json += QByteArrayLiteral("      \"token\": ") + jsonString(QString::fromLatin1(b64url(relayToken(f.secret)))) + QByteArrayLiteral(",\n");
         json += QByteArrayLiteral("      \"bundle\": ") + jsonString(QString::fromLatin1(Link::base32Encode(f.sealed.rootId))) + QByteArrayLiteral(",\n");
+        // The real link libkelp would hand out for this share, so the browser
+        // side can open its `q=` block and must reach libkelp's own label and
+        // page hint (§12.12: the archive is named after the folder).
+        Link::Bundle link;
+        link.bundleId = f.sealed.rootId;
+        link.secret = f.secret;
+        link.name = f.name;
+        link.page = !f.page.path.isEmpty();
+        json += QByteArrayLiteral("      \"link\": ") + jsonString(Link::encode(link)) + QByteArrayLiteral(",\n");
         json += QByteArrayLiteral("      \"entry\": ") + jsonString(f.page.path) + QByteArrayLiteral(",\n");
         json += QByteArrayLiteral("      \"root\": ") + jsonString(f.page.root) + QByteArrayLiteral(",\n");
         json += QByteArrayLiteral("      \"candidates\": [");

@@ -118,6 +118,42 @@
         return difference === 0;
     }
 
+    // --- CRC-32, for the archive ---------------------------------------------
+    //
+    // The polynomial every ZIP uses (0xEDB88320, reflected). A browser has no
+    // standard CRC, so this is it: the archive is only worth anything if its
+    // checksums are exactly right.
+
+    var CRC_TABLE = null;
+
+    function crcTable() {
+        if (CRC_TABLE)
+            return CRC_TABLE;
+        var table = new Uint32Array(256);
+        for (var n = 0; n < 256; ++n) {
+            var c = n;
+            for (var bit = 0; bit < 8; ++bit)
+                c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+            table[n] = c >>> 0;
+        }
+        CRC_TABLE = table;
+        return table;
+    }
+
+    // The CRC of the concatenation of `parts`, as a ZIP stores it.
+    function crc32Parts(parts) {
+        var table = crcTable();
+        var crc = 0xFFFFFFFF;
+        for (var i = 0; i < parts.length; ++i) {
+            var part = parts[i];
+            for (var j = 0; j < part.length; ++j)
+                crc = (table[(crc ^ part[j]) & 0xFF] ^ (crc >>> 8)) >>> 0;
+        }
+        return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    function crc32(bytes) { return crc32Parts([bytes]); }
+
     // --- the two derivations and the object envelope ------------------------
 
     function hkdf(secret, info) {
@@ -166,6 +202,54 @@
                 // the point of a tag.
                 throw fail('an object did not open with this link\'s key');
             });
+    }
+
+    // --- the link's address block ------------------------------------------
+    //
+    // The link carries one opaque `q=` block: canonical CBOR `{l, n, p}` —
+    // address, label, is-a-page — sealed under a key derived from the *secret*
+    // (kelp/v1/link) with the 32-byte bundle id as associated data. It is not
+    // sealed to the relay: a reader who holds the fragment can open it, and so
+    // can this page. Only the label is needed here (the archive is named after
+    // the folder), but the block is opened whole, to libkelp's rules.
+
+    function linkKey(secret) { return hkdf(secret, 'kelp/v1/link'); }
+
+    function openLocations(secret, bundleId, blob) {
+        var raw;
+        try {
+            raw = base64UrlDecode(blob);
+        } catch (e) {
+            return Promise.reject(fail('the link\'s address block is not base64url'));
+        }
+        if (raw.length < NONCE_BYTES + TAG_BYTES)
+            return Promise.reject(fail('the link\'s address block is too short'));
+        return linkKey(secret).then(function (key) {
+            return crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt']);
+        }).then(function (aes) {
+            return crypto.subtle.decrypt({
+                name: 'AES-GCM',
+                iv: raw.subarray(0, NONCE_BYTES),
+                additionalData: bundleId,
+                tagLength: 128
+            }, aes, raw.subarray(NONCE_BYTES));
+        }).then(function (plain) {
+            var map = decodeCbor(new Uint8Array(plain));
+            if (!(map instanceof Map))
+                throw fail('the link\'s address block is not a map');
+            var name = map.get('n');
+            var lan = map.get('l');
+            var page = map.get('p');
+            return {
+                name: typeof name === 'string' ? name : '',
+                lan: typeof lan === 'string' ? lan : '',
+                page: page === true
+            };
+        }).catch(function (error) {
+            throw error && error.message && /address block/.test(error.message)
+                ? error
+                : fail('the link\'s address block did not open');
+        });
     }
 
     // --- the CBOR the manifests are written in ------------------------------
@@ -292,6 +376,7 @@
     function walk(fetcher, rootHash, onProgress) {
         var files = [];
         var directories = 0;
+        var dirSet = {};
         var seen = {};
 
         function visit(hash, path) {
@@ -304,6 +389,11 @@
                 if (!(map instanceof Map) || map.get('v') !== 1 || map.get('t') !== 'd')
                     throw fail('a directory manifest is not a directory');
                 ++directories;
+                // A directory's own path, for the archive's folder entries. The
+                // root is the archive itself; an index-form directory ("c") is
+                // visited once per chunk at the same path, so this is a set.
+                if (path)
+                    dirSet[path.replace(/\/$/, '')] = true;
                 var children = [];
                 if (map.has('e')) {
                     entriesOf(map).forEach(function (entry) {
@@ -355,7 +445,7 @@
             return Promise.all(running);
         }).then(function () {
             files.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
-            return { files: files, directories: directories };
+            return { files: files, directories: directories, dirs: Object.keys(dirSet).sort() };
         });
     }
 
@@ -599,6 +689,254 @@
         });
     }
 
+    // --- the archive ---------------------------------------------------------
+    //
+    // A bundle with no page is a folder; "Download folder" hands it over as one
+    // stored (uncompressed) ZIP. Built here, in the page: the relay holds
+    // ciphertext only and never sees a key (design §5.2), so a server-side
+    // archive is the one thing that must not exist.
+
+    // A classic ZIP's ceilings, which keep every archive clear of ZIP64: a
+    // download that needed ZIP64 needs a different design (streaming), and
+    // saying so is better than running out of memory halfway.
+    var ZIP_MAX_BYTES = 128 * 1024 * 1024;
+    var ZIP_MAX_ENTRIES = 65535;
+
+    var DOS_DATE = 0x0021;     // 1980-01-01, the DOS epoch: no clock in the bytes
+    var DOS_TIME = 0;
+
+    function utf8(text) { return new TextEncoder().encode(text); }
+
+    // One path component a filesystem will take: no control characters, no
+    // backslash (Windows reads it as a separator), no "."/"..", no trailing dot
+    // or space (Windows drops them, which can merge two names), no drive prefix,
+    // at most 255 bytes of UTF-8.
+    function safeComponent(part) {
+        var text = String(part);
+        if (text.normalize)
+            text = text.normalize('NFC');
+        text = text.replace(/[\u0000-\u001f\u007f\\]/g, '_');
+        if (text === '.' || text === '..')
+            text = '_';
+        text = text.replace(/[. ]+$/, '');
+        if (/^[A-Za-z]:/.test(text))
+            text = '_' + text;
+        if (!text)
+            text = '_';
+        if (utf8(text).length > 255) {
+            var kept = '';
+            var used = 0;
+            for (var i = 0; i < text.length; ++i) {
+                var width = 1;
+                var code = text.charCodeAt(i);
+                if (code >= 0xD800 && code <= 0xDBFF && i + 1 < text.length)
+                    width = 2;
+                var piece = text.substr(i, width);
+                var size = utf8(piece).length;
+                if (used + size > 255)
+                    break;
+                kept += piece;
+                used += size;
+                i += width - 1;
+            }
+            text = kept || '_';
+        }
+        return text;
+    }
+
+    // A whole relative path, every component checked. Empty components (a
+    // leading slash, "a//b") are dropped rather than turned into "_": they name
+    // nothing.
+    function zipSafeName(path) {
+        var pieces = String(path).split('/');
+        var out = [];
+        for (var i = 0; i < pieces.length; ++i) {
+            if (pieces[i])
+                out.push(safeComponent(pieces[i]));
+        }
+        return out.join('/');
+    }
+
+    function numbered(base, n, isDir) {
+        if (isDir)
+            return base + ' (' + n + ')';
+        var dot = base.lastIndexOf('.');
+        return dot > 0 ? base.slice(0, dot) + ' (' + n + ')' + base.slice(dot)
+                       : base + ' (' + n + ')';
+    }
+
+    // Entry names for an archive: sanitised, then made unique in one namespace
+    // (a folder and a file may not share a name) case-insensitively, because
+    // Windows and macOS extract case-insensitively.
+    function zipNames(files, dirs) {
+        var used = Object.create(null);
+        var names = { files: [], dirs: [] };
+        function take(base, isDir) {
+            var candidate = base || '_';
+            var n = 2;
+            while (used[candidate.toLowerCase()])
+                candidate = numbered(base || '_', n++, isDir);
+            used[candidate.toLowerCase()] = true;
+            return candidate;
+        }
+        (dirs || []).forEach(function (dir) {
+            names.dirs.push(take(zipSafeName(dir), true));
+        });
+        files.forEach(function (file) {
+            names.files.push(take(zipSafeName(file.path), false));
+        });
+        return names;
+    }
+
+    function le16(value) {
+        return [value & 0xFF, (value >>> 8) & 0xFF];
+    }
+
+    function le32(value) {
+        return [value & 0xFF, (value >>> 8) & 0xFF,
+                (value >>> 16) & 0xFF, (value >>> 24) & 0xFF];
+    }
+
+    function concat(arrays) {
+        var total = 0;
+        var i;
+        for (i = 0; i < arrays.length; ++i)
+            total += arrays[i].length;
+        var whole = new Uint8Array(total);
+        var at = 0;
+        for (i = 0; i < arrays.length; ++i) {
+            whole.set(arrays[i], at);
+            at += arrays[i].length;
+        }
+        return whole;
+    }
+
+    // A stored-ZIP writer over byte arrays. `add` computes the CRC and the size,
+    // writes the local header and keeps references to the data (no copy); the
+    // caller turns `finish()`'s parts into one Blob.
+    function zipWriter() {
+        var parts = [];
+        var central = [];
+        var offset = 0;
+        var entries = 0;
+        var fileBytes = 0;
+
+        function entry(name, crc, size, isDir) {
+            var nameBytes = utf8(isDir ? name + '/' : name);
+            if (nameBytes.length > 0xFFFF)
+                throw fail('a name in this folder is too long for one archive');
+            var header = new Uint8Array(concat([
+                le32(0x04034B50), le16(20), le16(0x0800), le16(0),
+                le16(DOS_TIME), le16(DOS_DATE),
+                le32(crc), le32(size), le32(size),
+                le16(nameBytes.length), le16(0),
+                nameBytes
+            ]));
+            if (offset + header.length + size > 0xFFFFFFFF)
+                throw fail('the archive would need ZIP64');
+            parts.push(header);
+            central.push({ name: nameBytes, crc: crc, size: size, offset: offset });
+            offset += header.length + size;
+            ++entries;
+        }
+
+        return {
+            add: function (name, chunks) {
+                var size = 0;
+                for (var i = 0; i < chunks.length; ++i)
+                    size += chunks[i].length;
+                if (size > 0xFFFFFFFF)
+                    throw fail('a file in this folder is too large for one archive');
+                entry(name, crc32Parts(chunks), size, false);
+                for (var j = 0; j < chunks.length; ++j)
+                    parts.push(chunks[j]);
+                fileBytes += size;
+            },
+            addDirectory: function (name) {
+                entry(name, 0, 0, true);
+            },
+            finish: function () {
+                if (entries > ZIP_MAX_ENTRIES || central.length > 0xFFFF)
+                    throw fail('too many entries for one archive');
+                var start = offset;
+                for (var i = 0; i < central.length; ++i) {
+                    var c = central[i];
+                    var header = new Uint8Array(concat([
+                        le32(0x02014B50), le16(20), le16(20), le16(0x0800), le16(0),
+                        le16(DOS_TIME), le16(DOS_DATE),
+                        le32(c.crc), le32(c.size), le32(c.size),
+                        le16(c.name.length), le16(0), le16(0),
+                        le16(0), le16(0), le32(0),
+                        le32(c.offset), c.name
+                    ]));
+                    parts.push(header);
+                    offset += header.length;
+                }
+                var centralSize = offset - start;
+                if (offset > 0xFFFFFFFF || centralSize > 0xFFFFFFFF)
+                    throw fail('the archive would need ZIP64');
+                parts.push(new Uint8Array(concat([
+                    le32(0x06054B50), le16(0), le16(0),
+                    le16(central.length), le16(central.length),
+                    le32(centralSize), le32(start), le16(0)
+                ])));
+                return { parts: parts, bytes: fileBytes, entries: entries };
+            }
+        };
+    }
+
+    // The whole folder as one archive. Files are fetched one at a time (chunks in
+    // parallel inside a file) so the working set is one file, not the bundle;
+    // `cancelled()` is asked between files, and a cancellation, a capped bundle
+    // or a bad byte count rejects — a partial archive is never returned.
+    function zipBundle(fetcher, files, dirs, options) {
+        options = options || {};
+        var totalBytes = 0;
+        for (var i = 0; i < files.length; ++i)
+            totalBytes += files[i].size;
+        var entryCount = files.length + (dirs ? dirs.length : 0);
+        if (entryCount > ZIP_MAX_ENTRIES)
+            return Promise.reject(fail('this folder has too many files for one archive'));
+        if (totalBytes > ZIP_MAX_BYTES)
+            return Promise.reject(fail('this folder is too large for one archive'));
+
+        var names = zipNames(files, dirs || []);
+        var writer = zipWriter();
+        (dirs || []).forEach(function (dir, at) { writer.addDirectory(names.dirs[at]); });
+
+        var index = 0;
+        var done = 0;
+        var bytesDone = 0;
+
+        function step() {
+            if (options.cancelled && options.cancelled()) {
+                var stopped = fail('cancelled');
+                stopped.cancelled = true;
+                return Promise.reject(stopped);
+            }
+            if (index >= files.length)
+                return Promise.resolve();
+            var at = index++;
+            var file = files[at];
+            return Promise.all(file.chunks.map(fetcher)).then(function (chunks) {
+                var got = 0;
+                for (var k = 0; k < chunks.length; ++k)
+                    got += chunks[k].length;
+                if (got !== file.size)
+                    throw fail('the bytes fetched for ' + file.path
+                               + ' do not match what the bundle says');
+                writer.add(names.files[at], chunks);
+                ++done;
+                bytesDone += got;
+                if (options.onProgress)
+                    options.onProgress(done, files.length, bytesDone, totalBytes);
+                return step();
+            });
+        }
+
+        return step().then(function () { return writer.finish(); });
+    }
+
     root.KelpGateway = {
         base32Encode: base32Encode,
         base32Decode: base32Decode,
@@ -627,6 +965,16 @@
         makeFetcher: makeFetcher,
         prepare: prepare,
         fullTree: fullTree,
+        crc32: crc32,
+        crc32Parts: crc32Parts,
+        linkKey: linkKey,
+        openLocations: openLocations,
+        zipSafeName: zipSafeName,
+        zipNames: zipNames,
+        zipWriter: zipWriter,
+        zipBundle: zipBundle,
+        ZIP_MAX_BYTES: ZIP_MAX_BYTES,
+        ZIP_MAX_ENTRIES: ZIP_MAX_ENTRIES,
         MAX_OBJECT_BYTES: MAX_OBJECT_BYTES
     };
 }(typeof self !== 'undefined' ? self : this));

@@ -15,6 +15,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 
 // core.js is written for a browser and a worker: it installs itself on `self`
 // when there is one. In Node there is not, so it lands on module.exports.
@@ -94,6 +96,53 @@ function sameNames(a, b) {
             return false;
     }
     return true;
+}
+
+// An independent ZIP reader for the tests: it walks the central directory the
+// way an extractor does, and returns every entry with its bytes. Nothing here
+// shares code with the writer, so the two cannot agree on a mistake.
+function readZip(buffer) {
+    const eocd = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (eocd < 0)
+        throw new Error('no end-of-central-directory record');
+    if (buffer.readUInt16LE(eocd + 4) !== 0 || buffer.readUInt16LE(eocd + 6) !== 0)
+        throw new Error('a multi-disk archive');
+    const count = buffer.readUInt16LE(eocd + 10);
+    const start = buffer.readUInt32LE(eocd + 16);
+
+    const entries = [];
+    let at = start;
+    for (let i = 0; i < count; ++i) {
+        if (buffer.readUInt32LE(at) !== 0x02014B50)
+            throw new Error('no central directory header at ' + at);
+        const flags = buffer.readUInt16LE(at + 8);
+        const method = buffer.readUInt16LE(at + 10);
+        const crc = buffer.readUInt32LE(at + 16);
+        const compressed = buffer.readUInt32LE(at + 20);
+        const uncompressed = buffer.readUInt32LE(at + 24);
+        const nameLength = buffer.readUInt16LE(at + 28);
+        const extraLength = buffer.readUInt16LE(at + 30);
+        const commentLength = buffer.readUInt16LE(at + 32);
+        const local = buffer.readUInt32LE(at + 42);
+        const name = buffer.toString('utf8', at + 46, at + 46 + nameLength);
+        if (buffer.readUInt32LE(local) !== 0x04034B50)
+            throw new Error('no local header for ' + name);
+        const localNameLength = buffer.readUInt16LE(local + 26);
+        const localExtra = buffer.readUInt16LE(local + 28);
+        const dataAt = local + 30 + localNameLength + localExtra;
+        entries.push({
+            name: name,
+            localName: buffer.toString('utf8', local + 30, local + 30 + localNameLength),
+            flags: flags,
+            method: method,
+            crc: crc,
+            compressed: compressed,
+            uncompressed: uncompressed,
+            data: buffer.subarray(dataAt, dataAt + compressed)
+        });
+        at += 46 + nameLength + extraLength + commentLength;
+    }
+    return entries;
 }
 
 async function run() {
@@ -314,7 +363,190 @@ async function run() {
                       && workerShim.asked[0].token === bundle.token,
                   workerShim.asked.length ? workerShim.asked[0].url : '(no fetch happened)');
         }
+
+        // 12. The link's own metadata: the archive is named after the folder.
+        const qMatch = /[?&]q=([^#&]+)/.exec(bundle.link || '');
+        check(where + 'the link carries its sealed q= block', !!qMatch);
+        if (qMatch) {
+            const opened = await G.openLocations(secret, rootId, qMatch[1]);
+            check(where + 'the link label opens, and names the folder',
+                  opened.name === bundle.name, opened.name + ' vs ' + bundle.name);
+            check(where + 'the link page hint opens',
+                  opened.page === (bundle.entry !== ''), String(opened.page));
+            let bound = false;
+            try {
+                await G.openLocations(secret, Buffer.alloc(32, 0x11), qMatch[1]);
+            } catch (error) {
+                bound = true;
+            }
+            check(where + 'the q= block is bound to its bundle id', bound);
+        }
+
+        // 13. The archive: the whole folder, built by the function the page
+        //     calls, then checked by an independent reader and by unzip itself.
+        const zip = await G.zipBundle(fetcher, tree.files, tree.dirs, {});
+        const zipBytes = Buffer.from(join(zip.parts));
+        const zipPath = path.join(__dirname, '.build', 'zip-' + bundle.name + '.zip');
+        fs.writeFileSync(zipPath, zipBytes);
+
+        const entries = readZip(zipBytes);
+        check(where + 'the archive holds every file and folder',
+              entries.length === tree.files.length + tree.dirs.length,
+              entries.length + ' entries for ' + tree.files.length + ' files and '
+                  + tree.dirs.length + ' folders');
+        check(where + 'every entry is stored, UTF-8, with no data descriptor',
+              entries.every((e) => e.method === 0 && (e.flags & 0x0800)
+                                  && (e.flags & 0x0008) === 0));
+        check(where + 'every entry\'s name is the name in its local header',
+              entries.every((e) => e.name === e.localName));
+
+        const names = G.zipNames(tree.files, tree.dirs);
+        const fileIndex = new Map();
+        tree.files.forEach((file, i) => fileIndex.set(names.files[i], file));
+        let filesAgree = true;
+        let foldersAgree = true;
+        entries.forEach((entry) => {
+            if (entry.name.slice(-1) === '/') {
+                if (entry.uncompressed !== 0 || entry.crc !== 0
+                    || names.dirs.indexOf(entry.name.slice(0, -1)) < 0)
+                    foldersAgree = false;
+                return;
+            }
+            const file = fileIndex.get(entry.name);
+            const want = file
+                ? bundle.files.find((candidate) => candidate.path === file.path)
+                : null;
+            const digest = G.base64UrlEncode(
+                crypto.createHash('sha256').update(entry.data).digest());
+            if (!want || entry.uncompressed !== want.size
+                || entry.crc !== G.crc32(entry.data) || digest !== want.sha256) {
+                filesAgree = false;
+                console.log('       ' + entry.name + ': '
+                            + (want ? 'mismatch' : 'not in the bundle'));
+            }
+        });
+        check(where + 'every file comes out as libkelp\'s plaintext', filesAgree);
+        check(where + 'every folder is an entry of its own', foldersAgree);
+        check(where + 'the writer\'s byte count is the folder\'s',
+              zip.bytes === bundle.files.reduce((sum, f) => sum + f.size, 0));
+
+        // The real tool's verdict, not only our own reader's.
+        let unzipSays = '';
+        try {
+            unzipSays = execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' });
+        } catch (error) {
+            unzipSays = String(error.stdout || '') + String(error.stderr || '');
+        }
+        check(where + 'unzip -t accepts the archive',
+              /No errors detected/.test(unzipSays),
+              unzipSays.trim().split('\n').slice(-1)[0]);
+        const listed = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' })
+            .trim().split('\n');
+        check(where + 'unzip lists exactly the names the writer meant',
+              sameNames(listed, entries.map((e) => e.name)),
+              listed.join(', ') + ' vs ' + entries.map((e) => e.name).join(', '));
+
+        // A lying relay aborts the archive: no blob, no file.
+        let zipRefused = false;
+        try {
+            const liar = shim(bundle, { corrupt: G.base32Encode(tree.files[0].chunks[0]) });
+            const liarFetcher = G.makeFetcher(rootId, keys.relayToken, keys.contentKey,
+                                              liar.doFetch);
+            await G.zipBundle(liarFetcher, tree.files, tree.dirs, {});
+        } catch (error) {
+            zipRefused = /does not match its address|did not open/.test(error.message);
+        }
+        check(where + 'a lying relay builds no archive', zipRefused);
     }
+
+    // 14. CRC-32: the values every ZIP reader must agree with.
+    check('crc32 of nothing is 0', G.crc32(new Uint8Array(0)) === 0);
+    check('crc32 of "123456789" is 0xCBF43926',
+          G.crc32(Buffer.from('123456789')) === 0xCBF43926,
+          '0x' + G.crc32(Buffer.from('123456789')).toString(16));
+    check('crc32 of the pangram is 0x414FA339',
+          G.crc32(Buffer.from('The quick brown fox jumps over the lazy dog')) === 0x414FA339);
+
+    // 15. Names: every way a sender's path could leave the folder, or collide.
+    const safeCases = [
+        ['plain.txt', 'plain.txt'],
+        ['sub/plain.txt', 'sub/plain.txt'],
+        ['/etc/passwd', 'etc/passwd'],
+        ['../../x', '_/_/x'],
+        ['a\\b.txt', 'a_b.txt'],
+        ['..', '_'],
+        ['.', '_'],
+        ['trail. ', 'trail'],
+        ['C:evil', '_C:evil'],
+        ['a//b', 'a/b'],
+        ['', '']
+    ];
+    let safeAgree = true;
+    safeCases.forEach(([input, want]) => {
+        if (G.zipSafeName(input) !== want) {
+            safeAgree = false;
+            console.log('       ' + JSON.stringify(input) + ' -> '
+                        + JSON.stringify(G.zipSafeName(input)) + ', wanted '
+                        + JSON.stringify(want));
+        }
+    });
+    check('every unsafe path is neutralised', safeAgree);
+
+    const duplicateNames = G.zipNames(
+        [{path: 'A.txt'}, {path: 'a.txt'}, {path: 'dir/x'}, {path: 'dir/X'}],
+        ['dir', 'DIR']);
+    check('names that collide on a case-insensitive disk are separated',
+          sameNames(duplicateNames.dirs, ['dir', 'DIR (2)'])
+              && sameNames(duplicateNames.files,
+                           ['A.txt', 'a (2).txt', 'dir/x', 'dir/X (2)']),
+          duplicateNames.dirs.join(',') + ' | ' + duplicateNames.files.join(','));
+
+    // 16. The caps and the stop: no fetch, no archive.
+    let bigFetched = false;
+    let bigRefused = false;
+    try {
+        await G.zipBundle(function () {
+            bigFetched = true;
+            return Promise.resolve(new Uint8Array(0));
+        }, [{path: 'x', size: G.ZIP_MAX_BYTES + 1, chunks: []}], [], {});
+    } catch (error) {
+        bigRefused = true;
+    }
+    check('a folder over the byte cap is refused before fetching', bigRefused && !bigFetched);
+
+    let manyRefused = false;
+    try {
+        await G.zipBundle(function () {
+            return Promise.resolve(new Uint8Array(0));
+        }, new Array(G.ZIP_MAX_ENTRIES + 1).fill({path: 'x', size: 0, chunks: []}), [], {});
+    } catch (error) {
+        manyRefused = true;
+    }
+    check('a folder over the entry cap is refused', manyRefused);
+
+    let cancelled = false;
+    let cancelFetched = false;
+    try {
+        await G.zipBundle(function () {
+            cancelFetched = true;
+            return Promise.resolve(new Uint8Array(3));
+        }, [{path: 'a', size: 3, chunks: [new Uint8Array(1)]}], [],
+        {cancelled: function () { return true; }});
+    } catch (error) {
+        cancelled = error.cancelled === true;
+    }
+    check('cancelling stops before the first file, with no archive',
+          cancelled && !cancelFetched);
+
+    let shortRefused = false;
+    try {
+        await G.zipBundle(function () {
+            return Promise.resolve(new Uint8Array(3));
+        }, [{path: 'a', size: 4, chunks: [new Uint8Array(1)]}], [], {});
+    } catch (error) {
+        shortRefused = /do not match/.test(error.message);
+    }
+    check('a file whose bytes disagree with its manifest aborts', shortRefused);
 
     // 11. The byte-level helpers, which everything above rests on.
     const roundTrip = G.base32Decode(G.base32Encode(G.base32Decode(fixture.bundles[0].bundle)));

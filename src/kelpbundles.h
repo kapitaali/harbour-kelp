@@ -134,6 +134,12 @@ public:
      * from the relay the share is actually published on, which is the one named in
      * its own link's `r=` (Settings only decides where *future* shares go).
      *
+     * `link` is the share's own kelp:// link, when the caller has it. Its sealed
+     * `q=` block moves into the fragment (`#q=…&k=…`): a bundle with no page is a
+     * folder, and the browser names the archive after it from that block (design
+     * §12.12). Only a block that decodes to this very id and secret is reused;
+     * anything else is omitted, and the archive falls back to `kelp-<8>.zip`.
+     *
      * The port is always written out: kelpRelayHostPort() supplies the tunnel's
      * default 9443, but a browser has no such default. https:// is the only form
      * that can work — WebCrypto and a service worker need a secure context — and
@@ -144,7 +150,8 @@ public:
      * `#p=` at the gateway), so the caller must not offer this there.
      */
     Q_INVOKABLE QVariantMap browserUrl(const QString &bundleId, const QString &secret,
-                                       const QString &relay);
+                                       const QString &relay,
+                                       const QString &link = QString());
 
     /*
      * The loopback preview (design §5.1).
