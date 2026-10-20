@@ -130,6 +130,39 @@ and usable by an app or (via §5) a browser.
 multihash/base32 CIDv1 over the same bytes. Where interoperability matters (§6) we emit a
 CID-shaped variant; where it doesn't, we keep the compact native form.
 
+### 2.1 Opening a link on the device
+
+A link is only useful if a tap in a chat lands somewhere. The app registers the native
+scheme: `harbour-kelp.desktop` carries `MimeType=x-scheme-handler/kelp;` and an `Exec` that
+goes through the platform launcher (`invoker`), so the handler runs inside Sailjail exactly
+as it does from the app grid. `kelp://` is not a web scheme and a browser will not open it;
+that is the point — nothing on the web can hand a fragment to the app.
+
+What a tap does is deliberately small: it **prefills *Open a link*** and nothing else. It is
+not consent to fetch, not a save, not an unlock — the page's own button is still the only
+thing that starts anything. The full design, including the rules below, is
+`META-INF/scheme-plan.md`.
+
+- **One instance.** A share list and its store must have one writer. If Kelp is already
+  running, the new process does not open a window: it forwards the URL over a private
+  `QLocalSocket` at `<data>/link.sock` (`0600`) and exits. The running instance pushes
+  **Open a link** — or, if that page is already showing, replaces the link on it — instead of
+  stacking a second copy.
+- **The key is in `argv`.** The OS starts a handler with the URL as an argument, and
+  `/proc/<pid>/cmdline` is readable by the same user's processes for as long as that process
+  lives. So the forwarder's life is milliseconds and the URL is never written to a log, a
+  file, or a notification. This residual exposure is accepted, not denied; a D-Bus activation
+  interface would keep the URL out of `argv`, but it has its own ways of being read by the
+  wrong local process.
+- **One message, validated at both ends.** Only `kelp://`, 1–4096 bytes, no control
+  characters or newline; one line per connection, and the next process may take a socket
+  left behind by a crash.
+- **The compositor decides whether a window comes forward.** A cold start (Kelp not running)
+  is foregrounded like any new window. A running, backgrounded Kelp cannot raise itself: on
+  Qt 5.6 there is no activation protocol a background client may use, and Lipstick's window
+  APIs are privileged. The link is waiting on the page when the user next opens Kelp; see
+  `META-INF/scheme-plan.md` for the device evidence.
+
 ---
 
 ## 3. The location layer (where the bytes actually come from)

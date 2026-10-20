@@ -79,3 +79,11 @@ rm -rf %{buildroot}
 %{_datadir}/harbour-kelp
 %{_datadir}/applications/harbour-kelp.desktop
 %{_datadir}/icons/hicolor/*/apps/harbour-kelp.png
+
+# The desktop file claims x-scheme-handler/kelp, and GIO only finds a handler
+# through the desktop database this rebuilds (scheme-plan.md).
+%post
+update-desktop-database %{_datadir}/applications &>/dev/null || :
+
+%postun
+update-desktop-database %{_datadir}/applications &>/dev/null || :

@@ -28,6 +28,7 @@
 #include "kelpclient.h"
 #include "kelpdevicestate.h"
 #include "kelpfiles.h"
+#include "kelphandoff.h"
 #include "kelplog.h"
 #include "kelppolicy.h"
 #include "kelpqr.h"
@@ -50,6 +51,48 @@ int main(int argc, char *argv[])
     // Install first: this way any QML load error that follows is captured in
     // the log file, not only on stderr.
     KelpLog::install();
+
+    // Scheme activation (META-INF/scheme-plan.md). The system starts this process
+    // with the kelp:// URL when the scheme is opened in another app. If an
+    // instance is already serving, hand the link over and exit without a window;
+    // otherwise this process becomes the instance. The socket is bound before the
+    // UI exists so a second activation during startup still finds it.
+    KelpHandoff handoff;
+    const QString schemeLink = KelpHandoff::linkFromArguments(QCoreApplication::arguments());
+    bool mayReplaceStale = false;
+    if (!schemeLink.isEmpty()) {
+        QString handoffError;
+        const KelpHandoff::Result sent = handoff.forward(schemeLink, &handoffError);
+        if (sent == KelpHandoff::Sent) {
+            qInfo() << "Kelp: handed the link to the running instance";
+            return 0;
+        }
+        if (sent == KelpHandoff::Unresponsive) {
+            // Never start beside a live instance: two of them rewrite shares.json.
+            qWarning() << "Kelp: an instance is running but did not take the link:"
+                       << handoffError;
+            return 1;
+        }
+        mayReplaceStale = true;          // NoServer/Refused: nobody is serving
+    } else if (handoff.instanceRunning()) {
+        qInfo() << "Kelp: another instance is already running";
+        return 0;
+    } else {
+        mayReplaceStale = true;          // no socket, or a stale one
+    }
+
+    QString handoffError;
+    if (!handoff.listen(mayReplaceStale, &handoffError)) {
+        // Lost the race to an activation that bound the socket first. Forward to
+        // the winner instead of running beside it.
+        if (!schemeLink.isEmpty()
+                && handoff.forward(schemeLink) == KelpHandoff::Sent) {
+            qInfo() << "Kelp: handed the link to the instance that started first";
+            return 0;
+        }
+        qWarning() << "Kelp: cannot take the link socket:" << handoffError;
+        return 1;
+    }
 
     QScopedPointer<QQuickView> view(SailfishApp::createView());
 
@@ -113,14 +156,11 @@ int main(int argc, char *argv[])
 
     // A link handed to the app on the command line, or in KELP_INITIAL_LINK, is
     // offered to the Open-a-link page at startup. It is how a link reaches a
-    // device with no usable clipboard (the emulator over ssh), and it is the
-    // same seam a kelp:// scheme activation will use.
+    // device with no usable clipboard (the emulator over ssh), and it is the same
+    // seam a kelp:// scheme activation uses: the validated argument above.
     QString initialLink = QString::fromLocal8Bit(qgetenv("KELP_INITIAL_LINK")).trimmed();
-    for (int i = 1; i < argc && initialLink.isEmpty(); ++i) {
-        const QString argument = QString::fromLocal8Bit(argv[i]);
-        if (argument.startsWith(QStringLiteral("kelp://"), Qt::CaseInsensitive))
-            initialLink = argument.trimmed();
-    }
+    if (initialLink.isEmpty())
+        initialLink = schemeLink;
     if (!initialLink.isEmpty())
         qInfo() << "Kelp: opening a link given at startup";
 
@@ -150,6 +190,28 @@ int main(int argc, char *argv[])
     // than a context property (the page instantiates it).
     qmlRegisterType<KelpQrCode>("harbour.kelp", 1, 0, "KelpQrCode");
 
+    // A link that arrives after startup is a tap in another app. It goes to the
+    // same page the startup argument would have opened — prefilled, never opened
+    // by itself (scheme-plan.md, rule 1). Queued so the page push happens on a
+    // settled event loop, and buffered for the one moment before the root object
+    // exists.
+    QString pendingLink;
+    QQuickView *const window = view.data();
+    QObject::connect(&handoff, &KelpHandoff::linkArrived, window,
+                     [window, &pendingLink](const QString &link) {
+                         if (!window->rootObject()) {
+                             pendingLink = link;
+                             return;
+                         }
+                         window->requestActivate();
+                         // Only the fact, never the link: its fragment is the key.
+                         qInfo() << "Kelp: a link was handed over by another app";
+                         QMetaObject::invokeMethod(window->rootObject(),
+                                                   "openLink",
+                                                   Q_ARG(QVariant, link));
+                     },
+                     Qt::QueuedConnection);
+
     view->setSource(SailfishApp::pathTo("qml/harbour-kelp.qml"));
 
     // QQuickView shows an empty window on load failure without reporting
@@ -159,6 +221,12 @@ int main(int argc, char *argv[])
         for (int i = 0; i < errors.count(); ++i)
             qWarning() << errors.at(i).toString();
         qWarning() << "Failed to load" << view->source();
+    }
+
+    if (!pendingLink.isEmpty()) {
+        QMetaObject::invokeMethod(view->rootObject(), "openLink",
+                                  Q_ARG(QVariant, pendingLink));
+        pendingLink.clear();
     }
 
     view->showFullScreen();

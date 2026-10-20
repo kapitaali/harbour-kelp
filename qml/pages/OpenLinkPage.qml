@@ -23,6 +23,10 @@ import "../components"
 Page {
     id: openPage
 
+    // Named so the root's openLink() can recognise the page already on the
+    // stack and replace its link instead of stacking another one.
+    objectName: "openLinkPage"
+
     // The link as typed or pasted. Kept so a failed attempt can simply be
     // re-run, and so the preview has something to parse.
     property string link: ""

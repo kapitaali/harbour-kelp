@@ -45,6 +45,24 @@ ApplicationWindow {
         kelpBundles.setRelays(relays)
     }
 
+    // The one way into the Open-a-link page: a link the user pasted, one given at
+    // startup, or one another app just handed over (src/kelphandoff.cpp calls this
+    // by name). Prefill only — nothing is fetched until the page's own button is
+    // pressed, so an activation is never consent to fetch (scheme-plan.md).
+    function openLink(link) {
+        if (!link || link.length === 0)
+            return
+        // A second link while the page is showing replaces it instead of stacking
+        // a page: onLinkChanged resets the passphrase state there. The page names
+        // itself, so this does not depend on what push() returns.
+        var page = pageStack.currentPage
+        if (page && page.objectName === "openLinkPage") {
+            page.link = link
+            return
+        }
+        pageStack.push(Qt.resolvedUrl("pages/OpenLinkPage.qml"), { link: link })
+    }
+
     function addBundle(info) {
         kelpLog.info("addBundle: name=\"" + info.name + "\" kind=" + info.kind
                      + " files=" + info.files + " size=" + info.size
@@ -456,8 +474,7 @@ ApplicationWindow {
 
         interval: 400
         repeat: false
-        onTriggered: pageStack.push(Qt.resolvedUrl("pages/OpenLinkPage.qml"),
-                                    { link: initialLink })
+        onTriggered: kelp.openLink(initialLink)
     }
 
     initialPage: Component { BundlesPage { store: kelp } }

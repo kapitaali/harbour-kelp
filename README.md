@@ -68,7 +68,9 @@ and test.
 - **Open a link** — paste a `kelp://` link and download the bundle. The link is
   explained before anything happens (name, content address, where it will be
   fetched from), you pick the folder to save into, and the download reports
-  progress and then where the files went.
+  progress and then where the files went. A link tapped in another app (a chat, a
+  mail) arrives on this same page prefilled, and is just as inert until the button
+  is pressed — design §2.1.
   A link that needs a **passphrase** (the one a sender minted with *Require a
   passphrase*) shows a masked field and an *Unlock* button instead of that
   explanation: the name, the address and the kind are all under the key the
@@ -353,6 +355,9 @@ src/
                          restores and re-serves them (owner-only JSON)
   kelpfiles.{h,cpp}      KelpFiles: which file in a folder is its page (the same
                          rule the preview uses), and sizes in words
+  kelphandoff.{h,cpp}    KelpHandoff: the kelp:// scheme's door — validate the URL,
+                         hand it to the running instance over a 0600 socket, or
+                         become the instance (design §2.1)
   kelpfetch.{h,cpp}      KelpSource and its two implementations: the LAN fast path
                          and the relay tunnel, behind one interface
   kelpclient.{h,cpp}     KelpClient, the other end: fetches a link, verifies what
@@ -480,8 +485,8 @@ and a link holds the decryption key (see *Development builds*).
 
 `KELP_INITIAL_LINK=<kelp://…>` (or passing the link as an argument) opens that
 link in *Open a link* at startup. This is how a link is handed *to* a device
-that cannot paste into it, and it is the same seam a `kelp://` activation will
-use later.
+that cannot paste into it, and it is the same page a `kelp://` activation fills
+(design §2.1).
 
 `KELP_ADVERTISE_HOST=<address>` makes a link name that address instead of the one
 the listener bound. It is for a device reachable only through another one — the
