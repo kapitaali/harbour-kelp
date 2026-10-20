@@ -1295,6 +1295,13 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    the question for the case a publisher can declare: view-only, held in memory for the session,
    so there is nothing on disk either to keep or to prune.)*
 
+   *(**2026-10-20: answered — nothing is kept. A received bundle is a one-shot.** Its files are
+   saved as ordinary files, its key and its row are not, and its objects are free to be pruned once
+   nothing needs them. The vanishing is the point: receiving a link must not leave a capability on
+   this device, and a kept key would be exactly that. So "preview someone else's page later" is not
+   a goal, the receive-side offer stays session-only (§5.5), and §12.10's prompt has no caller until
+   a preview of someone else's page exists at all.)*
+
 *(Resolved: name **Kelp**, app id `harbour-kelp`, native link scheme `kelp://` — kept.)*
 
 ---
