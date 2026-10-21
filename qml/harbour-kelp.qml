@@ -30,20 +30,10 @@ ApplicationWindow {
     // means never over mobile data, and a low battery stops serving until it is
     // charging again.
 
-    // Where bundles are published for recipients off the local network. Empty by
-    // default: a share is LAN-only until a relay is named, so nothing is sent
-    // anywhere the user did not ask for. "host:port" — see README.
-    property string relayUrl: ""
-    onRelayUrlChanged: applyRelays()
-
-    // A plain function, not just the property-change handler: a signal handler
-    // is not callable by name in QML, so Component.onCompleted cannot invoke it
-    // directly.
-    function applyRelays() {
-        var relays = relayUrl.length > 0 ? [relayUrl] : []
-        kelpLog.info("Kelp: relays = " + relays)
-        kelpBundles.setRelays(relays)
-    }
+    // No relay is configured here. A relay is a separate server that the app
+    // neither hosts nor asks for; this app serves and fetches only over the local
+    // network. The relay protocol and its tests remain in the tree, but no app
+    // path publishes to or opens through one.
 
     // The one way into the Open-a-link page: a link the user pasted, one given at
     // startup, or one another app just handed over (src/kelphandoff.cpp calls this
@@ -137,10 +127,10 @@ ApplicationWindow {
         updateShareCounters()
     }
 
-    // Silences a share without forgetting it: stop serving (LAN and relay), keep
-    // the row and the objects. The address in the link is now dead, so the link
-    // is dropped with it; resuming mints a fresh one. Returns false if there is
-    // nothing at that row or it is already paused.
+    // Silences a share without forgetting it: stop serving, keep the row and the
+    // objects. The address in the link is now dead, so the link is dropped with
+    // it; resuming mints a fresh one. Returns false if there is nothing at that
+    // row or it is already paused.
     function pauseShare(index) {
         if (!bundlesModel || index < 0 || index >= bundlesModel.count)
             return false
@@ -456,7 +446,6 @@ ApplicationWindow {
     Component.onCompleted: {
         kelpLog.info("Kelp " + appVersion + " (build " + buildId
                      + ") UI ready; log file: " + kelpLog.filePath())
-        kelp.applyRelays()                // hand the configured relay to the publisher
         kelp.restoreShares()              // serve the shares saved by earlier runs
         // A launch into a blocked state (on mobile data, or a low battery) has
         // no change to react to, so the policy is applied once explicitly —

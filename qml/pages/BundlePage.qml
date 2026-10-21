@@ -33,19 +33,15 @@ Page {
 
     /*
      * Where the objects can be fetched from, which is not part of the hash: the
-     * address is a hint carried in the link's query. Today that is the sender's
-     * LAN address, when it is listening; relays come later.
+     * address is a hint carried in the link's query. Today that is only the
+     * sender's LAN address, when it is listening; the app does not configure a
+     * relay.
      */
     function whereText() {
         if (!linkParts || !linkParts.ok)
             return qsTr("unknown")
-        var found = []
-        if (linkParts.lan.length > 0)
-            found.push(qsTr("LAN %1").arg(linkParts.lan))
-        for (var i = 0; i < linkParts.relays.length; ++i)
-            found.push(qsTr("relay %1").arg(linkParts.relays[i]))
-        return found.length > 0 ? found.join(qsTr(", "))
-                                : qsTr("(none yet)")
+        return linkParts.lan.length > 0 ? qsTr("LAN %1").arg(linkParts.lan)
+                                        : qsTr("(none yet)")
     }
 
     // The one address that matters on this page: what a recipient would dial.
@@ -75,70 +71,8 @@ Page {
     property bool isWebpage: !!bundlePage.entry && bundlePage.entry.page === true
                              && bundlePage.page !== null && bundlePage.page.hasPage
 
-    /*
-     * The browser's door to this share (design §5.2, C4b-plan.md slice 4):
-     * https://<relay>/b/<bundle-id>#q=…&k=<secret>, for a recipient with no app.
-     *
-     * Offered wherever a browser can use it: a webpage runs there, and a folder
-     * is taken from there — file by file, or all of them as one ZIP (§12.12). The
-     * relay is the one this share is published on — its own link's `r=` — because
-     * Settings only decides where the next share goes. A paused share, one with
-     * no relay and a passphrase share get no address. The *preview* is still
-     * webpage-only: a folder has no page to run.
-     */
-    property bool browserLinkOffered: !paused
-                                      && linkParts && linkParts.ok
-                                      && !linkParts.needsPassphrase
-                                      && linkParts.relays.length > 0
-
-    // The section that talks about a browser: a webpage always (its note explains
-    // why there is no address when there is none), a folder only when there is an
-    // address to offer.
-    property bool browserSectionShown: isWebpage || browserLinkOffered
-
-    /*
-     * The command behind the button, named so it can be driven by name (the
-     * device test calls it) and so the guard is not repeated.
-     *
-     * The URL is copied and never logged: it carries the secret. browserUrl()
-     * does the checks and the port normalisation, so this only reports what it
-     * says.
-     */
-    function copyBrowserLink() {
-        // The button is disabled whenever this is false; the guard is here as
-        // well so no other path — a test, an accessibility action — can mint a
-        // key-bearing URL on a share that must not offer one.
-        if (!browserLinkOffered)
-            return
-        if (!entry || !linkParts || linkParts.relays.length === 0)
-            return
-        var built = kelpBundles.browserUrl(entry.bundleId, entry.secret,
-                                           linkParts.relays[0], entry.link)
-        if (!built.ok) {
-            toast.show(built.error.length > 0
-                       ? built.error : qsTr("Could not build a browser link"))
-            return
-        }
-        Clipboard.text = built.url
-        kelpLog.info("BundlePage: browser link copied for \"" + entry.name + "\"")
-        toast.show(qsTr("Browser link copied"))
-    }
-
-    function browserLinkNote() {
-        // A paused row has no link at all (pauseShare drops it), so this has to
-        // come before the "cannot be read" branch or a pause looks like damage.
-        if (bundlePage.paused)
-            return qsTr("Resume this share to copy a browser link: nothing is being served while it is paused.")
-        if (!bundlePage.linkParts || !bundlePage.linkParts.ok)
-            return qsTr("This share's link cannot be read, so there is no address a browser could use.")
-        if (bundlePage.linkParts.needsPassphrase)
-            return qsTr("A browser cannot ask for the passphrase, so this share opens in Kelp only.")
-        if (bundlePage.linkParts.relays.length === 0)
-            return qsTr("A browser link needs a relay. This share was made without one, so there is no address a browser could open — set a relay in Settings and share again.")
-        if (bundlePage.isWebpage)
-            return qsTr("Copy this for someone who has no Kelp: their browser fetches the page from the relay and decrypts it there. It works only while this share is being served, and it carries the same key as the link above.")
-        return qsTr("Copy this for someone who has no Kelp: their browser fetches the folder from the relay and decrypts it there — the files one at a time, or all of them as one ZIP. It works only while this share is being served, and it carries the same key as the link above.")
-    }
+    // The browser section is webpage-only: a page can be previewed locally. A
+    // folder has no page to run, and there is no relay address to copy.
 
     function lookForPage() {
         page = null
@@ -255,8 +189,8 @@ Page {
 
             // A kelp:// link is three parts: the content address, where to fetch
             // the objects from, and the key. Spelling them out makes it obvious
-            // which one is missing — the middle one, until the relay lands and a
-            // link works away from the local network too.
+            // which one is missing — the middle one is the LAN address, because
+            // the app does not configure a relay.
             Label {
                 visible: !bundlePage.paused
                 x: Theme.horizontalPageMargin
@@ -351,12 +285,11 @@ Page {
                 }
             }
 
-            // The browser's door (design §5.2): a webpage is offered the preview
-            // and the copyable address; a folder only the address, because a
-            // folder has no page to run — its view there is the file list and the
-            // one-ZIP download (§12.12).
+            // The local preview (design §5.2): only a webpage has a page to run.
+            // A folder is files, not a browser view, and there is no relay
+            // address to offer.
             SectionHeader {
-                visible: bundlePage.browserSectionShown
+                visible: bundlePage.isWebpage
                 text: qsTr("In a browser")
             }
 
@@ -385,7 +318,7 @@ Page {
             // Wrapped in an Item so the buttons keep the page margin inside the
             // Column (positioners ignore child anchors).
             Item {
-                visible: bundlePage.browserSectionShown
+                visible: bundlePage.isWebpage
                 width: parent.width
                 height: webButtons.height
 
@@ -429,37 +362,7 @@ Page {
                         }
                     }
 
-                    /*
-                     * The same bundle for a recipient who has no Kelp at all: the
-                     * relay serves a loader, the browser derives the relay token
-                     * from the fragment and decrypts every object itself, so the
-                     * relay still sees ciphertext only. For a folder that loader
-                     * is the file list (and the one-ZIP button); for a webpage it
-                     * is the page.
-                     *
-                     * The URL is copied and never logged: it carries the secret.
-                     * browserUrl() does the checks and the port normalisation, so
-                     * this handler only reports what it says.
-                     */
-                    Button {
-                        objectName: "copyBrowserLink"
-                        width: parent.width
-                        text: qsTr("Copy browser link")
-                        enabled: bundlePage.browserLinkOffered
-                        onClicked: bundlePage.copyBrowserLink()
-                    }
                 }
-            }
-
-            Label {
-                objectName: "browserLinkNote"
-                visible: bundlePage.browserSectionShown
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                wrapMode: Text.Wrap
-                color: Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                text: bundlePage.browserLinkNote()
             }
 
             SectionHeader { text: qsTr("Sources") }
@@ -477,7 +380,7 @@ Page {
                          : (bundlePage.entry && bundlePage.linkParts && bundlePage.linkParts.ok
                             && bundlePage.linkParts.lan
                             && bundlePage.linkParts.lan.length > 0
-                            ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network needs the relay.")
+                            ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network cannot: this app does not configure a relay.")
                             : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device.")))
                       + bundlePage.swarmNote
             }

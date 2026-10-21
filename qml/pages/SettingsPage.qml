@@ -108,7 +108,7 @@ Page {
 
             TextSwitch {
                 text: qsTr("Include my local address in the link")
-                description: qsTr("Seal this device's LAN address and the share name into every link, encrypted with the link's own key, and serve the bundle there for a recipient on the same network. Whoever holds the whole link can still open it; anyone who sees the link without its #k= part cannot. Turn it off to keep the address out of the link entirely — the bundle is then not served on the LAN and only a relay can carry it.")
+                description: qsTr("Seal this device's LAN address and the share name into every link, encrypted with the link's own key, and serve the bundle there for a recipient on the same network. Whoever holds the whole link can still open it; anyone who sees the link without its #k= part cannot. Turn it off to keep the address out of the link entirely; the bundle is then not served on the LAN.")
                 checked: kelpSettings.includeLanAddress
                 onCheckedChanged: {
                     if (checked !== kelpSettings.includeLanAddress)
@@ -171,28 +171,6 @@ Page {
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeExtraSmall
                 text: qsTr("This is a permission, not a per-bundle setting: enable it here, then choose per share. Bundles stay encrypted either way — peers only ever exchange ciphertext they cannot read.")
-            }
-
-            SectionHeader { text: qsTr("Relay") }
-
-            TextField {
-                width: parent.width
-                label: qsTr("Relay address")
-                placeholderText: qsTr("host:port — leave empty for LAN only")
-                text: settingsPage.store ? settingsPage.store.relayUrl : ""
-                onTextChanged: {
-                    if (settingsPage.store && text !== settingsPage.store.relayUrl)
-                        settingsPage.store.relayUrl = text
-                }
-            }
-
-            Label {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                wrapMode: Text.Wrap
-                color: Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                text: qsTr("Where bundles are published so recipients on other networks can fetch them. Empty means LAN only. The relay forwards ciphertext it cannot read, and is given only a key of its own — not the content key.")
             }
 
             SectionHeader { text: qsTr("Storage") }

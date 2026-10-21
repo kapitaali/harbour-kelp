@@ -6,32 +6,30 @@
 
 Share a folder or file from the phone as a `kelp://` link. A recipient pastes the
 link into Kelp and it fetches the bundle. Content-addressed and encrypted by default,
-with the key travelling in the link fragment — the relay and any peers only ever
-see ciphertext. A link is a *capability*, so it is as secret as its key; when that is
+with the key travelling in the link fragment — any relay or peers only ever see
+ciphertext. A link is a *capability*, so it is as secret as its key; when that is
 awkward — a link pasted into a group chat, or written on a whiteboard — *Require a
 passphrase* mints one whose key is wrapped under a passphrase the sender gives
 separately, and the link alone opens nothing at all.
 
 Current state: **a bundle can be shared from the phone and opened on another
-device — on the same Wi-Fi, or across networks through a relay.** `libkelp`
-chunks, manifests, seals, hashes, verifies and reassembles bundles, with unit
-tests and pinned vectors; the app uses it for real in both directions. *Share…*
-offers a file, a folder, or a webpage — the folder holding a site — and choosing
-one seals it into on-device objects, starts a listener on this device's LAN
-address and produces a `kelp://` link carrying that address; pasting that link
-into *Open a link* on another device fetches the objects, checks each one against
-its address, decrypts the bundle and writes the files into *Downloads*. A webpage
-share also *says* it is a page, inside the link and under the key, so the link
-text still reveals nothing — that hint is what will let a recipient open the page
-in a browser and keep nothing (design §5.5); the receiving half of that is not
-built yet. If a relay is configured, the same press also opens an outbound TLS
-tunnel to it and puts its address in the link as `r=`, so a recipient on a
-*different* network can fetch through it — the phone never has to accept an
-inbound connection. Still missing: peers helping each other serve (the swarm),
-relay caching/stewards, the relay gateway that serves a recipient who has no app
-at all (§5.2), and the receiving half of webpage shares. Also sketched there, and
-deliberately *not* planned before a release: anonymous ephemeral chat
-(Appendix B) — parked, not a milestone.
+device on the same Wi-Fi.** `libkelp` chunks, manifests, seals, hashes, verifies
+and reassembles bundles, with unit tests and pinned vectors; the app uses it for
+real in both directions. *Share…* offers a file, a folder, or a webpage — the
+folder holding a site — and choosing one seals it into on-device objects, starts
+a listener on this device's LAN address and produces a `kelp://` link carrying
+that address; pasting that link into *Open a link* on another device fetches the
+objects, checks each one against its address, decrypts the bundle and writes the
+files into *Downloads*. A webpage share also *says* it is a page, inside the link
+and under the key, so the link text still reveals nothing — that hint is what will
+let a recipient open the page in a browser and keep nothing (design §5.5); the
+receiving half of that is not built yet. The app serves and fetches on the local
+network only: it has no relay address field and no relay fetch path. The
+`kelp-relay` program and its browser gateway remain separate programs in the
+tree, with their own tests, for a client that has one — see *Across networks*
+below. Still missing: peers helping each other serve (the swarm) and the receiving
+half of webpage shares. Also sketched there, and deliberately *not* planned before
+a release: anonymous ephemeral chat (Appendix B) — parked, not a milestone.
 See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design,
 [`META-INF/kelp-swarm-wire-spec.md`](META-INF/kelp-swarm-wire-spec.md) for the
 swarm wire format, and [`META-INF/BUILD.md`](META-INF/BUILD.md) for how to build
@@ -93,7 +91,7 @@ and test.
   something from a CDN renders without it (design §12.11). A page larger than 32 MiB is
   refused before anything is transferred, and says so.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
-  permission), relay address, *Include my local address in the link*, **Storage**
+  permission), *Include my local address in the link*, **Storage**
   (what the object store holds, what the shares need, and a *Remove unused
   objects* action), *Include links in the log*, and a *Clear log* action. *Share
   in background* is real: it decides whether Kelp asks the platform not to end it
@@ -140,9 +138,9 @@ without breaking links already out there.
 
 What varies per bundle is **how it is served**:
 
-- **Relay** — for anything wider than one network. The publisher dials out to a
-  relay (if one is configured) and the recipient fetches through it, so peers never
-  learn your IP address. This works today; see *Across networks* below.
+- **Relay** — not available from this app: there is no relay address field, and
+  every share is served on the local network. The relay and gateway are separate
+  programs (see *Across networks* below), not a mode this app can enter.
 - **Swarm** (opt-in per share) — not implemented yet. Other downloaders trade pieces directly with each
   other, offloading your connection for popular shares at the cost of exposing your
   IP to those peers. Available only when *Allow peer swarm* is on in Settings.
@@ -187,7 +185,8 @@ them — normally a private `192.168.x.x`, but a cellular bearer is a real IP. S
 keeps it out of the link *text*, but the recipient must still learn it to connect, so
 for a share that must not disclose where it is served from at all there is the switch:
 *Settings → Include my local address in the link* turns the whole path off — nothing
-is served locally, the link carries no address, and only a relay can carry the bundle.
+is served locally, the link carries no address, and this app has no relay path to
+carry it.
 
 Sharing is remembered. Each row — name, size, object counts, the bundle id and the
 secret — is written to a small owner-only file (`shares.json`, mode `0600`) beside
@@ -277,8 +276,9 @@ called out as *stopped answering*. The two are different faults, and the first
 is usually a network path that is not there at all — for instance an address
 behind a NAT with no way in.
 
-When the link also names a relay (`r=`), the relay is used instead — see below —
-which is what makes a link work off the local network.
+A link can also name a relay (`r=`), but this app's fetch path uses only a LAN
+address: a link with no LAN address has nothing this version can fetch from. The
+relay protocol and gateway remain separate programs (see below).
 
 A link that declares itself a **webpage** ends this walk differently: the objects
 go to a memory store of that view's own instead of the app's object store, nothing
@@ -292,6 +292,12 @@ than the device's storage would not fit, and a *view* holds its whole page in
 memory and so is capped at 32 MiB on purpose.
 
 ## Across networks: the relay
+
+> **Not in this app.** The app has no relay address field and no relay fetch path;
+> every share and every fetch is on the local network. The `kelp-relay` program,
+> its browser gateway and their tests remain in the tree for a client that has one,
+> but nothing in the app configures or uses them. The rest of this section
+> describes that separate piece.
 
 Two devices on one Wi-Fi need nothing but each other. Anything wider needs a third
 party, because a phone behind carrier NAT cannot accept a connection — so Kelp
@@ -312,9 +318,10 @@ kelp-relay --port 9443 --cert cert.pem --key key.pem
 ```
 
 One port, TLS 1.3 with ALPN `"kelp/1"`, serving both publisher tunnels and
-recipient fetches. Point the app's Settings at `host:port` and every new share
-publishes there and carries it in the link as `r=`. A relay is a few hundred lines
-and self-hosted; nothing about a link requires any particular one.
+recipient fetches. A client that has a relay setting would point it at `host:port`;
+this app does not. Such a client's new shares would publish there and carry it in
+the link as `r=`. A relay is a few hundred lines and self-hosted; nothing about a
+link requires any particular one.
 
 ## The content layer (`libkelp`)
 

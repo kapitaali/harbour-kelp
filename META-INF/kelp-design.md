@@ -448,24 +448,30 @@ has the counts. The seam is `KelpBundles::pageInfo/previewPage/endPreview`, and 
 a **browser section** on a share's own page (headed *In a browser* since 2026-10-21). Its
 *Open in browser* button is shown only for a share the publisher **declared a webpage** (§5.5),
 not merely because an `index.html` is in the bundle: the kind is what the preview is for, and a
-folder share stays a folder (§5.4, dropped 2026-10-18). The same section's *Copy browser link* is
-offered for a folder too, because §12.12 gave a folder a browser view to reach (§3.41). No menu
-was added: a labelled section on the page is where the design put it, and the whole flow is one
-button.
+folder share stays a folder (§5.4, dropped 2026-10-18). The same section's *Copy browser link*
+was offered for a folder too, because §12.12 gave a folder a browser view to reach (§3.41); it
+was removed on 2026-10-21 with the relay address field (see below). No menu was added: a
+labelled section on the page is where the design put it, and the whole flow is one button.
+
+> **Removed from the app 2026-10-21.** The relay address field and *Copy browser
+> link* are gone. The app shares and fetches on the local network only, and the
+> browser section is webpage-only (*Open in browser*, the local preview). The
+> gateway and the URL shape below remain for a sender that has a relay; this app
+> mints none, so a folder has no browser door here.
 
 **Second button: *Copy browser link* (built 2026-10-20; folders 2026-10-21).** The §5.2 gateway
-needs an address a sender would otherwise have to assemble by hand, so the browser section has
-one more button that puts `https://<relay>/b/<bundle-id>#q=…&k=<secret>` on the clipboard (the
+needs an address a sender would otherwise have to assemble by hand, so the browser section had
+one more button that put `https://<relay>/b/<bundle-id>#q=…&k=<secret>` on the clipboard (the
 `q=` block is the link's sealed label — and, for a webpage, its page flag — reused only when it
-decodes to that very id and secret — §12.12). It is built from the relay named in the share's
-*own* link — Settings only decides where the next share is published — with the port always
+decodes to that very id and secret — §12.12). It was built from the relay named in the share's
+*own* link — the field decided where the next share was published — with the port always
 written out (`:9443` when omitted) and `https` only, because the relay is TLS-only and the
 browser needs a secure context.
-It is **never offered for a passphrase share**: the app holds the plaintext secret, so a `#k=`
+It was **never offered for a passphrase share**: the app holds the plaintext secret, so a `#k=`
 URL would undo the passphrase, and D4 already refuses `#p=` at the gateway. No relay, no
-address; a paused share resumes before it has one. The URL carries the key, so it is copied and
-never logged. `PROGRESS-<date>.md` §3.37 has the webpage device evidence and §3.41 the folder
-one.
+address; a paused share resumed before it had one. The URL carries the key, so it was copied
+and never logged. `PROGRESS-<date>.md` §3.37 has the webpage device evidence and §3.41 the
+folder one; both are history now that the button is gone.
 
 **What is not built yet.** The lazy fetch through `KelpSource`, so a preview serves exactly what
 the store already holds and answers `503` for anything else. The per-bundle confirmation
@@ -582,14 +588,15 @@ core — `pageSession()` — rather than two agreeing literals: both keys cross 
 and every URL in the bundle's space is named by its **chunks, in order**, which the worker
 concatenates exactly as the file list download does.
 
-*Built (2026-10-20, the app's half) — `PROGRESS-<date>.md` §3.37; folders 2026-10-21, §3.41.*
-A sender no longer assembles the URL by hand: **Copy browser link** on a share's page — a
-webpage's, and a folder's too — mints `https://<relay>/b/<id>#q=…&k=<secret>` from the relay the
-share's *own* link names (Settings only decides where the next share goes). It is never offered
-for a passphrase share — the app holds the plaintext secret, so `#k=` would undo the passphrase,
-and D4 keeps `#p=` out of the gateway — and a share with no relay has no browser address at all,
-which the page says rather than offering a dead button. The folder's address opens §12.12's file
-list and its one-ZIP download; its *Open in browser* preview stays webpage-only.
+*Built (2026-10-20, the app's half) — `PROGRESS-<date>.md` §3.37; folders 2026-10-21, §3.41.
+Removed from the app 2026-10-21 with the relay address field; the gateway remains.*
+**Copy browser link** on a share's page — a webpage's, and a folder's too — minted
+`https://<relay>/b/<id>#q=…&k=<secret>` from the relay the share's *own* link named. It was never
+offered for a passphrase share — the app holds the plaintext secret, so `#k=` would undo the
+passphrase, and D4 keeps `#p=` out of the gateway — and a share with no relay had no browser
+address at all, which the page said rather than offering a dead button. The folder's address
+opened §12.12's file list and its one-ZIP download; its *Open in browser* preview stayed
+webpage-only.
 
 ### 5.3 Which file is the page — the shared convention
 
@@ -993,9 +1000,12 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     missing-object 404 and a wrong-token 401 — all pass. (A `KelpTls` double-`closed()`
     crash this surfaced was fixed: `closed()` is now a one-shot, and the relay's teardown is
     idempotent.)
-  - **C3 (done) — cross-network fetch through a relay.** The app now publishes on a relay
-    and fetches from one. `KelpBundles::seal()` opens a `KelpTunnel` (src/kelptunnel.{h,cpp})
-    for the bundle when relays are configured (Settings → `setRelays`), registers
+  - **C3 (done) — cross-network fetch through a relay.** *Removed from the app 2026-10-21:
+    the relay address field is gone, and the app shares and fetches on the LAN only. The
+    library, relay program and gateway remain and are tested; no app path configures them.*
+    The app published on a relay and fetched from one. `KelpBundles::seal()` opens a
+    `KelpTunnel` (src/kelptunnel.{h,cpp}) for the bundle when a caller sets relays
+    (`setRelays`; the app no longer exposes a setting), registers
     `{bundle_id, relay_token, shape}` over TLS 1.3 + ALPN `"kelp/1"`, answers the relay's
     `WANT` from the store, keeps the tunnel alive with PING/PONG and reconnects with
     backoff; the relay's address rides in the link as `r=`. On the receiving side the fetch
@@ -1293,9 +1303,12 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
    does (`#q=…&k=…`, and only when the link decodes to that very id and secret). The folder view
    also had no door from the app: only a webpage share offered *Copy browser link*. **2026-10-21:
    built** — the section is *In a browser*, a folder share offers the copy button, and *Open in
-   browser* stays webpage-only; PROGRESS §3.41. Verified in a real Gecko and with `unzip -t`, the
-   extracted files matching libkelp's own digests; PROGRESS §3.39, recipe §4.8. `#p=` at the
-   gateway is still open, as is a browser-trusted domain/certificate.)*
+   browser* stays webpage-only; PROGRESS §3.41. **Removed from the app later that day:** the
+   relay address field and the copy button are gone, so this app no longer reaches the folder
+   view; the gateway and its ZIP remain for a sender that has a relay. Verified in a real Gecko
+   and with `unzip -t`, the extracted files matching libkelp's own digests; PROGRESS §3.39,
+   recipe §4.8. `#p=` at the gateway is still open, as is a browser-trusted
+   domain/certificate.)*
 13. **Keeping what a recipient receives** — a bundle fetched from a link is written out as
    ordinary files in Downloads, and the app keeps no key and no record of it: its objects are
    stored while it is verified (§11 C2b), but nothing points at them once the fetch ends, so

@@ -1,8 +1,13 @@
 # A browser door for a folder — plan (design §5.2, §12.12)
 
-**Status: built 2026-10-21 — placement A, QML only.** A folder share's page now offers
-*Copy browser link*; *Open in browser* stays webpage-only. Evidence: `PROGRESS-20261016.md`
-§3.41. The decision asked for in §7 was **option 1** (one generalised section).
+**Status: withdrawn 2026-10-21.** The relay address field was removed from the app, and
+with it *Copy browser link* and the folder door: the app shares and fetches on the local
+network only, so it cannot mint a browser address. This plan is history. The gateway and
+its ZIP view remain separate for a sender that has a relay.
+
+> The earlier status was *built 2026-10-21 — placement A, QML only*; evidence is in
+> `PROGRESS-20261016.md` §3.41. The rest of this document records that plan, not current
+> behaviour.
 
 ## 1. The gap
 

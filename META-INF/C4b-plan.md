@@ -8,6 +8,11 @@ recipient with the app, whose own app previews the page on `127.0.0.1` and hands
 browser. Here there is nothing on the recipient's device but a browser, so the *relay* is the one
 that hands out a URL, and the browser is the one that decrypts.
 
+> **App slice removed 2026-10-21.** The app's relay address field and *Copy browser link* are
+> gone; this app shares and fetches on the local network only and mints no gateway URL. The
+> gateway, loader and their tests remain, and the URL shape below is still what a sender that
+> has a relay would use. Slice 4 is history.
+
 ## Why this exists right now
 
 - The relay is built (C3): one port, TLS 1.3, ALPN `kelp/1`, tunnels plus token-gated fetches.
@@ -205,7 +210,7 @@ are available. If the guest browser will not trust a local CA, the honest fallba
 - **ZIP download** of a non-page bundle (D7).
 - **Passphrase links at the gateway** (D4).
 - **Swarm at the gateway.** The recipient path is a tunnel; peer swarms are C7.
-- ~~**The app's Copy browser link** button~~ — built in slice 4.
+- ~~**The app's Copy browser link** button~~ — built in slice 4, removed from the app 2026-10-21.
 - **h2/HTTP/2.** A browser offering `h2,http/1.1` is given `http/1.1`.
 
 ## Risks and traps
@@ -245,10 +250,11 @@ Roughly a week of careful work, in four slices: (1) ALPN + loader endpoints with
 (2) the core JS with Node fixtures, (3) the SW and the page/file-list UI, (4) the emulator
 browser test and the app's Copy browser link.
 
-**Status:** slices 1–3 are built (PROGRESS §3.35), the browser handover was fixed from a real
-browser (§3.36), and slice 4 is built and device-tested (§3.37).
+**Status:** slices 1–3 and the gateway are built (PROGRESS §3.35), and the browser handover was
+fixed from a real browser (§3.36). Slice 4 was built and device-tested (§3.37), then removed
+from the app on 2026-10-21 with the relay address field; the gateway remains.
 
-## Slice 4 — the app's *Copy browser link* (designed 2026-10-20)
+## Slice 4 — the app's *Copy browser link* (designed 2026-10-20; removed from the app 2026-10-21)
 
 The emulator test built the URL by hand. A sender should not have to: on a webpage share's page,
 one button puts the browser's door on the clipboard. The slice is small, but four choices in it
