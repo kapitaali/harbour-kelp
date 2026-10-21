@@ -17,9 +17,10 @@ on-device verification; nothing here is a rewrite of something that already work
 | K3 | The lazy fetch in the preview (`KelpSource` behind a session) | medium | §5.1's stated gap: a missing object is a `503` even when it could be fetched |
 | K4 | Passphrase links (§12.3) | large | Links carry their key, so a link is a secret; a passphrase link is not |
 
-**Status.** K1, K2, K3 and K4 are built, tested and committed. K3 is the *server seam*, not
-lazy-open: see its section, and `PROGRESS-20261016.md` §3.44. The normal view still fetches the
-whole bundle first, so lazy-open remains a separate decision.
+**Status.** K1, K2, K3 and K4 are built, tested and committed. K3 is the server seam
+(`PROGRESS-20261016.md` §3.44); lazy-open was then built on it the same day
+(`lazy-open-plan.md`, §3.45), so a view now fetches only the manifests and the browser pulls
+content on demand. The 32 MiB ceiling moved into the session that stores that content.
 
 **Order and reason.** K1 first because K2 has to read the toggles from somewhere durable. K2 next
 because it is the half the user's option led with. K3 and K4 are independent of K1/K2 and of each
@@ -257,36 +258,38 @@ line, so the port was stable).
 
 ## K3 — The lazy fetch in the preview
 
-**Built, 2026-10-21, as the seam only.** The earlier note here deferred this because a session
-was only ever opened over a complete store: the publisher's own preview reads objects that
-`pruneStore()` keeps for its share rows, and the view-only session (C4a.2) is opened only after
-`KelpClient` has fetched and verified the whole bundle. That is still true of the normal flow, so
-this change does not make pages open sooner; it removes the `503` that a *hole* would otherwise
-produce, and it is the seam a later lazy-open decision needs.
+**Built, 2026-10-21, as the seam.** At the time it was written, a session was only ever opened
+over a complete store: the publisher's own preview reads objects that `pruneStore()` keeps for its
+share rows, and the view-only session (C4a.2) was opened only after `KelpClient` had fetched and
+verified the whole bundle. That is no longer the normal flow: **lazy-open** was built the same day
+(`lazy-open-plan.md`, PROGRESS §3.45). A view now fetches the manifests, opens its session, and
+lets the browser pull the content through this seam. K3 is therefore reachable in production, not
+just a hole-healing affordance.
 
 The earlier deferral also asked who the caller would be. It is the view-only page session:
 `KelpClient` hands the source it fetched with to `KelpPreviewServer::open()`, and keeps the decoded
 link so a session re-minted after the idle sweep can get a fresh source without asking for a
 passphrase again. The publisher's own preview still gets none — its objects are in its own store,
-and if they were pruned there is nothing to fetch them from. Removing an object from the view's
-memory store is a test-only affordance (`forgetViewObject`); with it, `tst_kelpclient` proves the
-whole caller path, including the publisher being asked exactly once for the lost object.
+and if they were pruned there is nothing to fetch them from. The former test-only
+`forgetViewObject()` affordance is gone: lazy-open leaves real content holes, so the normal client
+path proves the fetch without a test seam.
 
 The design's one open question — whether a lazy *miss* may serve an object the 32 MiB page
 ceiling never counted — is answered yes, one object at a time, which is the same "bounded work
-per request" the server already promises. The ceiling and the up-front fetch themselves are
-unchanged.
+per request" the server already promises. Lazy-open kept the ceiling absolute: the session checks
+the store's byte count before storing an on-demand object, and stops its fetches with a `503` if
+the object would cross it.
 
 **The gap as designed (§5.1, and §11's item 4).** `KelpPreviewServer` resolves a browser's request
 against a store: what is there is served, what is not is a `503`. The design says the server should
 be "a resolver with the existing `KelpSource` fetching whatever the store lacks". That is the seam
 this builds.
 
-**What it is not.** It does not change the up-front fetch or the 32 MiB ceiling of a view-only
-webpage link (C4a.2's D-decisions stand). "Lazy-open" — starting a view after fetching only the root
-manifest and letting the browser pull the rest — is a *different* decision, deliberately not taken:
-it trades a predictable bounded transfer for a first paint. The seam built here is what makes that
-decision cheap to take later.
+**What K3 itself changed.** It did not change the up-front fetch or the 32 MiB ceiling; it only
+removed the `503` a hole would otherwise produce. "Lazy-open" — starting a view after fetching only
+the manifests and letting the browser pull the rest — was a *different* decision, and it was taken
+the same day as a follow-up: the view now fetches only the manifests, while the ceiling moved into
+the session that stores the on-demand content. `lazy-open-plan.md` is that decision.
 
 **The design, as built.** `KelpPreviewServer::open()` gained an optional `KelpSource *source` (the
 class already exists in `src/kelpfetch.h`; the server is app layer, so it may hold one). The session
@@ -318,11 +321,14 @@ object and a fake source that answers → `200` and the exact bytes; the same wi
 (the old behaviour, unchanged); one file's three missing chunks fetched once for **two** concurrent
 requests → both `200`, three source calls; a source that fails → `503`; a source that answers with
 bytes that do not hash to the id → `502`; and a parked request that nobody ever answers → `503`
-after the deadline. A ten-chunk file is asked for four at a time and never more, and closing a
-session while its request is parked answers `404` instead of leaving the browser hanging.
-`tst_kelpclient` removes one object from the view's memory after a completed fetch, opens the
-session, and proves the browser's request heals it through the real `LanSource`.
-The counts are `tst_kelppreview` 206 → 256 and `tst_kelpclient` 152 → 167.
+after the deadline. A ten-chunk file is asked for four at a time and never more; closing a
+session while its request is parked answers `404` instead of leaving the browser hanging; and a
+session with a tight `storeLimit` refuses the object that would cross it, answers `503`, and
+records `Tally::overLimit` without storing it. `tst_kelpclient` now fetches only the manifests,
+opens the session, and proves the browser's requests pull the page and stylesheet through the real
+`LanSource`; it also proves the `/info` ceiling still refuses before any object, and that a
+session-level lie is stopped at the store. The counts are `tst_kelppreview` 206 → 262 and
+`tst_kelpclient` 152 → 178.
 
 ---
 

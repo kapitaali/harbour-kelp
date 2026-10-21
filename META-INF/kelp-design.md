@@ -444,16 +444,19 @@ while an embedded WebView can also refuse a request outright.
 behind a byte range; the extension table — manifests only, never a data object) and
 `src/kelppreviewserver.{h,cpp}`. A session may also be given a `KelpSource`: an object the store
 lacks is then fetched on demand, verified, and served to the request waiting for it (§5.1's
-"resolver", built 2026-10-21). `src/tests/tst_kelppreview.cpp` drives the server over a real
-socket with no browser and no display, and `tst_kelpbundles` covers the app seam; `BUILD.md`
-has the counts. The seam is `KelpBundles::pageInfo/previewPage/endPreview`, and the first UI is
-a **browser section** on a share's own page (headed *In a browser* since 2026-10-21). Its
-*Open in browser* button is shown only for a share the publisher **declared a webpage** (§5.5),
-not merely because an `index.html` is in the bundle: the kind is what the preview is for, and a
-folder share stays a folder (§5.4, dropped 2026-10-18). The same section's *Copy browser link*
-was offered for a folder too, because §12.12 gave a folder a browser view to reach (§3.41); it
-was removed on 2026-10-21 with the relay address field (see below). No menu was added: a
-labelled section on the page is where the design put it, and the whole flow is one button.
+"resolver", built 2026-10-21). A received webpage uses that seam in **lazy-open** (also 2026-10-21):
+it fetches the manifests, opens the session, and lets the browser's requests pull the content, so
+the first paint does not wait for the whole bundle. `src/tests/tst_kelppreview.cpp` drives the
+server over a real socket with no browser and no display, and `tst_kelpbundles` covers the app
+seam; `BUILD.md` has the counts. The seam is `KelpBundles::pageInfo/previewPage/endPreview`, and
+the first UI is a **browser section** on a share's own page (headed *In a browser* since
+2026-10-21). Its *Open in browser* button is shown only for a share the publisher **declared a
+webpage** (§5.5), not merely because an `index.html` is in the bundle: the kind is what the
+preview is for, and a folder share stays a folder (§5.4, dropped 2026-10-18). The same section's
+*Copy browser link* was offered for a folder too, because §12.12 gave a folder a browser view to
+reach (§3.41); it was removed on 2026-10-21 with the relay address field (see below). No menu was
+added: a labelled section on the page is where the design put it, and the whole flow is one
+button.
 
 > **Removed from the app 2026-10-21.** The relay address field and *Copy browser
 > link* are gone. The app shares and fetches on the local network only, and the
@@ -475,14 +478,12 @@ address; a paused share resumed before it had one. The URL carries the key, so i
 and never logged. `PROGRESS-<date>.md` §3.37 has the webpage device evidence and §3.41 the
 folder one; both are history now that the button is gone.
 
-**What is not built yet.** Lazy-*open*: a view still fetches and verifies the whole bundle before
-its session starts, so the `KelpSource` seam above heals a hole but does not make a first paint
-faster. That is a separate decision (it trades a predictable bounded transfer for a first paint)
-and the seam makes it cheap to take. The per-bundle confirmation
-(§12.10) — deferred until the page being opened is someone else's. The *recipient* side needs no
-door of its own: §5.4 answered that question with "no button" (2026-10-18), so a received page is
-opened from the files it was saved as. Keeping a received bundle (§12.13) would still make one
-re-downloadable and seedable, which is a separate question from previewing it.
+**What is not built yet.** The per-bundle confirmation (§12.10) — deferred until the page being
+opened is someone else's, which lazy-open has now made the normal case. The *recipient* side needs
+no door of its own: §5.4 answered that question with "no button" (2026-10-18), so a received page
+is opened from the files it was saved as. Keeping a received bundle (§12.13) would still make one
+re-downloadable and seedable, which is a separate question from previewing it. Lazy-open itself
+is built: a view fetches the manifests, opens its session and lets the browser pull content.
 
 **Two ways to open it, and the recommendation.**
 
@@ -737,8 +738,10 @@ has no address to put in one, so the hint survives a relay-only share.
 *save*:
 
 - No **Save to** and no *Download*. Nothing is written to Downloads, and no folder is chosen.
-- One button — **Open in browser** — fetches the bundle and then serves it to the browser from
-  `127.0.0.1`, exactly as §5.1 does. One listener, the same server.
+- One button — **Open in browser** — fetches the page's manifests and then serves it to the browser
+  from `127.0.0.1`, exactly as §5.1 does. One listener, the same server. The content objects are
+  fetched by the session, as the browser asks for them (*lazy-open*, 2026-10-21); there is no
+  background fill of the whole bundle.
 - The fetch lands in a **session store held in memory**, not in the app's object store: the page
   exists only while it is being looked at. The store is shared with the session that serves it, so
   it dies when the session does — the page's requests stop coming and the idle sweep drops it, or
@@ -751,11 +754,11 @@ has no address to put in one, so the hint survives a relay-only share.
   is why `KelpPreviewServer::open()` takes a `StorePtr` rather than a bare store.
 - Being memory, there is a ceiling: **32 MiB**, enough for a document-shaped page and not for a
   gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched and
-  enforced again while storing — the claim is only a claim; a bundle over the ceiling is refused
-  with the reason and the way out (ask the sender to share it as a folder). The preview server can
-  now fetch a missing object on demand (§5.1), but the view still fetches and verifies the whole
-  bundle before the session starts, so the ceiling stands; lazy-*open* — fetching only what the
-  browser asks for — is what would lift it, and remains a separate decision.
+  enforced again by the session as it stores on-demand content — the claim is only a claim. A
+  bundle over the ceiling is refused with the reason and the way out (ask the sender to share it
+  as a folder). A view whose real content would cross the ceiling stops that session's fetches and
+  answers the waiting requests `503`; nothing over the line is stored. Lazy-open therefore keeps
+  the absolute bound: it changes *when* content arrives, not how much can be kept.
 - Pressing **Open in browser** again after the page has been served re-opens the *same* session —
   the same URL — rather than fetching again or minting a second token.
 - **KeepAlive** is held while the session is live, because the browser now owns the foreground and
@@ -789,7 +792,7 @@ inside an ordinary folder share is one of the recipient's files, opened from the
 | The link has no `p` (older link, or a directory share) | an ordinary share: save as always, and **nothing else** — no browser button, no page section; the recipient opens the file themselves if they want to look at it (the user's decision, 2026-10-18, §5.4) |
 | The link carries `p` but no address and no relay | **Open in browser** cannot start; the reason is the same one the save path already gives |
 | The sender goes offline mid-page | the page's requests fail, as any preview does — and there is nothing saved to fall back on, by design |
-| The page is bigger than the ceiling | refused before fetching, naming the sender-side workaround |
+| The page is bigger than the ceiling | refused from `/info` before any object; a sender that understated it is stopped when the session would cross the ceiling, and its later requests get `503` — naming the sender-side workaround |
 | The recipient leaves the screen, or closes Kelp | the page keeps being served until the session's idle sweep (about 30 minutes), then the memory is dropped and the URL is dead; closing Kelp ends it at once. Nothing was ever written |
 | A page is opened while an *earlier* link's finished view is still in the client | the finished view belongs to the link that asked for it: the new link is fetched as its own page, and *Open in browser* never re-hands the earlier session's URL (§3.25) |
 | The browser asks for a session the sweep has taken (a reload after half an hour) | `404`, with a body saying the preview has ended and to open the link again; pressing *Open in browser* mints a fresh session from the memory still held, so the page comes back without a re-fetch |
@@ -1036,11 +1039,11 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   own page — offered only for a share declared a **webpage** (§5.5), not for any bundle that
   happens to hold a page. `tst_kelppreview` drives it over a real socket and `tst_kelpbundles`
   covers the seam; both run without a browser or a display. The on-demand fetch through
-  `KelpSource` is built too: a source-backed session parks a request for a missing data object,
-  fetches it, verifies it and answers; without a source a hole is still a `503`. That is the seam,
-  not lazy-open — the view still fetches the whole bundle first. Still to do: lazy-open, the
-  per-bundle confirmation (§12.10), and an on-device pass with a real browser. An embedded
-  `Sailfish.WebView` remains a later UI decision (§12.9).
+  `KelpSource` is built too, and a received page now uses it: a source-backed session parks a
+  request for a missing data object, fetches it, verifies it and answers. Lazy-open (2026-10-21)
+  makes that the normal path: `KelpClient` fetches only the manifests, then the browser drives the
+  content. Still to do: the per-bundle confirmation (§12.10) and an on-device pass with a real
+  browser. An embedded `Sailfish.WebView` remains a later UI decision (§12.9).
 - **C4a.1 — the preview from the receive side (§5.4).** **Dropped by the user, 2026-10-18,
   before any code was written.** The design was one **Open in browser** button on the Open-link
   page's Done panel for a page that arrived inside an ordinary folder share; the user's answer
@@ -1052,11 +1055,13 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   `KeepAlive` already covers a live session), but nothing in the tree offers it.
 - **C4a.2 — view-only webpage links (§5.5, recipient half).** **Built; verified on the emulator and
   through a real browser on the C2.** For a link carrying `p`, the Open-link page shows no *Save to* and no *Download*:
-  one **Open in browser**, fetching into a session-owned `MemoryStore` and opening the preview
+  one **Open in browser**, fetching the manifests into a session-owned `MemoryStore` and opening the preview
   on the same single `KelpPreviewServer` — whose `open()` takes the store, so a session becomes
-  a store plus a key, and one listener still serves shares and received pages alike. The store
-  dies with the session, so nothing is left; a ceiling refuses an oversized page before fetching
-  and names the workaround; `KeepAlive` is held while the session is live. Verified on the
+  a store plus a key, and one listener still serves shares and received pages alike. The content
+  is then fetched on demand, as the browser asks for it (lazy-open, 2026-10-21). The store
+  dies with the session, so nothing is left; a ceiling refuses an oversized page from `/info`
+  before fetching, and the session enforces the same bound as it stores on-demand content; it
+  names the workaround. `KeepAlive` is held while the session is live. Verified on the
   emulator by fetching a real page link and `curl`-ing the session (and checking the app's store
   never grew), and then **from a real browser on the C2** (2026-10-18): the page came up in the
   browser and nothing was written. The C2 pass also showed what §12.11 is about: the demo page had

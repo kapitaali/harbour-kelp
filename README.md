@@ -79,8 +79,10 @@ and test.
   A link that says it is a **webpage** (design §5.5) behaves differently, because
   its publisher asked for it to be looked at rather than kept: there is no folder
   to pick and no *Download*, just **Open in browser**. That one button fetches the
-  bundle into memory — never to the object store, never to a file — serves the
-  page on `127.0.0.1`, and hands that URL to the browser. Nothing is left behind:
+  page's index — its manifests — into memory, never to the object store and never
+  to a file, and serves the page on `127.0.0.1`. The browser's requests then pull
+  the content objects they need through the same session, so the first paint does
+  not wait for the whole bundle. Nothing is left behind:
   the copy is gone when the preview session ends (an idle sweep after about 30
   minutes). Pressing the button again re-opens that same session; if it has since
   ended, the page is still in memory, so a fresh session is minted and what the
@@ -89,7 +91,9 @@ and test.
   one's. The page is served **offline**: it can use its own files and
   its own inline CSS and scripts, but nothing from another host, so a page that expects
   something from a CDN renders without it (design §12.11). A page larger than 32 MiB is
-  refused before anything is transferred, and says so.
+  refused from the sender's claimed size before anything is transferred, and the
+  session enforces that same ceiling as content arrives; a sender that understated it
+  is stopped rather than allowed to grow memory without bound.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
   permission), *Include my local address in the link*, **Storage**
   (what the object store holds, what the shares need, and a *Remove unused

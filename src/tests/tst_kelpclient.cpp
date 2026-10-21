@@ -449,13 +449,17 @@ void testViewFetchesToMemory()
         return;
     }
 
-    // The bundle is here, in the view's memory — and nowhere else at all.
-    CHECK_EQ(client.viewBytes(), quint64(sealed.byteCount()));
+    // Only the shape is here: the manifests, not the page's content. The content
+    // is fetched by the session below, for the requests the browser makes.
+    const quint64 indexBytes = client.viewBytes();
+    CHECK(indexBytes > 0);
+    CHECK(indexBytes < quint64(sealed.byteCount()));
     CHECK_EQ(appStore.count(), 0);
     CHECK(client.destination().isEmpty());
     CHECK_EQ(entriesIn(downloads.path()), 0);
     CHECK_EQ(stub.infoRequests(), 1);
-    CHECK_EQ(stub.objectRequests(), sealed.count());
+    CHECK(stub.objectRequests() > 0);
+    CHECK(stub.objectRequests() < sealed.count());
 
     // Served from that memory store, on loopback, under a token URL.
     KelpPreviewServer preview;
@@ -473,9 +477,19 @@ void testViewFetchesToMemory()
     CHECK_EQ(url.host(), QStringLiteral("127.0.0.1"));
     CHECK(url.port() > 0);
 
+    const int indexRequests = stub.objectRequests();
     Reply reply = get(url.port(), url.path().toLatin1() + "/");
     CHECK_EQ(reply.status, 200);
     CHECK_EQ(reply.body, site.html);
+    CHECK_EQ(stub.objectRequests(), indexRequests + 1);
+    CHECK(client.viewBytes() > indexBytes);
+
+    // The stylesheet is a different object, fetched only because it was asked for.
+    const int pageRequests = stub.objectRequests();
+    Reply css = get(url.port(), url.path().toLatin1() + "/style.css");
+    CHECK_EQ(css.status, 200);
+    CHECK_EQ(css.body, QByteArrayLiteral("p { color: teal; }\n"));
+    CHECK_EQ(stub.objectRequests(), pageRequests + 1);
 
     // Pressing it again is the same session, not a second one and not a refetch.
     const int objectsBefore = stub.objectRequests();
@@ -491,14 +505,14 @@ void testViewFetchesToMemory()
     CHECK_EQ(appStore.count(), 0);
 }
 
-void testOnDemandHealsHole()
+void testLazyContent()
 {
-    section("view: the session fetches an object the view store lost");
+    section("view: content is fetched only when the browser asks");
 
     MemoryStore sealed;
     Sealed site;
     QString error;
-    CHECK(sealSite(&sealed, QStringLiteral("client-on-demand"), true, &site, &error));
+    CHECK(sealSite(&sealed, QStringLiteral("client-lazy"), true, &site, &error));
     StubPublisher stub(&sealed);
 
     MemoryStore appStore;
@@ -509,25 +523,7 @@ void testOnDemandHealsHole()
     CHECK(client.fetchForViewing(linkFor(site, stub, true)));
     CHECK(settle(&client));
     CHECK_EQ(client.phase(), QStringLiteral("done"));
-    CHECK_EQ(stub.objectRequests(), sealed.count());
-
-    // A real hole in the view's memory: the stylesheet's only chunk. The normal
-    // flow cannot produce one — every object was verified before Done — so this
-    // test-only seam makes the session's on-demand fetch reachable. It is the
-    // same thing a future lazy-open view will have by construction.
-    const QByteArray key = contentKey(site.secret);
-    bool found = false;
-    bool isDir = false;
-    QByteArray hash;
-    Manifest::File file;
-    CHECK(Web::resolve(&sealed, key, site.rootId, QStringLiteral("style.css"),
-                       &found, &isDir, &hash, &file, &error));
-    CHECK(found);
-    CHECK(!isDir);
-    CHECK_EQ(file.chunks.size(), 1);
-    if (file.chunks.size() != 1)
-        return;
-    client.forgetViewObject(file.chunks.at(0));
+    CHECK(stub.objectRequests() < sealed.count());
 
     const QVariantMap opened = client.openPageView();
     CHECK(opened.value(QStringLiteral("ok")).toBool());
@@ -537,16 +533,25 @@ void testOnDemandHealsHole()
         return;
     }
 
+    // Asking for one asset fetches exactly that asset — no page, no background
+    // fill of the rest of the bundle.
     const QUrl url(opened.value(QStringLiteral("url")).toString());
     const int before = stub.objectRequests();
-    const Reply reply = get(url.port(), url.path().toLatin1() + "/style.css");
-    CHECK_EQ(reply.status, 200);
-    CHECK_EQ(reply.body, QByteArrayLiteral("p { color: teal; }\n"));
+    const Reply css = get(url.port(), url.path().toLatin1() + "/style.css");
+    CHECK_EQ(css.status, 200);
+    CHECK_EQ(css.body, QByteArrayLiteral("p { color: teal; }\n"));
     CHECK_EQ(stub.objectRequests(), before + 1);
+    CHECK(client.viewBytes() < quint64(sealed.byteCount()));
 
-    // The page itself and the app store are still untouched.
-    CHECK_EQ(get(url.port(), url.path().toLatin1() + "/").status, 200);
+    // The page itself is still a separate hole, and asking for it fetches it.
+    const int afterCss = stub.objectRequests();
+    const Reply page = get(url.port(), url.path().toLatin1() + "/");
+    CHECK_EQ(page.status, 200);
+    CHECK_EQ(page.body, site.html);
+    CHECK_EQ(stub.objectRequests(), afterCss + 1);
+
     CHECK_EQ(appStore.count(), 0);
+    CHECK_EQ(client.viewBytes(), quint64(sealed.byteCount()));
 }
 
 void testCeilingBeforeFetching()
@@ -580,7 +585,7 @@ void testCeilingBeforeFetching()
 
 void testCeilingWhileStoring()
 {
-    section("view: the ceiling is enforced against what arrives, not just the claim");
+    section("view: the session enforces the ceiling against what arrives");
 
     MemoryStore sealed;
     Sealed site;
@@ -594,16 +599,32 @@ void testCeilingWhileStoring()
 
     MemoryStore appStore;
     KelpClient client(&appStore);
-    // …and a ceiling between the claim and the truth, so the storing-time check
-    // is the one that has to catch it.
-    client.setViewCeiling(quint64(sealed.byteCount() / 2));
+    KelpPreviewServer preview;
+    client.setPreviewServer(&preview);
 
     CHECK(client.fetchForViewing(linkFor(site, stub, true)));
     CHECK(settle(&client));
-    CHECK_EQ(client.phase(), QStringLiteral("failed"));
-    CHECK(client.error().contains(QStringLiteral("folder instead")));
-    CHECK(stub.objectRequests() > 0);            // it started arriving, and was stopped
-    CHECK_EQ(client.viewBytes(), quint64(0));    // and let go of what it had
+    CHECK_EQ(client.phase(), QStringLiteral("done"));  // the manifest index fits
+
+    // …then a ceiling just above the index, so the first content object would
+    // pass it. The session, not the client, is what stores that object now.
+    const quint64 indexBytes = client.viewBytes();
+    CHECK(indexBytes > 0);
+    client.setViewCeiling(indexBytes + 1);
+
+    const QVariantMap opened = client.openPageView();
+    CHECK(opened.value(QStringLiteral("ok")).toBool());
+    if (!opened.value(QStringLiteral("ok")).toBool())
+        return;
+
+    const QUrl url(opened.value(QStringLiteral("url")).toString());
+    const int before = stub.objectRequests();
+    const Reply reply = get(url.port(), url.path().toLatin1() + "/");
+    CHECK_EQ(reply.status, 503);
+    CHECK(reply.body.contains("too large"));
+    CHECK_EQ(stub.objectRequests(), before + 1);  // asked for, then refused
+    CHECK(preview.tally().overLimit > 0);
+    CHECK_EQ(client.viewBytes(), indexBytes);     // nothing was stored
     CHECK_EQ(appStore.count(), 0);
 }
 
@@ -767,6 +788,7 @@ void testViewRemintsAfterSweep()
 
     const QUrl urlA(first.value(QStringLiteral("url")).toString());
     CHECK_EQ(get(urlA.port(), urlA.path().toLatin1() + "/").status, 200);
+    const int afterPage = stub.objectRequests();
     CHECK_EQ(preview.sessionCount(), 1);
 
     const QString tokenA = tokenOf(urlA);
@@ -803,9 +825,9 @@ void testViewRemintsAfterSweep()
     CHECK_EQ(reply.body, site.html);
     CHECK(preview.has(tokenOf(urlB)));
 
-    // Nothing was fetched again: the page was already in memory.
+    // Nothing was fetched again: the page object was already in memory.
     CHECK_EQ(stub.infoRequests(), 1);
-    CHECK_EQ(stub.objectRequests(), sealed.count());
+    CHECK_EQ(stub.objectRequests(), afterPage);
 }
 
 void testHandlingIsTiedToItsLink()
@@ -944,7 +966,7 @@ int main(int argc, char **argv)
     printf("kelpclient unit test\n");
 
     testViewFetchesToMemory();
-    testOnDemandHealsHole();
+    testLazyContent();
     testCeilingBeforeFetching();
     testCeilingWhileStoring();
     testNoPage();

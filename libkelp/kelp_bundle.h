@@ -95,6 +95,14 @@ bool missingObjects(ObjectStore *store, const QByteArray &key,
                     const QByteArray &rootId, QVector<QByteArray> *missing,
                     QString *error);
 
+// The manifest-only sibling of missingObjects(): every directory and file manifest
+// the walk cannot read yet, and none of the data chunks they name. A receiver can
+// fetch the shape, resolve a page, and let a browser pull content on demand.
+// A manifest that is here but cannot be used is still an error, not a hole.
+bool missingManifests(ObjectStore *store, const QByteArray &key,
+                      const QByteArray &rootId, QVector<QByteArray> *missing,
+                      QString *error);
+
 // Every object the bundle rooted at `rootId` is made of: the root manifest, the
 // manifests below it, and the data objects they name — unique, in traversal order.
 //

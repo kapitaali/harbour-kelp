@@ -1,0 +1,121 @@
+# Lazy-open a received webpage (design §5.1's last open item)
+
+Implementation plan. `kelp-design.md` §5.1 and the K3 seam already say *what* this is:
+a view-only page should paint after its structure is here, not after every byte of the
+bundle. This file is only *how*, and it is written before code.
+
+> **Status: implemented 2026-10-21.** Code, tests and docs are in the tree; the i486 RPM
+> was installed in the emulator and the QML smoke passed 9/9. The C++ suites pass in both
+> dev-extras modes (`libkelp` 528, `tst_kelppreview` 262, `tst_kelpclient` 178, full suite
+> 1392). An aarch64 release RPM was also built with dev extras off and copied to
+> `~/Downloads`; it was not installed here. An on-device pass with a real browser on this
+> lazy build has not been done yet; see PROGRESS §3.45. K3 remains the server seam this
+> builds on (`b42262c`, tests in `e8a5139`).
+
+## The split
+
+A bundle has two layers:
+
+- **manifests** — the root, directory manifests and file manifests. They name every
+  path, size, MIME type and chunk id, and they are what `Web::page`, `Web::resolve`
+  and the preview server need before a browser can ask for anything. They are small
+  and must all be present before the session opens, because a missing manifest is a
+  `503`, not a fetchable hole (K3).
+- **data** — the encrypted chunks. A browser asks for only the ones it needs, and K3
+  can fetch each one on demand.
+
+Lazy-open is therefore: fetch the manifests, open the session, let the browser drive
+the data. There is **no background fill** of the rest of the bundle; that would be the
+old eager fetch with extra steps, and it would compete with the browser for the same
+source.
+
+## Decisions
+
+| # | Decision | Value | Why |
+|---|---|---|---|
+| L1 | What `fetchForViewing()` fetches | manifests only | It must resolve the page and answer paths; data is demand-driven. |
+| L2 | When the view is `Done` | when the manifest walk is empty, before any content arrives | The QML already opens the browser on `done`; the session then owns the source and fetches what the browser asks for. |
+| L3 | The 32 MiB ceiling | still absolute for the whole view store, now enforced by the **server** as it stores on-demand objects | The client no longer sees the content arrive. The sender's `/info` claim is still checked before anything is fetched; the storing-time check moves to the only place that stores. |
+| L4 | A view that exceeds the ceiling on demand | stop that session's fetches and answer every parked request `503` with a "too large" body; no data is written | `/info` is the sender's word. An honest page never reaches this; a dishonest one must not grow memory without bound. |
+| L5 | What drives the data fetch | the browser only | No speculative or background transfer; a page that asks for two assets costs two assets. |
+| L6 | Source ownership | unchanged from K3: the session takes the source when it opens; the client keeps the decoded link for a fresh source after a sweep | Re-pressing *Open in browser* after the idle sweep must still work without another passphrase. |
+| L7 | Owner-side previews | unchanged: no source, no limit, read from the app's store | The owner's objects are on disk and are not a received page. |
+| L8 | `libkelp` | one new pure function, `missingManifests()` | The manifest-only walk is content-layer logic and belongs beside `missingObjects()`, not in QML or the client loop. |
+
+## Seams
+
+### `libkelp/kelp_bundle.{h,cpp}`
+
+```cpp
+// The manifest-only sibling of missingObjects(): every directory and file
+// manifest the walk cannot read yet, and none of the data chunks they name.
+// A receiver can open the shape and let the browser pull content on demand.
+bool missingManifests(ObjectStore *store, const QByteArray &key,
+                      const QByteArray &rootId, QVector<QByteArray> *missing,
+                      QString *error);
+```
+
+The existing `Missing` walker gains one flag. `visitFile()` still reads and decodes the
+file manifest (so a corrupt one is an error, not a hole), but only notes chunk ids when
+the flag is off. `missingObjects()` keeps its current behaviour byte for byte.
+
+### `src/kelpclient.cpp`
+
+- `walk()` chooses `missingManifests()` in view mode and `missingObjects()` otherwise.
+  The same queue, deadline, inflight bound and `storeReceived()` verification are used.
+- When the view's manifest walk is empty, `finishViewing()` sets `Done` as today. The
+  log says the **index** is here and content is fetched by the browser, not that the
+  whole store is here.
+- `viewBytes()` reports the memory store's actual size (`MemoryStore::byteCount()`),
+  so it includes objects the session fetched after the client's own work. The client's
+  own `m_viewBytes` counter remains the manifest-side ceiling check.
+- `openPageView()` passes the view ceiling to the server. If the page is absent, it
+  releases the source too (there will be no session to own it).
+- No QML API change: `fetchForViewing()` still ends at `done`, and the page still calls
+  `openPageView()` from `onPhaseChanged`.
+
+### `src/kelppreviewserver.{h,cpp}`
+
+- `open()` and `openEntry()` gain an optional absolute `storeLimit` (0 means no limit).
+  A session remembers it.
+- `onObject()` checks the store's current byte count plus the arriving object before
+  storing. If that would pass the limit, the session's fetches stop and all waiters get
+  `503` with a short "too large" body; a new `Tally::overLimit` records it. The source
+  is stopped, because no further object can fit.
+- `Kelp::ObjectStore` gains `virtual qint64 byteCount() const`, returning `-1` when a
+  store does not know. `MemoryStore` overrides it with the existing sum. A store that
+  answers `-1` (the on-disk app store) is only used by unlimited owner previews, so no
+  limit is silently invented for it.
+
+### `qml/pages/OpenLinkPage.qml`
+
+Only the busy wording changes: a webpage view is preparing its page, not downloading
+the whole bundle, so the `%1 of %2 objects` line would be misleading. It says
+"Preparing the page…" while fetching. The Done panel and the button are unchanged.
+
+## Tests
+
+- `libkelp`: an empty store names only the root manifest; after the root, the walk names
+  manifests but no chunks; when the manifests are complete it is empty while
+  `missingObjects()` still names chunks; the wrong key and a short id still fail.
+- `tst_kelppreview`: a session with a tight `storeLimit` refuses an object that would
+  pass it, answers the parked request `503`, stops the source and records `overLimit`.
+- `tst_kelpclient`:
+  - `fetchForViewing()` requests fewer objects than the bundle holds and `viewBytes()`
+    is the manifest size, not the bundle size;
+  - opening the session and asking for `/` fetches the page object on demand; asking
+    for a CSS/image asset fetches that object, and the bytes are exact;
+  - the claimed-size ceiling still refuses before any object; a lie under the claim is
+    refused by the session when the content would cross the ceiling;
+  - a page-less bundle still fails at `openPageView()` and releases everything;
+  - two live sessions, a swept re-mint, and the link-identity checks still pass with
+    only manifests fetched up front.
+- Full suite both dev-extras modes, then the emulator smoke; the browser pass remains
+  the user's C2 check.
+
+## Deliberately out of scope
+
+- Keeping a received bundle (§12.13), a per-bundle confirmation (§12.10), or saving a
+  viewed page.
+- Background prefetch, a disk cache, or changing the 32 MiB ceiling.
+- Any relay work: this is the same LAN source the view already uses.

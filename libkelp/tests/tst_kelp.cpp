@@ -1163,6 +1163,45 @@ void testMissingObjects()
     CHECK(missingObjects(&origin, key, sealed.rootId, &missing, &error));
     CHECK_EQ(missing.size(), 0);
 
+    // The manifest-only walk is the same shape down to the file manifests, but
+    // stops before the chunks. The root is all it can name on an empty store.
+    MemoryStore shape;
+    CHECK(missingManifests(&shape, key, sealed.rootId, &missing, &error));
+    CHECK_EQ(missing.size(), 1);
+    CHECK_EQ(missing.value(0), sealed.rootId);
+    QByteArray rootObject;
+    CHECK(origin.get(sealed.rootId, &rootObject));
+    CHECK(storeReceived(&shape, sealed.rootId, rootObject));
+
+    int shapeFetched = 1;
+    for (int round = 0; round < 20; ++round) {
+        CHECK(missingManifests(&shape, key, sealed.rootId, &missing, &error));
+        if (missing.isEmpty())
+            break;
+        for (int i = 0; i < missing.size(); ++i) {
+            QByteArray object;
+            CHECK(origin.get(missing.at(i), &object));
+            CHECK(storeReceived(&shape, missing.at(i), object));
+            ++shapeFetched;
+        }
+    }
+    CHECK_EQ(missing.size(), 0);
+
+    // Manifests are fewer than the whole bundle, and what is left is data.
+    CHECK(shape.count() < origin.count());
+    CHECK(shapeFetched < sealed.objectCount);
+    CHECK(missingObjects(&shape, key, sealed.rootId, &missing, &error));
+    CHECK(missing.size() > 0);
+
+    // The complete store answers both walks the same way.
+    CHECK(missingManifests(&origin, key, sealed.rootId, &missing, &error));
+    CHECK_EQ(missing.size(), 0);
+
+    // A wrong key and an impossible id are errors, as for the full walk.
+    CHECK(!missingManifests(&origin, contentKey(testHash("some-other-secret")),
+                            sealed.rootId, &missing, &error));
+    CHECK(!missingManifests(&origin, key, QByteArray("short"), &missing, &error));
+
     // The walk only descends through manifests it has, so the download takes
     // several rounds — and asks for every object exactly once.
     int fetched = 0;

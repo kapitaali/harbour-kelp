@@ -101,10 +101,12 @@ Page {
                                 ? qsTr("Asking the sender…")
                                 : openPage.phase === "saving"
                                   ? qsTr("Saving the files…")
-                                  : kelpClient.total > 0
-                                    ? qsTr("Fetched %1 of %2 objects")
-                                      .arg(kelpClient.fetched).arg(kelpClient.total)
-                                    : qsTr("Fetched %1 objects").arg(kelpClient.fetched)
+                                  : openPage.viewOnly
+                                    ? qsTr("Preparing the page…")
+                                    : kelpClient.total > 0
+                                      ? qsTr("Fetched %1 of %2 objects")
+                                        .arg(kelpClient.fetched).arg(kelpClient.total)
+                                      : qsTr("Fetched %1 objects").arg(kelpClient.fetched)
 
     // A webpage link is a view, not a save: no folder, no Download, nothing
     // written. One action, and it is the browser's.

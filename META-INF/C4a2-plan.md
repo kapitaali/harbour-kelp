@@ -238,7 +238,8 @@ taps the emulator cannot receive (as in C4a/C5.1):
 - A remembered per-bundle consent — §12.10, parked; every view is a fresh press.
 - Choosing among several HTML files — the §5.3 pick is served.
 - Serving a received page to anyone else, re-seeding, or re-sharing it.
-- Lazy fetch (which is what would lift the ceiling) — §5.1's open item.
+- Lazy fetch — it was out of scope for C4a.2, but was built separately on 2026-10-21; see
+  `lazy-open-plan.md` and PROGRESS §3.45. The ceiling did not lift; it moved to the session.
 - Letting the recipient override the kind and save anyway — a webpage link is view-only.
 
 ## Risks and traps

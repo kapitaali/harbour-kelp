@@ -36,12 +36,13 @@ class QTimer;
  * single file is that file, anything else becomes a folder named for the link.
  *
  * There is a second, entirely different ending, for a link that declares itself a
- * *webpage* (design §5.5): fetchForViewing() takes the same walk but keeps the
- * objects in a memory store of its own and writes nothing, and openPageView()
- * serves the page to this device's browser through the preview listener. The
- * memory is shared with the session that serves it, so a session may outlive the
- * page safely; it is gone when the session's own idle timeout drops it, or when
- * the app exits. See META-INF/C4a2-plan.md.
+ * *webpage* (design §5.5): fetchForViewing() fetches only the manifests — enough
+ * to resolve the page and its paths — into a memory store of its own and writes
+ * nothing. openPageView() then serves the page to this device's browser through
+ * the preview listener, whose session fetches the content the browser asks for
+ * (design §5.1). The memory is shared with the session that serves it, so a
+ * session may outlive the page safely; it is gone when the session's own idle
+ * timeout drops it, or when the app exits. See META-INF/lazy-open-plan.md.
  */
 class KelpClient : public QObject
 {
@@ -64,7 +65,8 @@ class KelpClient : public QObject
     // True while this client is fetching for *viewing* rather than saving: the
     // objects go into a memory store and nothing is written (design §5.5).
     Q_PROPERTY(bool viewing READ viewing NOTIFY changed)
-    // What that memory store holds, in bytes. Zero once a view is over.
+    // What that memory store holds *now*, in bytes, including objects the preview
+    // session fetched after the page opened. Zero once a view is over.
     Q_PROPERTY(quint64 viewBytes READ viewBytes NOTIFY changed)
     // Base folder the bundle is written into. Empty means the platform's
     // Downloads folder. Kept across fetches so a choice is not lost on retry.
@@ -86,20 +88,22 @@ public:
     Q_INVOKABLE bool fetch(const QString &link, const QString &passphrase = QString());
 
     // The same fetch, for a link that declares itself a webpage (design §5.5):
-    // the objects are kept in a memory store belonging to this view and *nothing*
-    // is written, so the bundle exists only for as long as it is being looked at.
-    // A second view never disturbs the first — each one owns its store.
+    // only the manifests are fetched, into a memory store belonging to this view,
+    // and *nothing* is written. The page's content is fetched by the session that
+    // openPageView() starts, when the browser asks for it. A second view never
+    // disturbs the first — each one owns its store.
     Q_INVOKABLE bool fetchForViewing(const QString &link,
                                      const QString &passphrase = QString());
 
-    // Serves the page just fetched for viewing to this device's browser through
-    // the preview listener, as §5.1 does, and returns { ok, url, entry,
-    // candidates, error }. Pressing the button again returns the same session
-    // rather than fetching again — unless the session has since been swept, when
-    // a fresh one is minted from the memory still held, so the URL handed to the
-    // browser always answers. The caller hands `url` to the browser: this class
-    // does not open anything, so a build with no browser (the emulator) still
-    // gets a session that a `curl` can prove.
+    // Serves the page whose manifests are already in the view store to this
+    // device's browser through the preview listener, as §5.1 does, and returns
+    // { ok, url, entry, candidates, error }. The session fetches the content the
+    // browser asks for; pressing the button again returns the same session rather
+    // than fetching again — unless the session has since been swept, when a fresh
+    // one is minted from the memory still held and the decoded link, so the URL
+    // handed to the browser always answers. The caller hands `url` to the browser:
+    // this class does not open anything, so a build with no browser (the emulator)
+    // still gets a session that a `curl` can prove.
     Q_INVOKABLE QVariantMap openPageView();
 
     // Stops a fetch in flight. Objects already stored are kept: each one is
@@ -132,7 +136,10 @@ public:
     QString error() const { return m_error; }
     QString directory() const { return m_directory; }
     bool viewing() const { return m_viewing; }
-    quint64 viewBytes() const { return m_viewBytes; }
+    quint64 viewBytes() const
+    {
+        return m_viewStore ? quint64(m_viewStore->byteCount()) : 0;
+    }
 
     // Where the next fetch is written. Empty restores the Downloads default.
     void setDirectory(const QString &path);
@@ -142,12 +149,6 @@ public:
     // ceiling is 32 MiB, and the storing-time check is only reachable in a test
     // with a smaller one.
     void setViewCeiling(quint64 bytes);
-
-    // A test affordance: drop one object from the current view's memory store,
-    // so the preview session has a real hole for its on-demand fetch to heal.
-    // The normal flow has no hole — every object was verified before the page
-    // opened — which is why this exists only for the test.
-    void forgetViewObject(const QByteArray &id);
 
     // The listener a received page is served through (design §5.5). Without one a
     // view can fetch but not be opened.
@@ -195,8 +196,8 @@ private:
     QString m_viewSecret;      // the link's secret, for the preview server
     QString m_viewToken;
     QString m_viewUrl;
-    quint64 m_viewBytes;       // what the view store holds, for the ceiling
-    quint64 m_viewCeiling;     // the ceiling itself (a test can lower it)
+    quint64 m_viewBytes;       // what this client put in the view store (the index)
+    quint64 m_viewCeiling;     // the whole view's ceiling (a test can lower it)
 
     QByteArray m_bundleId;
     QByteArray m_key;

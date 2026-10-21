@@ -159,9 +159,10 @@ public:
     bool closeOnRequest = false;     // close the session from the first request
     KelpPreviewServer *closeServer = nullptr;
     QString closeToken;
+    int generation = 0;              // stop() makes pending answers no-ops
 
     void begin() override {}
-    void stop() override {}
+    void stop() override { ++generation; }
 
     void requestObject(const QByteArray &id) override
     {
@@ -179,7 +180,13 @@ public:
 
         if (!answer)
             return;
-        QTimer::singleShot(delayMs, this, [this, id]() {
+        const int gen = generation;
+        QTimer::singleShot(delayMs, this, [this, id, gen]() {
+            // The session may have stopped this source while an answer was in
+            // flight (an over-limit refusal does exactly that). The store may be
+            // gone by the time the timer runs, so a stale answer must not touch it.
+            if (gen != generation)
+                return;
             --active;
             if (fail) {
                 emit failed(QStringLiteral("the fake source failed"));
@@ -1171,6 +1178,30 @@ void testOnDemand()
         CHECK_EQ(hugeSource->requested.size(), hugeChunks);
         CHECK(hugeSource->maxActive <= 4);
         CHECK_EQ(hugeServer.tally().onDemand, hugeChunks);
+    }
+
+    // A store ceiling is checked before an on-demand object is stored: a view
+    // that would grow past it gets 503 and its fetches stop, rather than leaking
+    // memory because the sender's /info was optimistic.
+    MemoryStore limitPartial;
+    copyObjects(&hugeFull, &limitPartial, manifestsOf(&hugeFull, hugeKey, hugeRootId));
+    KelpPreviewServer limitServer;
+    CHECK(limitServer.start(&error));
+    FakeSource *limitSource = new FakeSource(&hugeFull);
+    const qint64 limitBytes = limitPartial.byteCount();
+    const quint64 limit = quint64(limitBytes) + 1;
+    const KelpPreviewServer::Opened limitSession =
+        limitServer.open(borrow(&limitPartial), Link::base32Encode(hugeRootId),
+                         Link::base64UrlEncode(hugeSecret), QStringLiteral("Too large"),
+                         limitSource, limit);
+    CHECK(limitSession.ok);
+    if (limitSession.ok) {
+        const Reply limitReply = get(limitServer.port(),
+                                     "/" + limitSession.token.toLatin1() + "/huge.bin");
+        CHECK_EQ(limitReply.status, 503);
+        CHECK(limitReply.body.contains("too large"));
+        CHECK(limitServer.tally().overLimit > 0);
+        CHECK_EQ(limitPartial.byteCount(), limitBytes);   // nothing was stored
     }
 
     // Closing a session with a browser request parked answers it 404 at once,

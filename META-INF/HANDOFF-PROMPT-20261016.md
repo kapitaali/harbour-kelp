@@ -4,12 +4,16 @@ Objective
 - Kelp is a secure peer-to-peer file-sharing app for Sailfish OS (Jolla C2, aarch64,
   Sailfish OS 5.x): the user picks a folder or file, shares it, and hands out a kelp://
   link that a recipient opens in the app to fetch the bundle.
-- Sharing works both on the same Wi-Fi (LAN-direct) and across networks through a relay.
-  Milestones C1 (libkelp), C1.5 (app wiring), C2a (LAN publish), C2b (fetch), C3.1
-  (tunnel transport), C3.2 (relay) and C3 (cross-network fetch) are done and verified.
-- This milestone: harden what exists before adding features. The first device-to-device
-  LAN transfer was only completed on 2026-10-16 and it exposed three bugs, two of which
-  no test could see. Fix the class, not just the instances.
+- Sharing works on the same Wi-Fi (LAN-direct). The relay/gateway remains a separate program in
+  `relay/`; the app itself is **LAN-only** since 2026-10-21 (the relay address field and browser
+  link were removed). Milestones C1 (libkelp), C1.5 (app wiring), C2a (LAN publish), C2b (fetch),
+  C3.1 (tunnel transport), C3.2 (relay), C3 (cross-network fetch), K1–K4, C4a and C4a.2 are
+  done and verified; lazy-open is done and verified off-device and with QML smoke, but not yet
+  with a real browser on the device.
+- Current state: a received webpage link fetches only its manifests, opens a loopback preview
+  session, and lets the browser pull content on demand. The 32 MiB ceiling is enforced by the
+  session as it stores. Remaining open product questions are the per-bundle confirmation
+  (§12.10), C7 (optional LAN swarm), and an on-device browser pass on the lazy build.
 
 Read before touching anything
 - META-INF/BUILD.md — the canonical build and test document: targets, the clean
@@ -187,20 +191,18 @@ Next Move (in this order — 1–3 are done as of this note)
    toggle was considered at the user's suggestion and dropped: an app cannot background itself
    (lipstick exposes no such call, and `/WindowModel` is a read-only model) and the user would
    rather use the real device's swipe.
-8. **C4a (shared-page preview — design §5.1) — built off-device (§3.20).** `libkelp/kelp_web`
-   (the §5.3 page convention), `src/kelppreviewserver` (the loopback server), the
-   `KelpBundles::pageInfo/previewPage/endPreview` seam and the *Open in browser* button on a
-   bundle's page are in the tree; `tst_kelppreview` (256 checks) plus a new `tst_kelpbundles`
-   section cover all of it, and every suite is green in both bundle modes. The lazy fetch through
-   `KelpSource` is built as the server seam (2026-10-21, PROGRESS §3.44); lazy-*open* is still
-   open. The *recipient* side — a bundle fetched from a link is not kept, so §5.1 is reached today
-   through a share this device made (design §12.13) — the per-bundle confirmation (§12.10), and
-   an on-device pass with a real browser. *(2026-10-18: the recipient side was settled by the
-   user — an ordinary share only saves, so no *Open in browser* is offered after a download;
-   the same ruling made the owner's own button a webpage-share affordance. Design §5.4 and
-   PROGRESS §3.26.)* The design also covers the remaining options: C4b
-   (relay gateway — §5.2) and C7 (swarm). An embedded `Sailfish.WebView` in place of the system
-   browser stays a UI decision for later (§12.9).
+8. **C4a (shared-page preview — design §5.1) — built, including lazy-open (§3.20, §3.44–§3.45).**
+   `libkelp/kelp_web` (the §5.3 page convention), `src/kelppreviewserver` (the loopback server),
+   the `KelpBundles::pageInfo/previewPage/endPreview` seam and the *Open in browser* button on a
+   bundle's page are in the tree. A received webpage link gets the recipient half (C4a.2): one
+   *Open in browser*, a session-owned `MemoryStore`, no save. The view now fetches only the
+   manifests (`Kelp::missingManifests`), opens its session at `Done`, and the browser's requests
+   pull the content through the K3 `KelpSource` seam; the 32 MiB ceiling is enforced by the
+   session as it stores. `tst_kelppreview` 262 checks, `tst_kelpclient` 178, full suite 1392 in
+   both bundle modes, QML smoke 9/9. Still open: the per-bundle confirmation (§12.10) and an
+   on-device browser pass on the lazy build (the C2 pass in §3.23 was on the eager flow). C4a.1
+   (a folder share's page) stays dropped by the user (§5.4); C4b (relay gateway) and C7 (swarm)
+   remain separate.
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
 lines with KelpLog calls, so everything lands in the log file. *Share in background* is
 persisted and acted on, and *Wi-Fi only* drives the serving policy (K1/K2, §3.27–§3.28);

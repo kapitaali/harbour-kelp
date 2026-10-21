@@ -84,13 +84,20 @@ public:
     // against the id, stores it and answers the request. A session without one
     // answers 503 exactly as before. Ownership of a non-null source passes to
     // the server when the session opens; on failure the caller still owns it.
+    //
+    // `storeLimit` is an absolute byte ceiling for the shared store, or 0 for no
+    // limit. A received page passes its 32 MiB ceiling here because the session,
+    // not the client, is what stores content fetched on demand; an owner preview
+    // serves an on-disk store and leaves it 0. A store that cannot report its
+    // size (`ObjectStore::byteCount()` is -1) is not limited by this session.
     Opened open(const StorePtr &store, const QString &bundleId, const QString &secret,
-                const QString &name, KelpSource *source = nullptr);
+                const QString &name, KelpSource *source = nullptr,
+                quint64 storeLimit = 0);
 
     // The same, for a page the recipient picked out of `candidates`.
     Opened openEntry(const StorePtr &store, const QString &bundleId, const QString &secret,
                      const QString &name, const QString &entry,
-                     KelpSource *source = nullptr);
+                     KelpSource *source = nullptr, quint64 storeLimit = 0);
 
     // Ends a session. Its URL stops answering at once.
     void close(const QString &token);
@@ -109,6 +116,7 @@ public:
         qint64 refused = 0;       // requests for a token this server does not know
         qint64 onDemand = 0;      // objects fetched through a session's source
         qint64 mismatched = 0;    // 502s: bytes that did not hash to the id
+        qint64 overLimit = 0;     // 503s: content that would pass the store ceiling
     };
     Tally tally() const { return m_tally; }
 
@@ -139,6 +147,7 @@ private:
         QString name;             // for the log only
         QString root;             // bundle-relative directory; "" is the root
         QString entry;            // the page, relative to `root`
+        quint64 storeLimit = 0;   // absolute view-store ceiling; 0 is unlimited
         qint64 lastMs = 0;
     };
 
@@ -184,7 +193,8 @@ private:
     };
 
     Opened openPath(const StorePtr &store, const QByteArray &id, const QByteArray &key,
-                    const QString &name, const QString &entry, KelpSource *source);
+                    const QString &name, const QString &entry, KelpSource *source,
+                    quint64 storeLimit);
 
     void handle(QTcpSocket *socket, const QByteArray &request);
     Target resolve(Session *session, const QString &urlPath, bool trailingSlash);

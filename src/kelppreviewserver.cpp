@@ -44,6 +44,8 @@ const int kDefaultFetchMs = 20000;
 const QByteArray kNotAllHere = QByteArrayLiteral("this bundle is not all here yet\n");
 const QByteArray kBadObject = QByteArrayLiteral(
     "the sender served something that did not match its address\n");
+const QByteArray kTooLarge = QByteArrayLiteral(
+    "this page is too large to keep in memory; ask the sender to share it as a folder\n");
 const QByteArray kNoSuchPreview = QByteArrayLiteral(
     "no such preview: it has ended, or the address is wrong. Open the link again from Kelp.\n");
 
@@ -213,7 +215,8 @@ KelpPreviewServer::Opened KelpPreviewServer::open(const StorePtr &store,
                                                   const QString &bundleId,
                                                   const QString &secret,
                                                   const QString &name,
-                                                  KelpSource *source)
+                                                  KelpSource *source,
+                                                  quint64 storeLimit)
 {
     Opened opened;
 
@@ -251,7 +254,7 @@ KelpPreviewServer::Opened KelpPreviewServer::open(const StorePtr &store,
         return opened;
     }
 
-    return openPath(store, id, key, name, page.path, source);
+    return openPath(store, id, key, name, page.path, source, storeLimit);
 }
 
 KelpPreviewServer::Opened KelpPreviewServer::openEntry(const StorePtr &store,
@@ -259,7 +262,8 @@ KelpPreviewServer::Opened KelpPreviewServer::openEntry(const StorePtr &store,
                                                        const QString &secret,
                                                        const QString &name,
                                                        const QString &entry,
-                                                       KelpSource *source)
+                                                       KelpSource *source,
+                                                       quint64 storeLimit)
 {
     Opened opened;
 
@@ -295,12 +299,13 @@ KelpPreviewServer::Opened KelpPreviewServer::openEntry(const StorePtr &store,
         return opened;
     }
 
-    return openPath(store, id, key, name, entry, source);
+    return openPath(store, id, key, name, entry, source, storeLimit);
 }
 
 KelpPreviewServer::Opened KelpPreviewServer::openPath(const StorePtr &store, const QByteArray &id,
                                                       const QByteArray &key, const QString &name,
-                                                      const QString &entry, KelpSource *source)
+                                                      const QString &entry, KelpSource *source,
+                                                      quint64 storeLimit)
 {
     Opened opened;
 
@@ -311,6 +316,7 @@ KelpPreviewServer::Opened KelpPreviewServer::openPath(const StorePtr &store, con
     session.name = name;
     session.root = directoryOf(entry);
     session.entry = session.root.isEmpty() ? entry : entry.mid(session.root.size() + 1);
+    session.storeLimit = storeLimit;
     session.lastMs = QDateTime::currentMSecsSinceEpoch();
 
     const QString token = QString::fromLatin1(Kelp::Crypto::randomBytes(32).toHex());
@@ -833,6 +839,22 @@ void KelpPreviewServer::onObject(const QString &token, const QByteArray &id,
     if (session == m_sessions.end()) {
         pumpFetches(token);
         return;
+    }
+
+    // A received page has a memory ceiling, and this session is now the thing
+    // that stores its content. Refuse before storing, so the promise is real
+    // even when the sender's `/info` understated the bundle. The whole session
+    // stops: an object that does not fit is not a hole another request can fill.
+    if (session.value().storeLimit > 0) {
+        const qint64 used = session.value().store->byteCount();
+        if (used >= 0
+            && quint64(used) + quint64(bytes.size()) > session.value().storeLimit) {
+            ++m_tally.overLimit;
+            qWarning() << "KelpPreview: the view store reached its ceiling;"
+                       << "stopping on-demand fetches";
+            failAllFetches(token, kTooLarge);
+            return;
+        }
     }
 
     // The id is the sender's promise. What arrives is stored only if it hashes

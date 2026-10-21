@@ -313,8 +313,8 @@ private:
 class Missing
 {
 public:
-    Missing(ObjectStore *store, const QByteArray &key)
-        : m_store(store), m_key(key) {}
+    Missing(ObjectStore *store, const QByteArray &key, bool manifestsOnly)
+        : m_store(store), m_key(key), m_manifestsOnly(manifestsOnly) {}
 
     bool ok() const { return m_error.isEmpty(); }
     QString error() const { return m_error; }
@@ -413,6 +413,8 @@ private:
         Manifest::File file;
         if (!Manifest::decodeFile(manifest, &file, &m_error))
             return false;
+        if (m_manifestsOnly)
+            return true;
         for (int i = 0; i < file.chunks.size(); ++i) {
             if (!m_store->contains(file.chunks.at(i)))
                 note(file.chunks.at(i));
@@ -422,6 +424,7 @@ private:
 
     ObjectStore *m_store;
     QByteArray m_key;
+    bool m_manifestsOnly;
     QVector<QByteArray> m_ids;
     QSet<QByteArray> m_noted;
     QString m_error;
@@ -652,7 +655,35 @@ bool missingObjects(ObjectStore *store, const QByteArray &key,
         return false;
     }
 
-    Missing walker(store, key);
+    Missing walker(store, key, false);
+    if (!walker.walk(rootId)) {
+        *error = walker.error();
+        return false;
+    }
+
+    *missing = walker.ids();
+    return true;
+}
+
+bool missingManifests(ObjectStore *store, const QByteArray &key,
+                      const QByteArray &rootId, QVector<QByteArray> *missing,
+                      QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (missing)
+        missing->clear();
+    if (!store || !missing) {
+        *error = QStringLiteral("no object store or destination");
+        return false;
+    }
+    if (rootId.size() != Crypto::Sha256Size) {
+        *error = QStringLiteral("bundle id is not a 32-byte object id");
+        return false;
+    }
+
+    Missing walker(store, key, true);
     if (!walker.walk(rootId)) {
         *error = walker.error();
         return false;

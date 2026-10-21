@@ -188,12 +188,6 @@ void KelpClient::setViewCeiling(quint64 bytes)
     m_viewCeiling = bytes;
 }
 
-void KelpClient::forgetViewObject(const QByteArray &id)
-{
-    if (m_viewStore)
-        m_viewStore->remove(id);
-}
-
 void KelpClient::setSettings(KelpSettings *settings)
 {
     m_settings = settings;
@@ -285,8 +279,9 @@ void KelpClient::cancel()
     const bool wasBusy = busy();
     dropSource();
     if (m_viewing) {
-        // Nothing can be serving an incomplete view: a session only ever opens
-        // once the whole bundle is here.
+        // Cancel only reaches a view whose manifests are still arriving: once
+        // Done the session owns the source and the client is no longer busy, so
+        // there is no session to disturb.
         m_viewBytes = 0;
         m_viewStore.clear();
     }
@@ -454,20 +449,27 @@ void KelpClient::walk()
     m_storedThisRound = 0;
     ++m_rounds;
 
+    // A view fetches the shape first: the root and every manifest name the page
+    // and its paths, and the browser then asks the session for the data chunks it
+    // actually needs (design §5.1). An ordinary fetch still walks everything.
     QVector<QByteArray> missing;
     QString error;
-    if (!Kelp::missingObjects(activeStore(), m_key, m_bundleId, &missing, &error)) {
+    const bool walked = m_viewing
+        ? Kelp::missingManifests(activeStore(), m_key, m_bundleId, &missing, &error)
+        : Kelp::missingObjects(activeStore(), m_key, m_bundleId, &missing, &error);
+    if (!walked) {
         failed(error);
         return;
     }
 
     if (missing.isEmpty()) {
-        qInfo() << "KelpClient: all" << m_fetched << "objects are here after"
-                << m_rounds << "rounds";
         if (m_viewing)
             finishViewing();
-        else
+        else {
+            qInfo() << "KelpClient: all" << m_fetched << "objects are here after"
+                    << m_rounds << "rounds";
             writeFiles();
+        }
         return;
     }
 
@@ -630,12 +632,13 @@ bool KelpClient::isHandling(const QString &link) const
 
 void KelpClient::finishViewing()
 {
-    // No files, no folder, no destination: the bundle stays in the view store, and
-    // the page is served out of it from here on (design §5.5).
+    // No files, no folder, no destination. The manifests are here, which is all
+    // that is needed to resolve the page and answer its paths; the data chunks are
+    // fetched by the preview session as the browser asks for them (design §5.1).
     m_deadline->stop();
     m_phase = Done;
-    qInfo() << "KelpClient: view store holds" << m_fetched << "objects,"
-            << sizeText(m_viewBytes) << "in memory; nothing was written";
+    qInfo() << "KelpClient: page index holds" << m_fetched << "objects,"
+            << sizeText(m_viewBytes) << "in memory; content will be fetched on demand";
     emit changed();
 }
 
@@ -698,6 +701,9 @@ QVariantMap KelpClient::openPageView()
                                      "page in it."));
         qWarning() << "KelpClient: a webpage link holds no page:"
                    << m_bundleIdText.left(16);
+        // There will be no session to take the source, so let it go here rather
+        // than leave a live connection attached to a view that has ended.
+        dropSource();
         m_viewBytes = 0;
         m_viewStore.clear();
         return result;
@@ -721,8 +727,12 @@ QVariantMap KelpClient::openPageView()
         }
     }
 
+    // The ceiling is absolute for the view store, not just for this client's
+    // manifest walk: the session is now the thing that stores content, so it is
+    // handed the same bound the `/info` check and the old up-front store used.
     const KelpPreviewServer::Opened opened =
-        m_preview->open(m_viewStore, m_bundleIdText, m_viewSecret, m_name, source);
+        m_preview->open(m_viewStore, m_bundleIdText, m_viewSecret, m_name, source,
+                        m_viewCeiling);
     result.insert(QStringLiteral("ok"), opened.ok);
     result.insert(QStringLiteral("error"), opened.error);
     result.insert(QStringLiteral("url"), opened.url);
