@@ -15,10 +15,19 @@ include(../../libkelp/libkelp.pri)
 
 # kelpstore.cpp is here for the on-disk store section: the app hands the preview
 # server its real KelpObjectStore, and one section proves that path works.
+# kelpfetch.cpp is here because the on-demand section drives a real KelpSource
+# subclass; it pulls in KelpTls, and therefore OpenSSL, for the relay half too.
 SOURCES += tst_kelppreview.cpp \
+    ../../src/kelpfetch.cpp \
     ../../src/kelppreviewserver.cpp \
-    ../../src/kelpstore.cpp
+    ../../src/kelpstore.cpp \
+    ../../src/kelptls.cpp
+
+# See tst_kelpclient.pro: KelpTls uses OpenSSL directly.
+LIBS += -lssl
 
 HEADERS += \
+    ../../src/kelpfetch.h \
     ../../src/kelppreviewserver.h \
-    ../../src/kelpstore.h
+    ../../src/kelpstore.h \
+    ../../src/kelptls.h

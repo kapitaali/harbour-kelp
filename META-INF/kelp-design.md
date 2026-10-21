@@ -420,7 +420,7 @@ needs the same request while a page is live.
 | `Range` | With fixed 256 KiB chunks (§1.2) a range is a contiguous object range: byte `a` lives in chunk `a / 256K` at offset `a % 256K`. `bytes=a-b`, `bytes=a-` and `bytes=-n` are honoured; a multi-range request or a malformed one is ignored and the whole file served (always a valid answer), and a range past the end is `416`. **This is the property CDC would break**: content-defined chunks have no closed-form offset, so adopting it (§12.1) means recording per-chunk lengths in the manifest, or fetching to seek. |
 | A directory | `/sub/` serves `sub/index.html`; `/sub` without the slash is a `301` to `/sub/`, because the page's relative URLs would otherwise resolve against the parent. |
 | Unknown path | `404`, including `..`, a NUL, a file used as a directory, and any path not in the manifests — every name is re-validated against the manifest's own rules on the way out, so the URL space is exactly the bundle. |
-| A bundle not all here | `503`, not `404`: a manifest or data object the store cannot answer means the question has no answer *yet* (“not fetched”), which must not be shown as “no such file in this bundle”. Every object an answer needs is checked before a byte goes out, so a page is never half-served. |
+| A bundle not all here | `503`, not `404`: an object the store cannot answer means the question has no answer *yet* (“not fetched”), which must not be shown as “no such file in this bundle”. A session with a `KelpSource` does not stop at the first missing data object: it parks the browser request, fetches exactly the chunks the answer needs (at most four at once), verifies each against its id, stores it, and only then writes the response. A source failure or a 20-second deadline is still `503`; bytes that do not hash to the id are `502`, because retrying the same address would only repeat the lie. A missing *manifest* is still `503`: path resolution is what names the data objects, so there is no id to ask for yet. Every object an answer needs is checked before a byte goes out, so a page is never half-served. |
 | Lifetime | A session is dropped after 30 minutes without a request, or when it is closed; the listener dies with the app. A 32-byte token is the whole address, so a stale URL is worthless. |
 | Plaintext at rest | none: objects are decrypted per response, straight to the socket, one chunk at a time, and never written. |
 
@@ -442,7 +442,9 @@ while an embedded WebView can also refuse a request outright.
 **What is built.** Everything in the table above, plus the §5.3 convention, is in the tree:
 `libkelp/kelp_web.{h,cpp}` (which file is the page; path → file or directory; the chunk range
 behind a byte range; the extension table — manifests only, never a data object) and
-`src/kelppreviewserver.{h,cpp}`. `src/tests/tst_kelppreview.cpp` drives the server over a real
+`src/kelppreviewserver.{h,cpp}`. A session may also be given a `KelpSource`: an object the store
+lacks is then fetched on demand, verified, and served to the request waiting for it (§5.1's
+"resolver", built 2026-10-21). `src/tests/tst_kelppreview.cpp` drives the server over a real
 socket with no browser and no display, and `tst_kelpbundles` covers the app seam; `BUILD.md`
 has the counts. The seam is `KelpBundles::pageInfo/previewPage/endPreview`, and the first UI is
 a **browser section** on a share's own page (headed *In a browser* since 2026-10-21). Its
@@ -473,8 +475,10 @@ address; a paused share resumed before it had one. The URL carries the key, so i
 and never logged. `PROGRESS-<date>.md` §3.37 has the webpage device evidence and §3.41 the
 folder one; both are history now that the button is gone.
 
-**What is not built yet.** The lazy fetch through `KelpSource`, so a preview serves exactly what
-the store already holds and answers `503` for anything else. The per-bundle confirmation
+**What is not built yet.** Lazy-*open*: a view still fetches and verifies the whole bundle before
+its session starts, so the `KelpSource` seam above heals a hole but does not make a first paint
+faster. That is a separate decision (it trades a predictable bounded transfer for a first paint)
+and the seam makes it cheap to take. The per-bundle confirmation
 (§12.10) — deferred until the page being opened is someone else's. The *recipient* side needs no
 door of its own: §5.4 answered that question with "no button" (2026-10-18), so a received page is
 opened from the files it was saved as. Keeping a received bundle (§12.13) would still make one
@@ -748,9 +752,10 @@ has no address to put in one, so the hint survives a relay-only share.
 - Being memory, there is a ceiling: **32 MiB**, enough for a document-shaped page and not for a
   gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched and
   enforced again while storing — the claim is only a claim; a bundle over the ceiling is refused
-  with the reason and the way out (ask the sender to share it as a folder). Lazy fetch (§5.1's open
-  item) is what would lift this, because fetching only what the browser asks for needs no
-  whole-bundle copy at all.
+  with the reason and the way out (ask the sender to share it as a folder). The preview server can
+  now fetch a missing object on demand (§5.1), but the view still fetches and verifies the whole
+  bundle before the session starts, so the ceiling stands; lazy-*open* — fetching only what the
+  browser asks for — is what would lift it, and remains a separate decision.
 - Pressing **Open in browser** again after the page has been served re-opens the *same* session —
   the same URL — rather than fetching again or minting a second token.
 - **KeepAlive** is held while the session is live, because the browser now owns the foreground and
@@ -1030,10 +1035,12 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   `503`, a 30-minute idle session), the `KelpBundles` seam, and *Open in browser* on a share's
   own page — offered only for a share declared a **webpage** (§5.5), not for any bundle that
   happens to hold a page. `tst_kelppreview` drives it over a real socket and `tst_kelpbundles`
-  covers the seam; both run without a browser or a display. Still to do: the lazy fetch through
-  `KelpSource` (today a missing object is a `503`), the per-bundle confirmation (§12.10), and
-  an on-device pass with a real browser. An embedded `Sailfish.WebView` remains a later UI
-  decision (§12.9).
+  covers the seam; both run without a browser or a display. The on-demand fetch through
+  `KelpSource` is built too: a source-backed session parks a request for a missing data object,
+  fetches it, verifies it and answers; without a source a hole is still a `503`. That is the seam,
+  not lazy-open — the view still fetches the whole bundle first. Still to do: lazy-open, the
+  per-bundle confirmation (§12.10), and an on-device pass with a real browser. An embedded
+  `Sailfish.WebView` remains a later UI decision (§12.9).
 - **C4a.1 — the preview from the receive side (§5.4).** **Dropped by the user, 2026-10-18,
   before any code was written.** The design was one **Open in browser** button on the Open-link
   page's Done panel for a page that arrived inside an ordinary folder share; the user's answer

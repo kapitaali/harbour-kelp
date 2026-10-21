@@ -54,6 +54,7 @@
 #include "kelp_link.h"
 #include "kelp_manifest.h"
 #include "kelp_store.h"
+#include "kelp_web.h"
 
 #include "kelpclient.h"
 #include "kelppreviewserver.h"
@@ -490,6 +491,64 @@ void testViewFetchesToMemory()
     CHECK_EQ(appStore.count(), 0);
 }
 
+void testOnDemandHealsHole()
+{
+    section("view: the session fetches an object the view store lost");
+
+    MemoryStore sealed;
+    Sealed site;
+    QString error;
+    CHECK(sealSite(&sealed, QStringLiteral("client-on-demand"), true, &site, &error));
+    StubPublisher stub(&sealed);
+
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    KelpPreviewServer preview;
+    client.setPreviewServer(&preview);
+
+    CHECK(client.fetchForViewing(linkFor(site, stub, true)));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK_EQ(stub.objectRequests(), sealed.count());
+
+    // A real hole in the view's memory: the stylesheet's only chunk. The normal
+    // flow cannot produce one — every object was verified before Done — so this
+    // test-only seam makes the session's on-demand fetch reachable. It is the
+    // same thing a future lazy-open view will have by construction.
+    const QByteArray key = contentKey(site.secret);
+    bool found = false;
+    bool isDir = false;
+    QByteArray hash;
+    Manifest::File file;
+    CHECK(Web::resolve(&sealed, key, site.rootId, QStringLiteral("style.css"),
+                       &found, &isDir, &hash, &file, &error));
+    CHECK(found);
+    CHECK(!isDir);
+    CHECK_EQ(file.chunks.size(), 1);
+    if (file.chunks.size() != 1)
+        return;
+    client.forgetViewObject(file.chunks.at(0));
+
+    const QVariantMap opened = client.openPageView();
+    CHECK(opened.value(QStringLiteral("ok")).toBool());
+    if (!opened.value(QStringLiteral("ok")).toBool()) {
+        printf("  open failed: %s\n",
+               qPrintable(opened.value(QStringLiteral("error")).toString()));
+        return;
+    }
+
+    const QUrl url(opened.value(QStringLiteral("url")).toString());
+    const int before = stub.objectRequests();
+    const Reply reply = get(url.port(), url.path().toLatin1() + "/style.css");
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, QByteArrayLiteral("p { color: teal; }\n"));
+    CHECK_EQ(stub.objectRequests(), before + 1);
+
+    // The page itself and the app store are still untouched.
+    CHECK_EQ(get(url.port(), url.path().toLatin1() + "/").status, 200);
+    CHECK_EQ(appStore.count(), 0);
+}
+
 void testCeilingBeforeFetching()
 {
     section("view: the ceiling refuses an oversized page from /info alone");
@@ -885,6 +944,7 @@ int main(int argc, char **argv)
     printf("kelpclient unit test\n");
 
     testViewFetchesToMemory();
+    testOnDemandHealsHole();
     testCeilingBeforeFetching();
     testCeilingWhileStoring();
     testNoPage();

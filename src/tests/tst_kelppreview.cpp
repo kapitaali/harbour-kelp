@@ -26,10 +26,16 @@
 #include <QHash>
 #include <QHostAddress>
 #include <QList>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSet>
 #include <QString>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QUrl>
+#include <QVector>
 
 #include "kelp_bundle.h"
 #include "kelp_crypto.h"
@@ -38,6 +44,7 @@
 #include "kelp_object.h"
 #include "kelp_store.h"
 #include "kelp_web.h"
+#include "kelpfetch.h"
 #include "kelppreviewserver.h"
 #include "kelpstore.h"
 
@@ -128,6 +135,53 @@ public:
         *out = data.mid(int(offset), int(length));
         return true;
     }
+};
+
+// A source for the preview server's on-demand path. It answers from a complete
+// store after a short delay, so the request really is parked before the answer
+// arrives; the failure and bad-bytes modes are one flag each.
+class FakeSource : public KelpSource
+{
+public:
+    FakeSource(MemoryStore *store, QObject *parent = nullptr)
+        : KelpSource(parent), m_store(store) {}
+
+    QVector<QByteArray> requested;
+    bool fail = false;
+    bool badBytes = false;
+    bool answer = true;
+    int delayMs = 20;
+
+    void begin() override {}
+    void stop() override {}
+
+    void requestObject(const QByteArray &id) override
+    {
+        requested.append(id);
+        if (!answer)
+            return;
+        QTimer::singleShot(delayMs, this, [this, id]() {
+            if (fail) {
+                emit failed(QStringLiteral("the fake source failed"));
+                return;
+            }
+            if (badBytes) {
+                emit objectReady(id, QByteArrayLiteral("not the object that was asked for"));
+                return;
+            }
+            QByteArray object;
+            if (!m_store->get(id, &object)) {
+                emit failed(QStringLiteral("the fake source has no such object"));
+                return;
+            }
+            emit objectReady(id, object);
+        });
+    }
+
+    QString describe() const override { return QStringLiteral("the fake source"); }
+
+private:
+    MemoryStore *m_store;
 };
 
 SourceNode fileNode(const QString &name, const QString &path, qint64 size)
@@ -330,6 +384,48 @@ Reply get(int port, const QByteArray &path, const QByteArray &extraHeaders = QBy
 QByteArray rangeHeader(quint64 first, quint64 last)
 {
     return "Range: bytes=" + QByteArray::number(first) + "-" + QByteArray::number(last) + "\r\n";
+}
+
+// Two browser tabs asking at once, each on its own connection so the server
+// really sees both before either answer. This is what proves two requests for
+// the same missing object join one fetch.
+QVector<Reply> getTwo(int port, const QByteArray &pathA, const QByteArray &pathB)
+{
+    QNetworkAccessManager managerA;
+    QNetworkAccessManager managerB;
+    const QUrl urlA(QStringLiteral("http://127.0.0.1:%1%2")
+                        .arg(port).arg(QString::fromLatin1(pathA)));
+    const QUrl urlB(QStringLiteral("http://127.0.0.1:%1%2")
+                        .arg(port).arg(QString::fromLatin1(pathB)));
+    QNetworkReply *replyA = managerA.get(QNetworkRequest(urlA));
+    QNetworkReply *replyB = managerB.get(QNetworkRequest(urlB));
+
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    int remaining = 2;
+    const auto oneDone = [&loop, &remaining]() {
+        if (--remaining == 0)
+            loop.quit();
+    };
+    QObject::connect(replyA, &QNetworkReply::finished, oneDone);
+    QObject::connect(replyB, &QNetworkReply::finished, oneDone);
+    timeout.start(5000);
+    loop.exec();
+
+    QVector<Reply> replies;
+    QNetworkReply *const raw[2] = { replyA, replyB };
+    for (int i = 0; i < 2; ++i) {
+        Reply reply;
+        if (!raw[i]->isFinished())
+            raw[i]->abort();
+        reply.status = raw[i]->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        reply.body = raw[i]->readAll();
+        replies.append(reply);
+        raw[i]->deleteLater();
+    }
+    return replies;
 }
 
 // ---- which file is the page (design §5.3) ----------------------------------
@@ -883,6 +979,147 @@ void testLazy()
     CHECK_EQ(reply.status, 503);
 }
 
+void testOnDemand()
+{
+    section("a missing object is fetched for the request that asks");
+
+    MemoryStore full;
+    Site site;
+    QString error;
+    if (!site.build(&full, &error)) {
+        CHECK(false);
+        printf("  build error: %s\n", qPrintable(error));
+        return;
+    }
+
+    const QVector<QByteArray> manifests = manifestsOf(&full, site.key, site.rootId);
+    CHECK(manifests.size() > 0);
+
+    // One response's worth of data missing: the page's own chunk.
+    MemoryStore partial;
+    copyObjects(&full, &partial, manifests);
+    KelpPreviewServer server;
+    CHECK(server.start(&error));
+    FakeSource *source = new FakeSource(&full);
+    const KelpPreviewServer::Opened session =
+        server.open(borrow(&partial), site.bundleId, site.secretText,
+                    QStringLiteral("On demand"), source);
+    CHECK(session.ok);
+    if (!session.ok) {
+        printf("  open error: %s\n", qPrintable(session.error));
+        return;
+    }
+    const QByteArray prefix = "/" + session.token.toLatin1();
+    const int port = server.port();
+
+    Reply reply = get(port, prefix + "/");
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.html);
+    CHECK_EQ(source->requested.size(), 1);
+    CHECK_EQ(server.tally().onDemand, 1);
+
+    // Only the file that was asked for was fetched: the stylesheet was still a
+    // hole, and asking for it is what fetches that one.
+    CHECK_EQ(source->requested.size(), 1);
+    reply = get(port, prefix + "/style.css");
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.css);
+    CHECK_EQ(source->requested.size(), 2);
+
+    // Two requests for the same three-chunk file, before either can be answered,
+    // join the same three fetches rather than asking the sender twice.
+    MemoryStore bigPartial;
+    copyObjects(&full, &bigPartial, manifests);
+    KelpPreviewServer bigServer;
+    CHECK(bigServer.start(&error));
+    FakeSource *bigSource = new FakeSource(&full);
+    bigSource->delayMs = 50;
+    const KelpPreviewServer::Opened bigSession =
+        bigServer.open(borrow(&bigPartial), site.bundleId, site.secretText,
+                       QStringLiteral("Two tabs"), bigSource);
+    CHECK(bigSession.ok);
+    if (!bigSession.ok)
+        return;
+    const QByteArray bigPrefix = "/" + bigSession.token.toLatin1();
+    const QVector<Reply> both = getTwo(bigServer.port(), bigPrefix + "/big.bin",
+                                       bigPrefix + "/big.bin");
+    CHECK_EQ(both.size(), 2);
+    if (both.size() == 2) {
+        CHECK_EQ(both.at(0).status, 200);
+        CHECK_EQ(both.at(1).status, 200);
+        CHECK_EQ(both.at(0).body, site.big);
+        CHECK_EQ(both.at(1).body, site.big);
+    }
+    CHECK_EQ(bigSource->requested.size(), 3);
+    QSet<QByteArray> unique;
+    for (int i = 0; i < bigSource->requested.size(); ++i)
+        unique.insert(bigSource->requested.at(i));
+    CHECK_EQ(unique.size(), 3);
+    CHECK_EQ(bigServer.tally().onDemand, 3);
+
+    // A source that says it failed is a 503 for the parked request, with the
+    // same body a store-only preview gives.
+    MemoryStore failPartial;
+    copyObjects(&full, &failPartial, manifests);
+    KelpPreviewServer failServer;
+    CHECK(failServer.start(&error));
+    FakeSource *failSource = new FakeSource(&full);
+    failSource->fail = true;
+    const KelpPreviewServer::Opened failSession =
+        failServer.open(borrow(&failPartial), site.bundleId, site.secretText,
+                        QStringLiteral("Failing source"), failSource);
+    CHECK(failSession.ok);
+    if (!failSession.ok)
+        return;
+    const QByteArray failPrefix = "/" + failSession.token.toLatin1();
+    reply = get(failServer.port(), failPrefix + "/");
+    CHECK_EQ(reply.status, 503);
+    CHECK(reply.body.contains("not all here yet"));
+    CHECK_EQ(failServer.tally().notHeld, 1);
+
+    // Bytes that do not hash to the id are not stored and are a 502: asking
+    // again would only repeat the same lie.
+    MemoryStore badPartial;
+    copyObjects(&full, &badPartial, manifests);
+    KelpPreviewServer badServer;
+    CHECK(badServer.start(&error));
+    FakeSource *badSource = new FakeSource(&full);
+    badSource->badBytes = true;
+    const KelpPreviewServer::Opened badSession =
+        badServer.open(borrow(&badPartial), site.bundleId, site.secretText,
+                       QStringLiteral("Bad bytes"), badSource);
+    CHECK(badSession.ok);
+    if (!badSession.ok)
+        return;
+    const QByteArray badPrefix = "/" + badSession.token.toLatin1();
+    reply = get(badServer.port(), badPrefix + "/");
+    CHECK_EQ(reply.status, 502);
+    CHECK(reply.body.contains("did not match its address"));
+    CHECK_EQ(badServer.tally().mismatched, 1);
+    CHECK_EQ(badPartial.count(), manifests.size());
+
+    // A source that never answers is a 503 after the deadline, not a browser
+    // left waiting. The test lowers the deadline; production is twenty seconds.
+    MemoryStore mutePartial;
+    copyObjects(&full, &mutePartial, manifests);
+    KelpPreviewServer muteServer;
+    muteServer.setFetchTimeout(100);
+    CHECK(muteServer.start(&error));
+    FakeSource *muteSource = new FakeSource(&full);
+    muteSource->answer = false;
+    const KelpPreviewServer::Opened muteSession =
+        muteServer.open(borrow(&mutePartial), site.bundleId, site.secretText,
+                        QStringLiteral("Silent source"), muteSource);
+    CHECK(muteSession.ok);
+    if (!muteSession.ok)
+        return;
+    const QByteArray mutePrefix = "/" + muteSession.token.toLatin1();
+    reply = get(muteServer.port(), mutePrefix + "/");
+    CHECK_EQ(reply.status, 503);
+    CHECK(reply.body.contains("not all here yet"));
+    CHECK(muteServer.tally().notHeld > 0);
+}
+
 void testHoles()
 {
     section("a manifest that went away");
@@ -1002,6 +1239,7 @@ int main(int argc, char **argv)
     testMime();
     testServing();
     testLazy();
+    testOnDemand();
     testHoles();
     testOnDiskStore();
 

@@ -10,6 +10,7 @@
 
 #include <QObject>
 
+#include "kelp_link.h"
 #include "kelp_store.h"
 
 class KelpPreviewServer;
@@ -142,6 +143,12 @@ public:
     // with a smaller one.
     void setViewCeiling(quint64 bytes);
 
+    // A test affordance: drop one object from the current view's memory store,
+    // so the preview session has a real hole for its on-demand fetch to heal.
+    // The normal flow has no hole — every object was verified before the page
+    // opened — which is why this exists only for the test.
+    void forgetViewObject(const QByteArray &id);
+
     // The listener a received page is served through (design §5.5). Without one a
     // view can fetch but not be opened.
     void setPreviewServer(KelpPreviewServer *preview);
@@ -181,9 +188,10 @@ private:
 
     // The view (design §5.5). Shared with the session that serves it, so the store
     // outlives this client's interest in it; it is freed when the session ends.
-    QSharedPointer<Kelp::ObjectStore> m_viewStore;
+    QSharedPointer<Kelp::MemoryStore> m_viewStore;
     bool m_viewing;
     QString m_link;            // the link this fetch belongs to; its identity
+    Kelp::Link::Bundle m_viewLink; // decoded link, for a source a re-minted session needs
     QString m_viewSecret;      // the link's secret, for the preview server
     QString m_viewToken;
     QString m_viewUrl;

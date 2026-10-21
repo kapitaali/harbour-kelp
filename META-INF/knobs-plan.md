@@ -258,25 +258,25 @@ line, so the port was stable).
 
 ## K3 — The lazy fetch in the preview
 
-**Deferred, 2026-10-18, on purpose — and here is the honest reason.** The seam is designed
-below, but nothing in the app can reach the situation it fixes. A preview session is only ever
-opened over a store that is complete:
+**Built, 2026-10-21, as the seam only.** The earlier note here deferred this because a session
+was only ever opened over a complete store: the publisher's own preview reads objects that
+`pruneStore()` keeps for its share rows, and the view-only session (C4a.2) is opened only after
+`KelpClient` has fetched and verified the whole bundle. That is still true of the normal flow, so
+this change does not make pages open sooner; it removes the `503` that a *hole* would otherwise
+produce, and it is the seam a later lazy-open decision needs.
 
-- the publisher's own preview reads the app's object store, and `pruneStore()` will not delete
-  an object that belongs to any share row (paused rows included);
-- the view-only session (C4a.2) is opened only after `KelpClient` has fetched the whole bundle
-  *and verified every object*, and a fetch that loses an object ends in `Failed`, which offers
-  "Try again" rather than a page with a hole in it.
+The earlier deferral also asked who the caller would be. It is the view-only page session:
+`KelpClient` hands the source it fetched with to `KelpPreviewServer::open()`, and keeps the decoded
+link so a session re-minted after the idle sweep can get a fresh source without asking for a
+passphrase again. The publisher's own preview still gets none — its objects are in its own store,
+and if they were pruned there is nothing to fetch them from. Removing an object from the view's
+memory store is a test-only affordance (`forgetViewObject`); with it, `tst_kelpclient` proves the
+whole caller path, including the publisher being asked exactly once for the lost object.
 
-So a `KelpSource`-backed session would be a path with tests and no caller — worth writing the
-day a session can be opened over an incomplete store, which is exactly what C4a.2's lazy-open
-(skip the up-front fetch, pull objects as the browser asks) or §12.13's kept bundles would make
-it. Building it before then would mean shipping code no user can reach, which is the kind of
-thing this project writes down instead of doing.
-
-The design stands as written for whoever picks it up. Its one open question is whether a lazy
-*miss* may serve an object the 32 MiB page ceiling never counted — the answer above is yes, one
-object at a time, which is the same "bounded work per request" the server already promises.
+The design's one open question — whether a lazy *miss* may serve an object the 32 MiB page
+ceiling never counted — is answered yes, one object at a time, which is the same "bounded work
+per request" the server already promises. The ceiling and the up-front fetch themselves are
+unchanged.
 
 **The gap as designed (§5.1, and §11's item 4).** `KelpPreviewServer` resolves a browser's request
 against a store: what is there is served, what is not is a `503`. The design says the server should
@@ -289,9 +289,9 @@ manifest and letting the browser pull the rest — is a *different* decision, de
 it trades a predictable bounded transfer for a first paint. The seam built here is what makes that
 decision cheap to take later.
 
-**The design.** `KelpPreviewServer::open()` gains an optional `KelpSource *source` (the class
-already exists in `src/kelpfetch.h`; the server is app layer, so it may hold one). The session takes
-ownership of it. Then:
+**The design, as built.** `KelpPreviewServer::open()` gained an optional `KelpSource *source` (the
+class already exists in `src/kelpfetch.h`; the server is app layer, so it may hold one). The session
+takes ownership of it. Then:
 
 - A request whose object the store holds: unchanged path.
 - A request whose object is missing **and** a source is set: the server calls
@@ -307,16 +307,21 @@ ownership of it. Then:
   address — a `502` rather than a `503` because retrying is pointless and the diagnosis is different.
 - No source, or the object is missing and no fetch can start: `503`, exactly as today.
 
-**Who gets a source.** The view-only page session (C4a.2): `KelpClient` creates a source for the
-link it is handling and hands it over, so a hole left by a partial fetch heals when the browser asks
-for it. The publisher's own preview gets none — the objects are in its own store by construction, and
-if they were pruned there is nothing to fetch them from.
+**Who gets a source.** The view-only page session (C4a.2): `KelpClient` hands over the source it
+fetched with, and the session owns it from then on. The decoded link is retained for one purpose:
+when the idle sweep has taken a session and the browser URL is dead, pressing *Open in browser*
+mints a fresh session and a fresh source from that link — a passphrase link is not asked for its
+passphrase again. The publisher's own preview gets none; the objects are in its own store by
+construction.
 
-**Tests** (`tst_kelppreview`, over a real socket as always): a session with a store that is missing
-one object and a fake source that answers → the browser gets `200` and the exact bytes; the same
-with no source → `503` (today's behaviour, unchanged); a source that fails → `503`; a source that
-answers with bytes that do not hash to the id → `502`; two requests for the same missing object → one
-fetch; and a parked request that nobody ever answers → `503` after the timeout.
+**Tests** (`tst_kelppreview`, over a real socket as always): a session with a store missing one
+object and a fake source that answers → `200` and the exact bytes; the same with no source → `503`
+(the old behaviour, unchanged); one file's three missing chunks fetched once for **two** concurrent
+requests → both `200`, three source calls; a source that fails → `503`; a source that answers with
+bytes that do not hash to the id → `502`; and a parked request that nobody ever answers → `503`
+after the deadline. `tst_kelpclient` removes one object from the view's memory after a completed
+fetch, opens the session, and proves the browser's request heals it through the real `LanSource`.
+The counts are `tst_kelppreview` 206 → 243 and `tst_kelpclient` 152 → 167.
 
 ---
 

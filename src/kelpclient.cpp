@@ -188,6 +188,12 @@ void KelpClient::setViewCeiling(quint64 bytes)
     m_viewCeiling = bytes;
 }
 
+void KelpClient::forgetViewObject(const QByteArray &id)
+{
+    if (m_viewStore)
+        m_viewStore->remove(id);
+}
+
 void KelpClient::setSettings(KelpSettings *settings)
 {
     m_settings = settings;
@@ -265,6 +271,7 @@ void KelpClient::reset()
     // reference of its own and keeps working.
     m_viewing = false;
     m_link.clear();
+    m_viewLink = Kelp::Link::Bundle();
     m_viewSecret.clear();
     m_viewToken.clear();
     m_viewUrl.clear();
@@ -379,8 +386,13 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing,
     m_bundleIdText = QString::fromLatin1(Kelp::Link::base32Encode(link.bundleId));
     m_name = sanitiseName(link.name);
     m_sourceLabel = source->describe();
-    if (m_viewing)
+    if (m_viewing) {
         m_viewSecret = Kelp::Link::base64UrlEncode(link.secret);
+        // Kept, not logged: a swept session may need a fresh source for the
+        // same page, and a passphrase link cannot be re-dialled from its text
+        // alone. The secret is already in memory for the whole view.
+        m_viewLink = link;
+    }
     m_phase = Checking;
     emit changed();
 
@@ -691,15 +703,46 @@ QVariantMap KelpClient::openPageView()
         return result;
     }
 
+    // The session gets a source of its own, so an object missing from the view
+    // store is fetched when the browser asks for it instead of a 503 (design
+    // §5.1). The fetch's own source is reused when it is still here; after a
+    // swept session it is gone, and the decoded link can mint another one — a
+    // passphrase link is not asked for its passphrase again.
+    KelpSource *source = m_source;
+    bool minted = false;
+    if (!source && !m_viewLink.bundleId.isEmpty()) {
+        QString sourceError;
+        source = KelpSource::create(m_viewLink, this, &sourceError);
+        if (source) {
+            minted = true;
+        } else {
+            qInfo() << "KelpClient: no source for the page view's missing objects:"
+                    << sourceError;
+        }
+    }
+
     const KelpPreviewServer::Opened opened =
-        m_preview->open(m_viewStore, m_bundleIdText, m_viewSecret, m_name);
+        m_preview->open(m_viewStore, m_bundleIdText, m_viewSecret, m_name, source);
     result.insert(QStringLiteral("ok"), opened.ok);
     result.insert(QStringLiteral("error"), opened.error);
     result.insert(QStringLiteral("url"), opened.url);
     result.insert(QStringLiteral("entry"), opened.entry);
     if (!opened.ok) {
+        if (minted && source) {
+            source->stop();
+            delete source;
+        }
         qWarning() << "KelpClient: could not serve the page:" << opened.error;
         return result;
+    }
+
+    // The session owns it now. The client's own connections were for the
+    // up-front walk and must not see the preview's object answers.
+    if (source) {
+        source->disconnect(this);
+        source->setParent(m_preview);
+        if (source == m_source)
+            m_source = nullptr;
     }
 
     m_viewToken = opened.token;
