@@ -75,6 +75,17 @@ bool liveObjects(KelpObjectStore *store, const QVariantList &shares,
 KelpBundles::KelpBundles(KelpObjectStore *store, KelpServer *server, QObject *parent)
     : QObject(parent), m_store(store), m_server(server)
 {
+    if (m_server) {
+        // The listener notices a network move by itself; the rows and links live
+        // in QML, so this is the one fact it has to pass on.
+        connect(m_server, &KelpServer::addressChanged,
+                this, &KelpBundles::lanAddressChanged);
+    }
+}
+
+QString KelpBundles::lanAddress() const
+{
+    return m_server ? m_server->lanAddress() : QString();
 }
 
 // ── Preview (design §5.1) ────────────────────────────────────────────────────
@@ -755,15 +766,17 @@ Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArr
     // configures one.
     const bool exposeLan = !m_settings || m_settings->includeLanAddress();
     if (m_server && exposeLan) {
+        // Register the share before opening the listener. If there is no address
+        // yet — the app was launched before the network came up, or the bind
+        // failed — the entry is what lets KelpServer's watcher serve it as soon
+        // as an address does arrive, without another share or a restart.
+        m_server->share(rootId, Kelp::swarmToken(secret), name, objects, files, bytes);
         QString listenError;
-        if (m_server->start(&listenError)) {
-            m_server->share(rootId, Kelp::swarmToken(secret), name, objects, files,
-                            bytes);
+        if (m_server->start(&listenError))
             link.lan = m_server->lanAddress();
-        } else {
+        else
             qWarning() << "KelpBundles: cannot serve" << name << "on the LAN:"
                        << listenError;
-        }
     } else if (m_server) {
         qInfo() << "KelpBundles: not serving" << name
                 << "on the LAN: the local address is excluded";

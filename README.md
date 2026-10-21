@@ -194,8 +194,12 @@ the log, and the next launch serves those bundles again instead of silently
 forgetting them. The *address* is deliberately not stored: the LAN port is
 ephemeral, so a fresh one is chosen at startup and the link is minted again, which
 is why the app always shows the current link rather than one captured earlier.
-Storing the secret asks for no more trust than the link already does — it is the
-same key — but the file is kept owner-only and is never logged.
+The address is also watched while the app runs: if the device moves networks or
+loses the connection, the listener rebinds (or closes) and the rows are re-minted
+within a few seconds. A link sent to someone else is still a copy of the old
+address and cannot be repaired, so a recipient may need a fresh link after the
+move. Storing the secret asks for no more trust than the link already does — it is
+the same key — but the file is kept owner-only and is never logged.
 
 ## Serving with the window gone
 

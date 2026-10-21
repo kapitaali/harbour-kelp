@@ -32,9 +32,16 @@ class KelpBundles : public QObject
 {
     Q_OBJECT
 
+    // The listener's current "host:port", or empty when it is not serving. QML
+    // reads this from lanAddressChanged() to decide whether republishing can
+    // mint a working link or whether the rows should say they are offline.
+    Q_PROPERTY(QString lanAddress READ lanAddress NOTIFY lanAddressChanged)
+
 public:
     explicit KelpBundles(KelpObjectStore *store, KelpServer *server = nullptr,
                          QObject *parent = nullptr);
+
+    QString lanAddress() const;
 
     // Relays to publish on and to put in links as `r=`. The Settings page owns
     // this; an empty list means LAN-only, which is the default.
@@ -186,6 +193,11 @@ signals:
     // A preview opened, closed, or expired. The app holds the device awake while
     // one is being served, exactly as it does while a share is being served.
     void previewSessionsChanged();
+
+    // The LAN listener moved to another address (or lost one). The links the UI
+    // is showing are now stale; the root QML re-mints the rows it still serves.
+    // Emitted by KelpServer's address watcher, not by a fetch.
+    void lanAddressChanged();
 
 private:
     bool collect(const QString &path, const QString &name, int depth,

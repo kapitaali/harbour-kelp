@@ -937,9 +937,11 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     link-derived `swarm_token`. Verified by fetching objects back over the LAN address with
     `curl` and checking every byte against its content address; a bundle stops answering the
     moment it is unshared, while others keep serving.
-    Still open: there is no TLS on this path (see the note under §3.1), the address is
-    captured when sharing and goes stale if the interface changes, and serving exists only
-    while the app runs — there is no auto-start.
+    Still open: there is no TLS on this path (see the note under §3.1), and serving exists
+    only while the app runs — there is no auto-start. The address is no longer a one-time
+    snapshot: a watcher rebinds the listener when the interface moves and the app re-mints
+    the rows it is showing, though a link already handed out remains a copy of the old
+    address (PROGRESS §3.43).
   - **C2b (done)** — the *fetch* half in the app: `KelpClient` (`src/kelpclient.cpp`) takes a
     pasted `kelp://` link, reads the address out of it, derives the content key and the
     swarm token, asks `…/info` for the shape the sender claims, and then downloads in

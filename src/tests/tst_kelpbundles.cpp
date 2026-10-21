@@ -660,6 +660,80 @@ static void testPauseResume()
     QFile::remove(KelpSettings::filePath());
 }
 
+/*
+ * A phone changes networks; its links must not stay pointed at the old address
+ * until the app is restarted. The watcher is normally driven by its five-second
+ * timer, so the test invokes the same slot directly after changing the address
+ * the test hook reports. No real interface is touched.
+ */
+static void testAddressRefresh()
+{
+    QFile::remove(KelpSettings::filePath());
+
+    const QString base = KelpLog::dataDirectory() + QStringLiteral("/address-test");
+    QDir().mkpath(base + "/a");
+
+    KelpObjectStore store(base + "/a/objects");
+    QString error;
+    CHECK(store.initialise(&error));
+
+    const QByteArray advertised = qgetenv("KELP_ADVERTISE_HOST");
+    qunsetenv("KELP_ADVERTISE_HOST");
+
+    KelpServer server(&store);
+    int changes = 0;
+    QObject::connect(&server, &KelpServer::addressChanged,
+                     [&changes]() { ++changes; });
+
+    // A share keeps the watcher interested after the address is lost; the
+    // object itself does not need to exist for this test.
+    server.share(QByteArray(32, 'a'), QByteArray(32, 'b'),
+                 QStringLiteral("watched"), 1, 1, 1);
+
+    section("address refresh: a share made before the network is served later");
+    qputenv("KELP_TEST_LAN_ADDRESS", "not-an-address");
+    CHECK(!server.start(&error));
+    CHECK(!server.isListening());
+    CHECK_EQ(server.lanAddress(), QString());
+
+    qputenv("KELP_TEST_LAN_ADDRESS", "127.0.0.1");
+    CHECK(QMetaObject::invokeMethod(&server, "checkAddress", Qt::DirectConnection));
+    CHECK(server.isListening());
+    CHECK(server.lanAddress().startsWith(QStringLiteral("127.0.0.1:")));
+    CHECK_EQ(changes, 1);
+
+    section("address refresh: a move rebinds and announces the new address");
+    qputenv("KELP_TEST_LAN_ADDRESS", "127.0.0.2");
+    CHECK(QMetaObject::invokeMethod(&server, "checkAddress", Qt::DirectConnection));
+    CHECK_EQ(changes, 2);
+    CHECK(server.lanAddress().startsWith(QStringLiteral("127.0.0.2:")));
+
+    section("address refresh: an unchanged address does not churn");
+    CHECK(QMetaObject::invokeMethod(&server, "checkAddress", Qt::DirectConnection));
+    CHECK_EQ(changes, 2);
+    CHECK(server.lanAddress().startsWith(QStringLiteral("127.0.0.2:")));
+
+    section("address refresh: losing the address closes, returning reopens");
+    qputenv("KELP_TEST_LAN_ADDRESS", "not-an-address");
+    CHECK(QMetaObject::invokeMethod(&server, "checkAddress", Qt::DirectConnection));
+    CHECK_EQ(changes, 3);
+    CHECK_EQ(server.lanAddress(), QString());
+    CHECK(!server.isListening());
+
+    qputenv("KELP_TEST_LAN_ADDRESS", "127.0.0.1");
+    CHECK(QMetaObject::invokeMethod(&server, "checkAddress", Qt::DirectConnection));
+    CHECK_EQ(changes, 4);
+    CHECK(server.isListening());
+    CHECK(server.lanAddress().startsWith(QStringLiteral("127.0.0.1:")));
+
+    qunsetenv("KELP_TEST_LAN_ADDRESS");
+    if (!advertised.isEmpty())
+        qputenv("KELP_ADVERTISE_HOST", advertised);
+
+    QDir(base).removeRecursively();
+    QFile::remove(KelpSettings::filePath());
+}
+
 // The preview API: which file a bundle offers a browser, and serving it on
 // loopback (design §5.1, §5.3). The server has its own suite for what it does
 // with a request; this is the seam the UI actually calls.
@@ -1171,6 +1245,7 @@ int main(int argc, char **argv)
     testStoreManagement();
     testServingVisibility();
     testPauseResume();
+    testAddressRefresh();
     testPreview();
     testWebpageShare();
 

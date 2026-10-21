@@ -32,6 +32,11 @@ const int kRequestTimeoutMs = 10000;
 // about five seconds of its last object.
 const qint64 kTrafficIdleMs = 5000;
 
+// How often the address that links advertise is re-checked. A network move is
+// not an every-frame event, but it is also not something a user should have to
+// restart the app for; five seconds is short enough to notice while still cheap.
+const int kAddressPollMs = 5000;
+
 // Comparing a token must not leak how much of it was right, so compare every
 // byte rather than returning at the first difference.
 bool constantTimeEquals(const QByteArray &a, const QByteArray &b)
@@ -62,16 +67,26 @@ bool usable(const QHostAddress &address)
 
 KelpServer::KelpServer(KelpObjectStore *store, QObject *parent)
     : QObject(parent), m_store(store), m_server(new QTcpServer(this)),
-      m_sweeper(new QTimer(this)), m_port(0)
+      m_sweeper(new QTimer(this)), m_addresses(new QTimer(this)), m_port(0)
 {
     connect(m_server, SIGNAL(newConnection()), this, SLOT(onConnection()));
 
     m_sweeper->setInterval(kRequestTimeoutMs / 2);
     connect(m_sweeper, &QTimer::timeout, this, &KelpServer::sweepPending);
+
+    m_addresses->setInterval(kAddressPollMs);
+    connect(m_addresses, &QTimer::timeout, this, &KelpServer::checkAddress);
 }
 
 QHostAddress KelpServer::lanHostAddress()
 {
+    // A test affordance: the LAN address watcher needs to be driven through a
+    // change without unplugging the machine. Loopback is deliberately not a
+    // usable production address, but it is a perfectly good bind target here.
+    const QByteArray testAddress = qgetenv("KELP_TEST_LAN_ADDRESS");
+    if (!testAddress.isEmpty())
+        return QHostAddress(QString::fromLatin1(testAddress));
+
     // "Which interface is the LAN" has no exact answer in Qt, so this is two
     // passes: prefer an ordinary interface (the Wi-Fi one), and only fall back to
     // a point-to-point one — a cellular bearer — rather than refusing to serve at
@@ -101,8 +116,11 @@ QHostAddress KelpServer::lanHostAddress()
 
 bool KelpServer::start(QString *error)
 {
-    if (m_server->isListening())
+    if (m_server->isListening()) {
+        if (!m_addresses->isActive())
+            m_addresses->start();
         return true;
+    }
 
     const QHostAddress address = lanHostAddress();
     if (address.isNull()) {
@@ -118,9 +136,11 @@ bool KelpServer::start(QString *error)
         return false;
     }
 
-    m_host = address.toString();
+    m_boundHost = address.toString();
+    m_host = m_boundHost;
     m_port = m_server->serverPort();
     m_sweeper->start();
+    m_addresses->start();
 
     // A test affordance: a device behind NAT — the Sailfish emulator behind
     // QEMU's user-mode NAT — is reachable only through its host, so the host
@@ -151,6 +171,86 @@ QString KelpServer::lanAddress() const
     return m_host + QLatin1Char(':') + QString::number(m_port);
 }
 
+void KelpServer::closeListener()
+{
+    if (m_server->isListening())
+        m_server->close();
+
+    // A closed listener must not leave half-read requests behind: their sockets
+    // belong to the address that has just gone away.
+    const QList<QTcpSocket *> pending = m_pending.keys();
+    for (int i = 0; i < pending.size(); ++i)
+        pending.at(i)->disconnectFromHost();
+    m_pending.clear();
+
+    m_host.clear();
+    m_boundHost.clear();
+    m_port = 0;
+}
+
+/*
+ * The address in a link is a snapshot. This is what notices that the snapshot
+ * has become a lie: the device moved networks, lost its connection, or got the
+ * address back. The socket is rebound (or closed) and the app is told, because
+ * only it knows which rows and links are on screen. The shares themselves stay
+ * in m_shared, so a rebind needs no second call to share().
+ */
+void KelpServer::checkAddress()
+{
+    const QHostAddress address = lanHostAddress();
+    const QString host = address.toString();
+
+    // Nothing is being served and there is no listener: stop the poll until a
+    // share starts one again.
+    if (!m_server->isListening() && m_shared.isEmpty()) {
+        m_addresses->stop();
+        return;
+    }
+
+    if (host.isEmpty()) {
+        if (m_server->isListening()) {
+            const QString old = lanAddress();
+            qInfo() << "KelpServer: LAN address lost; not serving until it returns";
+            closeListener();
+            if (old != lanAddress())
+                emit addressChanged();
+        } else if (m_shared.isEmpty()) {
+            m_addresses->stop();
+        }
+        return;
+    }
+
+    // The listener went away (the previous address was lost) and an address is
+    // back. A share kept in m_shared is what makes reopening worthwhile.
+    if (!m_server->isListening()) {
+        const QString old = lanAddress();
+        QString error;
+        if (!start(&error)) {
+            qWarning() << "KelpServer: cannot serve on the LAN again:" << error;
+            if (old != lanAddress())
+                emit addressChanged();
+        } else if (old != lanAddress()) {
+            qInfo() << "KelpServer: LAN address returned; serving on" << lanAddress();
+            emit addressChanged();
+        }
+        return;
+    }
+
+    if (host == m_boundHost)
+        return;
+
+    const QString old = lanAddress();
+    closeListener();
+    QString error;
+    if (!start(&error)) {
+        qWarning() << "KelpServer: cannot serve on the new LAN address:" << error;
+    } else {
+        qInfo() << "KelpServer: LAN address changed; serving on" << lanAddress();
+    }
+    if (old != lanAddress())
+        emit addressChanged();
+}
+
 void KelpServer::share(const QByteArray &bundleId, const QByteArray &swarmToken,
                        const QString &name, int objects, int files, quint64 bytes)
 {
@@ -161,6 +261,13 @@ void KelpServer::share(const QByteArray &bundleId, const QByteArray &swarmToken,
     entry.files = files;
     entry.bytes = bytes;
     m_shared.insert(bundleId, entry);
+
+    // A share can be registered while there is no address yet (a launch with no
+    // network, or a just-created share whose bind failed). The watcher is what
+    // notices the address when it arrives, so start it even without a listener;
+    // checkAddress() will stay quiet until one does.
+    if (!m_addresses->isActive())
+        m_addresses->start();
 }
 
 void KelpServer::unshare(const QByteArray &bundleId)

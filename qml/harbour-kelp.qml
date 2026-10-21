@@ -312,6 +312,50 @@ ApplicationWindow {
         return -1
     }
 
+    // The LAN address can move while the app is running (Wi-Fi to another
+    // network, or a connection coming back). KelpServer rebinds and tells us;
+    // every link showing the old address is now dead, so re-mint the rows that
+    // are meant to serve. This is deliberately not restoreShares(): that appends
+    // rows, and these rows are already on screen.
+    function refreshLanLinks() {
+        var address = kelpBundles.lanAddress
+        var touched = 0
+        for (var i = 0; i < bundlesModel.count; ++i) {
+            var row = bundlesModel.get(i)
+            if (row.shareState !== "seeding" && row.shareState !== "offline")
+                continue
+            if (address.length === 0) {
+                bundlesModel.setProperty(i, "shareState", "offline")
+                bundlesModel.setProperty(i, "lan", "")
+                bundlesModel.setProperty(i, "link", "")
+                ++touched
+                continue
+            }
+            var published = kelpBundles.republish(row.bundleId, row.secret, row.name,
+                                                  row.objects, row.files, row.bytes,
+                                                  row.page === true,
+                                                  row.passBlob ? row.passBlob : "")
+            if (!published.ok) {
+                kelpLog.warn("Kelp: cannot refresh \"" + row.name + "\": " + published.error)
+                bundlesModel.setProperty(i, "shareState", "offline")
+                bundlesModel.setProperty(i, "lan", "")
+                bundlesModel.setProperty(i, "link", "")
+                ++touched
+                continue
+            }
+            bundlesModel.setProperty(i, "shareState",
+                                     (published.lan && published.lan.length > 0) ? "seeding"
+                                                                                 : "offline")
+            bundlesModel.setProperty(i, "lan", published.lan ? published.lan : "")
+            bundlesModel.setProperty(i, "link", published.link)
+            ++touched
+        }
+        if (touched > 0) {
+            kelpLog.info("Kelp: LAN address changed; refreshed " + touched + " share(s)")
+            saveShares()
+        }
+    }
+
     // Brings back the saved shares and serves them again. A share is only useful
     // if its link points at somewhere reachable, and the LAN port is ephemeral,
     // so each row is republished and shows the freshly minted link. A row whose
@@ -401,6 +445,7 @@ ApplicationWindow {
         target: kelpBundles
 
         onPreviewSessionsChanged: kelp.previewSessions = kelpBundles.previewSessions()
+        onLanAddressChanged: kelp.refreshLanLinks()
     }
 
     // Background serving, made deliberate. Sailfish keeps a backgrounded app
