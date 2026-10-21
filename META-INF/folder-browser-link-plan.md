@@ -1,7 +1,8 @@
 # A browser door for a folder — plan (design §5.2, §12.12)
 
-**Status: proposal — no code.** This needs one decision from the user (§7): whether a folder
-share should offer a browser link at all, and where.
+**Status: built 2026-10-21 — placement A, QML only.** A folder share's page now offers
+*Copy browser link*; *Open in browser* stays webpage-only. Evidence: `PROGRESS-20261016.md`
+§3.41. The decision asked for in §7 was **option 1** (one generalised section).
 
 ## 1. The gap
 
@@ -60,9 +61,12 @@ Generalise the one existing browser section instead of adding a second one:
   (`isWebpage` drops out; the passphrase case stays excluded until the separate `#p=` slice.)
 - The note branches by kind. Webpage: exactly today's text. Folder:
 
-  > This link opens the folder in a browser, without Kelp: the files one at a time, or all of them
-  > as one ZIP. It works only while this share is being served, and it carries the same key as the
-  > link above.
+  > Copy this for someone who has no Kelp: their browser fetches the folder from the relay and
+  > decrypts it there — the files one at a time, or all of them as one ZIP. It works only while
+  > this share is being served, and it carries the same key as the link above.
+
+- A `browserSectionShown` property (`isWebpage || browserLinkOffered`) drives the header, the
+  note and the button block, so a folder with no address has no section at all.
 
 - A paused share, an unreadable link or a missing relay keeps the existing explanations. For a
   folder with no relay the section can stay hidden (the app-to-app link still works); for a
@@ -100,9 +104,17 @@ logged, and the passphrase sentence (*A browser cannot ask for the passphrase…
 1. A folder share's page offers **Copy browser link**; the URL opens the folder's file list and
    *Download folder* in a browser.
 2. A webpage share's page is visually and behaviourally unchanged.
-3. A passphrase share still offers neither a browser link nor a preview, with the same sentence.
+3. A passphrase share still offers no browser link; a passphrase *webpage* keeps its preview and
+   the existing sentence, while a passphrase *folder* has no browser section.
 4. A paused share or one without a relay explains itself as today.
 5. No *Open in browser* on a folder; no new menu; nothing logged.
+
+**As built (2026-10-21).** Placement A, QML only, in `qml/pages/BundlePage.qml`. Both kinds are
+checked on the emulator's real page in `PROGRESS-20261016.md` §3.41, together with the passphrase
+and no-relay states. One consequence of the rule above: a passphrase **folder** has no browser
+section at all (there is no door to explain), while a passphrase **webpage** keeps the existing
+sentence beside its preview. A folder with no relay is likewise hidden; the app-to-app link still
+works.
 
 ## 7. The decision
 
