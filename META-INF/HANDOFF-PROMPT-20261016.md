@@ -190,10 +190,10 @@ Next Move (in this order — 1–3 are done as of this note)
 8. **C4a (shared-page preview — design §5.1) — built off-device (§3.20).** `libkelp/kelp_web`
    (the §5.3 page convention), `src/kelppreviewserver` (the loopback server), the
    `KelpBundles::pageInfo/previewPage/endPreview` seam and the *Open in browser* button on a
-   bundle's page are in the tree; `tst_kelppreview` (202 checks) plus a new `tst_kelpbundles`
-   section cover all of it, and every suite is green in both bundle modes. Still open: the lazy
-   fetch through `KelpSource` (a preview serves what the store holds; anything else is `503`),
-   the *recipient* side — a bundle fetched from a link is not kept, so §5.1 is reached today
+   bundle's page are in the tree; `tst_kelppreview` (256 checks) plus a new `tst_kelpbundles`
+   section cover all of it, and every suite is green in both bundle modes. The lazy fetch through
+   `KelpSource` is built as the server seam (2026-10-21, PROGRESS §3.44); lazy-*open* is still
+   open. The *recipient* side — a bundle fetched from a link is not kept, so §5.1 is reached today
    through a share this device made (design §12.13) — the per-bundle confirmation (§12.10), and
    an on-device pass with a real browser. *(2026-10-18: the recipient side was settled by the
    user — an ordinary share only saves, so no *Open in browser* is offered after a download;
@@ -202,9 +202,9 @@ Next Move (in this order — 1–3 are done as of this note)
    (relay gateway — §5.2) and C7 (swarm). An embedded `Sailfish.WebView` in place of the system
    browser stays a UI decision for later (§12.9).
 Also worth doing opportunistically: replace the remaining printf/fprintf(stderr) debug
-lines with KelpLog calls, so everything lands in the log file; and note that *Wi-Fi only* and
-*Allow peer swarm* are still inert placeholders (*Share in background* is now acted on, but
-is not persisted).
+lines with KelpLog calls, so everything lands in the log file. *Share in background* is
+persisted and acted on, and *Wi-Fi only* drives the serving policy (K1/K2, §3.27–§3.28);
+*Allow peer swarm* is still a placeholder until C7.
 
 Relevant files
 - src/kelpfetch.{h,cpp} — KelpSource, LanSource, RelaySource. Bug 1 lives here (create()).

@@ -5,7 +5,7 @@
  * http:// to a private address, so the recipient's app is what decrypts: this test
  * drives the loopback server that re-serves a bundle as ordinary web content.
  *
- * Three things are proved here that nothing else can:
+ * Four things are proved here that nothing else can:
  *
  *   1. the §5.3 convention — which file in a bundle is "the page", and that a
  *      bundle with no page, or with several, says so instead of guessing;
@@ -13,7 +13,10 @@
  *      unknown token and a bad method all answer what HTTP says they should;
  *   3. "manifests first, data lazily" — a store holding only the manifests serves
  *      the page's shape and answers 503 for content it does not have yet, which is
- *      the whole reason a preview can start before a bundle is fetched.
+ *      the whole reason a preview can start before a bundle is fetched;
+ *   4. a missing object with a source is parked, fetched, verified and then served
+ *      (at most four at once), while a failure is 503, bad bytes are 502, and
+ *      closing the session answers the waiting request instead of hanging.
  *
  * Everything is off-device: no browser, no LAN, no display.
  */
@@ -151,6 +154,11 @@ public:
     bool badBytes = false;
     bool answer = true;
     int delayMs = 20;
+    int active = 0;                  // requests still waiting for an answer
+    int maxActive = 0;               // the most the server ever had in flight
+    bool closeOnRequest = false;     // close the session from the first request
+    KelpPreviewServer *closeServer = nullptr;
+    QString closeToken;
 
     void begin() override {}
     void stop() override {}
@@ -158,9 +166,21 @@ public:
     void requestObject(const QByteArray &id) override
     {
         requested.append(id);
+        ++active;
+        maxActive = qMax(maxActive, active);
+
+        if (closeOnRequest && closeServer) {
+            KelpPreviewServer *server = closeServer;
+            const QString token = closeToken;
+            // Not inside requestObject(): the server is still inside pumpFetches
+            // and holds a reference to the fetch state close() erases.
+            QTimer::singleShot(0, this, [server, token]() { server->close(token); });
+        }
+
         if (!answer)
             return;
         QTimer::singleShot(delayMs, this, [this, id]() {
+            --active;
             if (fail) {
                 emit failed(QStringLiteral("the fake source failed"));
                 return;
@@ -1118,6 +1138,63 @@ void testOnDemand()
     CHECK_EQ(reply.status, 503);
     CHECK(reply.body.contains("not all here yet"));
     CHECK(muteServer.tally().notHeld > 0);
+
+    // The fetch bound: a file with ten chunks is asked for four at a time, never
+    // ten. The source counts how many answers it owes at once.
+    MemoryStore hugeFull;
+    const int hugeChunks = 10;
+    const QByteArray huge = pattern("huge.bin", Manifest::ChunkSize * (hugeChunks - 1) + 17);
+    QVector<SourceNode> hugeTop;
+    hugeTop.append(fileNode(QStringLiteral("index.html"), QStringLiteral("index.html"), 40));
+    hugeTop.append(fileNode(QStringLiteral("huge.bin"), QStringLiteral("huge.bin"),
+                            huge.size()));
+    QByteArray hugeRootId;
+    QByteArray hugeKey;
+    CHECK(sealSmall(&hugeFull, QStringLiteral("huge"), hugeTop, &hugeRootId, &hugeKey, &error));
+
+    MemoryStore hugePartial;
+    copyObjects(&hugeFull, &hugePartial, manifestsOf(&hugeFull, hugeKey, hugeRootId));
+    KelpPreviewServer hugeServer;
+    CHECK(hugeServer.start(&error));
+    FakeSource *hugeSource = new FakeSource(&hugeFull);
+    const QByteArray hugeSecret = Crypto::sha256(QByteArrayLiteral("huge"));
+    const KelpPreviewServer::Opened hugeSession =
+        hugeServer.open(borrow(&hugePartial), Link::base32Encode(hugeRootId),
+                        Link::base64UrlEncode(hugeSecret), QStringLiteral("Ten chunks"),
+                        hugeSource);
+    CHECK(hugeSession.ok);
+    if (hugeSession.ok) {
+        const Reply hugeReply = get(hugeServer.port(),
+                                    "/" + hugeSession.token.toLatin1() + "/huge.bin");
+        CHECK_EQ(hugeReply.status, 200);
+        CHECK_EQ(hugeReply.body, huge);
+        CHECK_EQ(hugeSource->requested.size(), hugeChunks);
+        CHECK(hugeSource->maxActive <= 4);
+        CHECK_EQ(hugeServer.tally().onDemand, hugeChunks);
+    }
+
+    // Closing a session with a browser request parked answers it 404 at once,
+    // rather than leaving the browser on a socket nobody will answer.
+    MemoryStore closePartial;
+    copyObjects(&full, &closePartial, manifests);
+    KelpPreviewServer closeServer;
+    CHECK(closeServer.start(&error));
+    FakeSource *closeSource = new FakeSource(&full);
+    closeSource->answer = false;
+    closeSource->closeOnRequest = true;
+    const KelpPreviewServer::Opened closeSession =
+        closeServer.open(borrow(&closePartial), site.bundleId, site.secretText,
+                         QStringLiteral("Closed while waiting"), closeSource);
+    CHECK(closeSession.ok);
+    if (closeSession.ok) {
+        closeSource->closeServer = &closeServer;
+        closeSource->closeToken = closeSession.token;
+        const Reply closeReply = get(closeServer.port(),
+                                     "/" + closeSession.token.toLatin1() + "/");
+        CHECK_EQ(closeReply.status, 404);
+        CHECK(closeReply.body.contains("no such preview"));
+        CHECK_EQ(closeServer.sessionCount(), 0);
+    }
 }
 
 void testHoles()

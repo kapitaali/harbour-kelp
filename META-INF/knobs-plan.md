@@ -17,15 +17,14 @@ on-device verification; nothing here is a rewrite of something that already work
 | K3 | The lazy fetch in the preview (`KelpSource` behind a session) | medium | §5.1's stated gap: a missing object is a `503` even when it could be fetched |
 | K4 | Passphrase links (§12.3) | large | Links carry their key, so a link is a secret; a passphrase link is not |
 
-**Status.** K1, K2 and K4 are built, tested and verified on the emulator (see each section's
-"Built" note). **K3 has moved to the back of the queue, deliberately** — see its section: the
-situation it fixes cannot arise yet, because nothing opens a session over a store that can be
-incomplete. All three built pieces are committed; nothing here is left half-done.
+**Status.** K1, K2, K3 and K4 are built, tested and committed. K3 is the *server seam*, not
+lazy-open: see its section, and `PROGRESS-20261016.md` §3.44. The normal view still fetches the
+whole bundle first, so lazy-open remains a separate decision.
 
 **Order and reason.** K1 first because K2 has to read the toggles from somewhere durable. K2 next
 because it is the half the user's option led with. K3 and K4 are independent of K1/K2 and of each
-other, so their order is a matter of taste — K3 first because it is smaller and it is a real hole in
-something already shipped.
+other, so their order was a matter of taste. K4 landed before K3 because the passphrase work was
+the larger user-facing gap; K3 followed once the view-only session gave it a caller.
 
 ---
 
@@ -319,9 +318,11 @@ object and a fake source that answers → `200` and the exact bytes; the same wi
 (the old behaviour, unchanged); one file's three missing chunks fetched once for **two** concurrent
 requests → both `200`, three source calls; a source that fails → `503`; a source that answers with
 bytes that do not hash to the id → `502`; and a parked request that nobody ever answers → `503`
-after the deadline. `tst_kelpclient` removes one object from the view's memory after a completed
-fetch, opens the session, and proves the browser's request heals it through the real `LanSource`.
-The counts are `tst_kelppreview` 206 → 243 and `tst_kelpclient` 152 → 167.
+after the deadline. A ten-chunk file is asked for four at a time and never more, and closing a
+session while its request is parked answers `404` instead of leaving the browser hanging.
+`tst_kelpclient` removes one object from the view's memory after a completed fetch, opens the
+session, and proves the browser's request heals it through the real `LanSource`.
+The counts are `tst_kelppreview` 206 → 256 and `tst_kelpclient` 152 → 167.
 
 ---
 
