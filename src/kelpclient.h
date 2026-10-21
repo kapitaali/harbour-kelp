@@ -145,9 +145,9 @@ public:
     void setDirectory(const QString &path);
 
     // A test affordance, in the same spirit as the preview server's idle timeout:
-    // how large a *viewed* bundle may grow before it is refused. The production
-    // ceiling is 32 MiB, and the storing-time check is only reachable in a test
-    // with a smaller one.
+    // how much a *viewed* page may store before it is refused. The production
+    // ceiling is 32 MiB; tests lower it to reach the manifest-index and
+    // storing-time checks without a fixture that large.
     void setViewCeiling(quint64 bytes);
 
     // The listener a received page is served through (design §5.5). Without one a

@@ -29,11 +29,12 @@ const int kMaxInflight = 4;
 // of leaving a spinner up forever.
 const int kSilenceMs = 20000;
 
-// How large a *received webpage* may be before it is refused (design §5.5): the
-// whole bundle is held in memory while it is looked at, so there is a ceiling,
-// and this is it. Enough for a document-shaped page, not for a gallery. The
-// sender's claimed size is checked against it before anything is fetched, and
-// what actually arrives is counted against it too — the claim is only a claim.
+// How much a *received webpage* may keep in memory (design §5.5). Enough for a
+// document-shaped page, not for a gallery. It is enforced against what actually
+// arrives: the client caps the manifest index as it stores it, and the preview
+// session caps the content it fetches on demand. The sender's total-size claim
+// is *not* a gate — a large bundle can have a small index page, and the browser
+// asks only for the assets it needs.
 const quint64 kViewCeilingBytes = 32ull * 1024 * 1024;
 
 QString unitText(quint64 bytes, quint64 scale, const char *suffix)
@@ -409,21 +410,18 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing,
 void KelpClient::onInfo(int objects, int files, quint64 bytes)
 {
     Q_UNUSED(files);
+    Q_UNUSED(bytes);
     if (m_phase != Checking)
         return;
 
-    // A page is held in memory while it is looked at, so it has a ceiling — and
-    // it is checked against the sender's claim *before* anything is asked for, so
-    // an oversized page costs one /info and not 30 MB of transfers.
-    if (m_viewing && bytes > m_viewCeiling) {
-        qInfo() << "KelpClient: refusing a" << sizeText(bytes) << "page (ceiling"
-                << sizeText(m_viewCeiling) << ") before fetching anything";
-        failed(overCeiling(m_viewCeiling, bytes));
-        return;
-    }
+    // The sender's total-size claim is not a gate for a view: a large bundle may
+    // hold a small page, and the browser asks only for the assets it needs. The
+    // claim is not a promise anyway. What is actually kept is bounded instead —
+    // the manifest walk by onObject(), the content by the preview session.
+    //
+    // An ordinary fetch still uses the claim only for progress; what is
+    // downloaded and accepted is decided by the walk.
 
-    // What the sender claims the bundle holds. It only shapes the progress
-    // display; what is downloaded and what is accepted is decided by the walk.
     m_total = qMax(0, objects);
 
     m_phase = Fetching;

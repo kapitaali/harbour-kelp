@@ -11,8 +11,9 @@ Objective
   done and verified; lazy-open is done and verified off-device and with QML smoke, but not yet
   with a real browser on the device.
 - Current state: a received webpage link fetches only its manifests, opens a loopback preview
-  session, and lets the browser pull content on demand. The 32 MiB ceiling is enforced by the
-  session as it stores. Remaining open product questions are the per-bundle confirmation
+  session, and lets the browser pull content on demand. The 32 MiB ceiling is enforced against
+  what the view actually stores — manifests in the client, content in the session — not the
+  sender's total claim. Remaining open product questions are the per-bundle confirmation
   (§12.10), C7 (optional LAN swarm), and an on-device browser pass on the lazy build.
 
 Read before touching anything
@@ -198,8 +199,10 @@ Next Move (in this order — 1–3 are done as of this note)
    *Open in browser*, a session-owned `MemoryStore`, no save. The view now fetches only the
    manifests (`Kelp::missingManifests`), opens its session at `Done`, and the browser's requests
    pull the content through the K3 `KelpSource` seam; the 32 MiB ceiling is enforced by the
-   session as it stores. `tst_kelppreview` 262 checks, `tst_kelpclient` 178, full suite 1392 in
-   both bundle modes, QML smoke 9/9. Still open: the per-bundle confirmation (§12.10) and an
+   session as it stores. `tst_kelppreview` 262 checks, `tst_kelpclient` 189, full suite 1403 in
+   both bundle modes, QML smoke 9/9. The sender's total bundle-size claim is not a gate: the
+   ceiling applies to what the view actually stores (manifests first, then requested content).
+   Still open: the per-bundle confirmation (§12.10) and an
    on-device browser pass on the lazy build (the C2 pass in §3.23 was on the eager flow). C4a.1
    (a folder share's page) stays dropped by the user (§5.4); C4b (relay gateway) and C7 (swarm)
    remain separate.

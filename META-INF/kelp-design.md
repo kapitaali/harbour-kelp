@@ -753,12 +753,14 @@ has no address to put in one, so the hint survives a relay-only share.
   therefore cannot free the first session's store: the session holds a reference of its own, which
   is why `KelpPreviewServer::open()` takes a `StorePtr` rather than a bare store.
 - Being memory, there is a ceiling: **32 MiB**, enough for a document-shaped page and not for a
-  gallery. `/info` gives the sender's claimed size, which is checked before a byte is fetched and
-  enforced again by the session as it stores on-demand content — the claim is only a claim. A
-  bundle over the ceiling is refused with the reason and the way out (ask the sender to share it
-  as a folder). A view whose real content would cross the ceiling stops that session's fetches and
-  answers the waiting requests `503`; nothing over the line is stored. Lazy-open therefore keeps
-  the absolute bound: it changes *when* content arrives, not how much can be kept.
+  gallery. It is enforced against what the view actually keeps: the client caps the manifest
+  index as it arrives, and the session caps the content it fetches on demand. The sender's
+  total-size claim from `/info` is **not** a gate — a large bundle can have a small page, and the
+  browser asks only for the assets it needs. A page whose manifests or requested content would
+  cross the ceiling is stopped with the reason and the way out (ask the sender to share it as a
+  folder); content over the line is refused `503` and nothing over it is stored. Lazy-open
+  therefore keeps the absolute bound on memory: it changes *when* content arrives, not how much
+  can be kept.
 - Pressing **Open in browser** again after the page has been served re-opens the *same* session —
   the same URL — rather than fetching again or minting a second token.
 - **KeepAlive** is held while the session is live, because the browser now owns the foreground and
@@ -792,7 +794,7 @@ inside an ordinary folder share is one of the recipient's files, opened from the
 | The link has no `p` (older link, or a directory share) | an ordinary share: save as always, and **nothing else** — no browser button, no page section; the recipient opens the file themselves if they want to look at it (the user's decision, 2026-10-18, §5.4) |
 | The link carries `p` but no address and no relay | **Open in browser** cannot start; the reason is the same one the save path already gives |
 | The sender goes offline mid-page | the page's requests fail, as any preview does — and there is nothing saved to fall back on, by design |
-| The page is bigger than the ceiling | refused from `/info` before any object; a sender that understated it is stopped when the session would cross the ceiling, and its later requests get `503` — naming the sender-side workaround |
+| The page's stored objects pass the ceiling | the manifest index is stopped while it arrives; if the browser's requests are what cross the line, the session stops them and answers `503` — naming the sender-side workaround. A large *total* bundle with a small page is not refused up front |
 | The recipient leaves the screen, or closes Kelp | the page keeps being served until the session's idle sweep (about 30 minutes), then the memory is dropped and the URL is dead; closing Kelp ends it at once. Nothing was ever written |
 | A page is opened while an *earlier* link's finished view is still in the client | the finished view belongs to the link that asked for it: the new link is fetched as its own page, and *Open in browser* never re-hands the earlier session's URL (§3.25) |
 | The browser asks for a session the sweep has taken (a reload after half an hour) | `404`, with a body saying the preview has ended and to open the link again; pressing *Open in browser* mints a fresh session from the memory still held, so the page comes back without a re-fetch |
@@ -1059,9 +1061,10 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
   on the same single `KelpPreviewServer` — whose `open()` takes the store, so a session becomes
   a store plus a key, and one listener still serves shares and received pages alike. The content
   is then fetched on demand, as the browser asks for it (lazy-open, 2026-10-21). The store
-  dies with the session, so nothing is left; a ceiling refuses an oversized page from `/info`
-  before fetching, and the session enforces the same bound as it stores on-demand content; it
-  names the workaround. `KeepAlive` is held while the session is live. Verified on the
+  dies with the session, so nothing is left; the manifest index is capped as it arrives, and
+  the session enforces the same 32 MiB bound as it stores on-demand content. The sender's
+  total-size claim is not a gate, because a large bundle can have a small page. `KeepAlive` is
+  held while the session is live. Verified on the
   emulator by fetching a real page link and `curl`-ing the session (and checking the app's store
   never grew), and then **from a real browser on the C2** (2026-10-18): the page came up in the
   browser and nothing was written. The C2 pass also showed what §12.11 is about: the demo page had

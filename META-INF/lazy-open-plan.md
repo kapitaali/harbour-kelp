@@ -6,11 +6,11 @@ bundle. This file is only *how*, and it is written before code.
 
 > **Status: implemented 2026-10-21.** Code, tests and docs are in the tree; the i486 RPM
 > was installed in the emulator and the QML smoke passed 9/9. The C++ suites pass in both
-> dev-extras modes (`libkelp` 528, `tst_kelppreview` 262, `tst_kelpclient` 178, full suite
-> 1392). An aarch64 release RPM was also built with dev extras off and copied to
-> `~/Downloads`; it was not installed here. An on-device pass with a real browser on this
-> lazy build has not been done yet; see PROGRESS §3.45. K3 remains the server seam this
-> builds on (`b42262c`, tests in `e8a5139`).
+> dev-extras modes (`libkelp` 528, `tst_kelppreview` 262, `tst_kelpclient` 189, full suite
+> 1403). The first live large-share test exposed and removed the old `/info` total-size gate
+> (see below); the aarch64 release is rebuilt from the corrected tree. An on-device pass with
+> a real browser on this lazy build has not been done yet; see PROGRESS §3.45. K3 remains the
+> server seam this builds on (`b42262c`, tests in `e8a5139`).
 
 ## The split
 
@@ -35,12 +35,21 @@ source.
 |---|---|---|---|
 | L1 | What `fetchForViewing()` fetches | manifests only | It must resolve the page and answer paths; data is demand-driven. |
 | L2 | When the view is `Done` | when the manifest walk is empty, before any content arrives | The QML already opens the browser on `done`; the session then owns the source and fetches what the browser asks for. |
-| L3 | The 32 MiB ceiling | still absolute for the whole view store, now enforced by the **server** as it stores on-demand objects | The client no longer sees the content arrive. The sender's `/info` claim is still checked before anything is fetched; the storing-time check moves to the only place that stores. |
-| L4 | A view that exceeds the ceiling on demand | stop that session's fetches and answer every parked request `503` with a "too large" body; no data is written | `/info` is the sender's word. An honest page never reaches this; a dishonest one must not grow memory without bound. |
+| L3 | The 32 MiB ceiling | still absolute for the whole view store, but enforced against **what is actually stored**: the client caps the manifest index, the **server** caps on-demand content | The client no longer sees the content arrive. The sender's `/info` total is *not* a gate: a large bundle can have a small page, and the browser asks only for the assets it needs. |
+| L4 | A view that exceeds the ceiling on demand | stop that session's fetches and answer every parked request `503` with a "too large" body; no data is written | The view store is the only memory that can grow. An honest page that needs less than 32 MiB never reaches this; a page that needs more must not grow memory without bound. |
 | L5 | What drives the data fetch | the browser only | No speculative or background transfer; a page that asks for two assets costs two assets. |
 | L6 | Source ownership | unchanged from K3: the session takes the source when it opens; the client keeps the decoded link for a fresh source after a sweep | Re-pressing *Open in browser* after the idle sweep must still work without another passphrase. |
 | L7 | Owner-side previews | unchanged: no source, no limit, read from the app's store | The owner's objects are on disk and are not a received page. |
 | L8 | `libkelp` | one new pure function, `missingManifests()` | The manifest-only walk is content-layer logic and belongs beside `missingObjects()`, not in QML or the client loop. |
+
+**Live correction (2026-10-21).** The first implementation kept the eager flow's
+`/info` total-size gate: a sender claiming more than 32 MiB was refused before any
+object. A user test with a large share showed why that contradicts lazy-open: the
+index page may need only a small part of a large bundle. The total claim is now
+ignored for views. The manifest index is capped by the client as it arrives, and the
+session caps the content it stores on demand; those are the only bytes the view keeps.
+`KelpClient` still records the claimed total only for progress. A large bundle with a
+small page opens; a page that actually needs more than 32 MiB is stopped at the line.
 
 ## Seams
 
@@ -105,8 +114,9 @@ the whole bundle, so the `%1 of %2 objects` line would be misleading. It says
     is the manifest size, not the bundle size;
   - opening the session and asking for `/` fetches the page object on demand; asking
     for a CSS/image asset fetches that object, and the bytes are exact;
-  - the claimed-size ceiling still refuses before any object; a lie under the claim is
-    refused by the session when the content would cross the ceiling;
+  - a 64 MB total claim with a small page still reaches `Done` and opens;
+  - the manifest index itself is bounded when the ceiling is tiny;
+  - a content object that would cross the ceiling is refused by the session;
   - a page-less bundle still fails at `openPageView()` and releases everything;
   - two live sessions, a swept re-mint, and the link-identity checks still pass with
     only manifests fetched up front.

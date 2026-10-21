@@ -7,7 +7,14 @@ CSP, and "no key in any log" all stay exactly as §5.1 defines them.
 
 > **Status: implemented and verified** (2026-10-18). The code, the two suites and the
 > emulator run are written up in `PROGRESS-20261016.md` §3.22; this file remains as the
-> plan it was built from, and the decisions below are what the code does.
+> plan it was built from, and the decisions below are what the code did.
+>
+> **Update 2026-10-21 — lazy-open changed the fetch shape.** A received page now fetches
+> only the manifests first and the browser pulls content on demand; the ceiling is
+> enforced against what is actually stored, not against `/info`'s total-size claim. The
+> eager-flow details below (whole bundle first, `/info` precheck) are historical. Current
+> behaviour is `kelp-design.md` §5.5 and `lazy-open-plan.md`; PROGRESS §3.45 has the live
+> correction that removed the total-size gate.
 
 ## Why this exists right now
 
@@ -23,19 +30,21 @@ For a link whose `p` hint is set:
 
 1. The Open-link page is a **view, not a save**: no *Save to* section, no *Download*
    button, no folder choice, and nothing written to Downloads.
-2. One action: **Open in browser**. It fetches the bundle, serves it from `127.0.0.1` on
-   the same single `KelpPreviewServer` a share preview uses, and hands the URL to the
-   browser.
+2. One action: **Open in browser**. It fetches the page's manifests, serves it from `127.0.0.1`
+   on the same single `KelpPreviewServer` a share preview uses, and hands the URL to the
+   browser; the browser's requests then pull content on demand.
 3. The fetch lands in a **session-owned `Kelp::MemoryStore`**, never the app's object
    store. When the session ends the store is dropped — there is no cleanup step and
    nothing of the page is left on the device.
-4. A **ceiling** refuses an over-large page *before* a byte of content is fetched, naming
-   the sender-side workaround (share it as a folder). It is enforced again while storing,
-   because the claimed size is the sender's word.
+4. A **ceiling** of 32 MiB applies to what the view actually stores — the manifest index,
+   then the content the browser requests. The sender's total-size claim is not a gate. A
+   page that crosses the line is stopped, naming the sender-side workaround (share it as a
+   folder).
 5. `KeepAlive` is held while the session is live (the browser owns the foreground, not
    Kelp).
 6. A link with no `p` — every link already in the wild — behaves exactly as today: save,
-   and §5.4's *Open in browser* afterwards if the fetched bundle happens to hold a page.
+   and nothing else. C4a.1, the browser button after a save, was dropped by the user
+   (design §5.4).
 
 ## Decisions taken here (each is a knob, not a foregone conclusion)
 
@@ -106,11 +115,12 @@ Inside:
   session, if any, keeps its own reference and is untouched — D4a), sets `m_viewing =
   true`, and runs the same path as `fetch()`. A second entry point rather than a mode flag
   on `fetch()` so the QML reads "this is a view" from the call it made.
-- `onInfo(objects, files, bytes)`: in view mode, **before** `walk()`, refuse when the
-  claimed `bytes > kViewCeilingBytes` — nothing has been stored and no object has been
-  requested. Message (§5.5's wording, with the workaround):
-  `"This page is 48.2 MB — more than the 32 MB a shared page can be viewed with. Ask the
-  sender to share it as a folder instead."`
+- `onInfo(objects, files, bytes)`: the eager plan refused in view mode when the claimed
+  `bytes > kViewCeilingBytes`. Lazy-open removed that total-size gate (2026-10-21): a large
+  bundle can have a small page. The current client records the claim for progress only, and
+  the manifest walk and preview session enforce the ceiling against what is actually stored.
+  Historical wording: `"This page is 48.2 MB — more than the 32 MB a shared page can be
+  viewed with. Ask the sender to share it as a folder instead."`
 - `pump()`: in view mode add each stored object's size to `m_viewBytes` and fail with the
   same wording once it passes the ceiling (an `/info` that lied is caught here).
 - At "all objects are here", view mode goes straight to `Done` (files/bytes stay as they
@@ -177,7 +187,7 @@ the browser. The log line keeps both halves spelled out.
 | A link with no `p` | ordinary save, and nothing else: no browser button. C4a.1, which would have added one for a page inside the folder, was dropped by the user (2026-10-18, design §5.4) |
 | `p` but no address and no relay | **Open in browser** is disabled; the page shows the same reason the save path already gives |
 | Sender goes offline mid-page | the browser's requests fail like any preview's; nothing saved to fall back on, by design |
-| Page larger than the ceiling | refused from `/info` before fetching; re-checked while storing |
+| Page larger than the ceiling | historical eager flow: refused from `/info` before fetching and re-checked while storing. Current lazy flow caps the manifest index and on-demand content only; see `lazy-open-plan.md` |
 | Recipient leaves the screen | **nothing happens, by choice (D4)**: the session and its memory live until the sweep, exactly as the owner-side preview does; app exit drops them |
 | Recipient's device has no browser | `Qt.openUrlExternally` returns `true` and nothing opens; the session exists, so a `curl` from inside the guest is the proof (this is the emulator case) |
 | Objects missing from the store mid-session | `503` from the preview server, as for any preview |

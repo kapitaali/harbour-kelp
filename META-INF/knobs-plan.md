@@ -326,9 +326,9 @@ session while its request is parked answers `404` instead of leaving the browser
 session with a tight `storeLimit` refuses the object that would cross it, answers `503`, and
 records `Tally::overLimit` without storing it. `tst_kelpclient` now fetches only the manifests,
 opens the session, and proves the browser's requests pull the page and stylesheet through the real
-`LanSource`; it also proves the `/info` ceiling still refuses before any object, and that a
-session-level lie is stopped at the store. The counts are `tst_kelppreview` 206 → 262 and
-`tst_kelpclient` 152 → 178.
+`LanSource`; it also proves a large total claim does not block a small page, that a tiny ceiling
+stops the manifest index, and that a session-level lie is stopped at the store. The counts are
+`tst_kelppreview` 206 → 262 and `tst_kelpclient` 152 → 189.
 
 ---
 

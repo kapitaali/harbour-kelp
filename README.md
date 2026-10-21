@@ -90,10 +90,11 @@ and test.
   so a *second* link is fetched as its own page rather than being shown the first
   one's. The page is served **offline**: it can use its own files and
   its own inline CSS and scripts, but nothing from another host, so a page that expects
-  something from a CDN renders without it (design §12.11). A page larger than 32 MiB is
-  refused from the sender's claimed size before anything is transferred, and the
-  session enforces that same ceiling as content arrives; a sender that understated it
-  is stopped rather than allowed to grow memory without bound.
+  something from a CDN renders without it (design §12.11). The 32 MiB ceiling
+  applies to what the view actually keeps: the manifest index while it arrives, then
+  the content the browser asks for. A large bundle with a small page can open; a page
+  whose stored objects would cross the ceiling is stopped, and the sender is asked to
+  share it as a folder instead.
 - **Settings** — background seeding, Wi-Fi only, *Allow peer swarm* (a global
   permission), *Include my local address in the link*, **Storage**
   (what the object store holds, what the shares need, and a *Remove unused

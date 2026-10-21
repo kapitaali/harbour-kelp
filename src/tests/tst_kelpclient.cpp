@@ -11,8 +11,10 @@
  * What only this suite can prove, and the reason it exists:
  *
  *   1. a view writes nothing — not to the download folder, not to the app store;
- *   2. the page ceiling is enforced from /info *before* any object is requested,
- *      and again against what actually arrives, because /info is a claim;
+ *   2. the 32 MiB ceiling is enforced against what the view actually stores —
+ *      the manifest index in the client, then the content in the session — not
+ *      against the sender's total-size claim, because a large bundle can have a
+ *      small page and the browser asks only for the assets it needs;
  *   3. a second view does not free the first session's store (the session holds
  *      its own reference), which is what makes "the session ends on its own idle
  *      timeout" safe rather than a use-after-free;
@@ -554,31 +556,65 @@ void testLazyContent()
     CHECK_EQ(client.viewBytes(), quint64(sealed.byteCount()));
 }
 
-void testCeilingBeforeFetching()
+void testLargeClaimDoesNotBlock()
 {
-    section("view: the ceiling refuses an oversized page from /info alone");
+    section("view: a large claimed bundle does not block a small page");
 
     MemoryStore sealed;
     Sealed site;
     QString error;
-    CHECK(sealSite(&sealed, QStringLiteral("client-ceiling"), true, &site, &error));
+    CHECK(sealSite(&sealed, QStringLiteral("client-large-claim"), true, &site, &error));
     StubPublisher stub(&sealed);
+    // The sender's total is far over the ceiling; the page itself is tiny.
     stub.setClaimedBytes(64ll * 1024 * 1024);
     stub.setClaimedFiles(400);
 
     MemoryStore appStore;
     KelpClient client(&appStore);
+    KelpPreviewServer preview;
+    client.setPreviewServer(&preview);
+
+    CHECK(client.fetchForViewing(linkFor(site, stub, true)));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK(client.viewBytes() > 0);
+    CHECK(client.viewBytes() < quint64(32) * 1024 * 1024);
+    CHECK(stub.objectRequests() > 0);
+    CHECK(stub.objectRequests() < sealed.count());
+    CHECK_EQ(appStore.count(), 0);
+
+    const QVariantMap opened = client.openPageView();
+    CHECK(opened.value(QStringLiteral("ok")).toBool());
+    if (!opened.value(QStringLiteral("ok")).toBool())
+        return;
+
+    const QUrl url(opened.value(QStringLiteral("url")).toString());
+    const Reply page = get(url.port(), url.path().toLatin1() + "/");
+    CHECK_EQ(page.status, 200);
+    CHECK_EQ(page.body, site.html);
+    CHECK_EQ(appStore.count(), 0);
+}
+
+void testManifestCeiling()
+{
+    section("view: the manifest index itself is bounded");
+
+    MemoryStore sealed;
+    Sealed site;
+    QString error;
+    CHECK(sealSite(&sealed, QStringLiteral("client-manifest-ceiling"), true, &site, &error));
+    StubPublisher stub(&sealed);
+
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    client.setViewCeiling(1);
 
     CHECK(client.fetchForViewing(linkFor(site, stub, true)));
     CHECK(settle(&client));
     CHECK_EQ(client.phase(), QStringLiteral("failed"));
-    CHECK(client.error().contains(QStringLiteral("64 MB")));
-    CHECK(client.error().contains(QStringLiteral("32 MB")));
     CHECK(client.error().contains(QStringLiteral("folder instead")));
-
-    // The whole point: one /info, no objects, nothing kept.
     CHECK_EQ(stub.infoRequests(), 1);
-    CHECK_EQ(stub.objectRequests(), 0);
+    CHECK(stub.objectRequests() > 0);
     CHECK_EQ(client.viewBytes(), quint64(0));
     CHECK_EQ(appStore.count(), 0);
 }
@@ -967,7 +1003,8 @@ int main(int argc, char **argv)
 
     testViewFetchesToMemory();
     testLazyContent();
-    testCeilingBeforeFetching();
+    testLargeClaimDoesNotBlock();
+    testManifestCeiling();
     testCeilingWhileStoring();
     testNoPage();
     testSavePathUnchanged();
