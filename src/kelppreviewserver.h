@@ -32,7 +32,9 @@ class QTimer;
  *
  *   * it binds 127.0.0.1 only, on an ephemeral port, never every interface;
  *   * every URL carries a 32-byte random token, so another process on the device
- *     cannot read the plaintext by guessing an address;
+ *     cannot read the plaintext by guessing an address; a served page also sets
+ *     that token as a host-only loopback cookie, so the page's own root-absolute
+ *     asset URLs stay inside the same capability;
  *   * every response carries a Content-Security-Policy that keeps the page
  *     offline and same-origin, no-store so nothing decrypted lands in a browser
  *     cache, and nosniff so a type cannot be second-guessed;

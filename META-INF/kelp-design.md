@@ -414,7 +414,7 @@ needs the same request while a page is live.
 | | |
 |---|---|
 | Bind | `127.0.0.1`, ephemeral port — never `0.0.0.0`, the same rule as the LAN listener (§3.1). |
-| URL space | `http://127.0.0.1:<port>/<session-token>/<path>`, the token 32 random bytes; without it, `404`. The port is not a secret, the token is. |
+| URL space | `http://127.0.0.1:<port>/<session-token>/<path>`, the token 32 random bytes; without it, `404`. The port is not a secret, the token is. A page served from that path also sets `kelp_preview=<token>` as a host-only loopback cookie (`Path=/`, `HttpOnly`, `SameSite=Strict`), so the page's own root-absolute asset and navigation URLs (`/style.css`, `/sub/`) keep the capability; the token path still wins, and a 64-hex first segment is always read as a token. The cookie is the same read capability, never logged. |
 | Methods | `GET` and `HEAD`; `Range: bytes=a-b` on a file path. |
 | `Content-Type` | the manifest's `mime` when the sender recorded one, else a small extension table — with `nosniff`, so a browser never second-guesses the answer. |
 | `Range` | With fixed 256 KiB chunks (§1.2) a range is a contiguous object range: byte `a` lives in chunk `a / 256K` at offset `a % 256K`. `bytes=a-b`, `bytes=a-` and `bytes=-n` are honoured; a multi-range request or a malformed one is ignored and the whole file served (always a valid answer), and a range past the end is `416`. **This is the property CDC would break**: content-defined chunks have no closed-form offset, so adopting it (§12.1) means recording per-chunk lengths in the manifest, or fetching to seek. |

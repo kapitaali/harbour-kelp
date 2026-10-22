@@ -903,6 +903,80 @@ void testServing()
     CHECK_EQ(reply.status, 404);
 }
 
+// ---- absolute paths ---------------------------------------------------------
+
+// A page often names its own assets from the site root ("/style.css"), while the
+// preview lives under "<port>/<token>/". The page response sets the token as a
+// host-only cookie; requests to root-absolute paths are matched through it.
+void testRootAbsolute()
+{
+    section("root-absolute paths");
+
+    MemoryStore store;
+    Site site;
+    QString error;
+    if (!site.build(&store, &error)) {
+        CHECK(false);
+        return;
+    }
+
+    KelpPreviewServer server;
+    CHECK(server.start(&error));
+
+    const KelpPreviewServer::Opened session =
+        server.open(borrow(&store), site.bundleId, site.secretText, QStringLiteral("Absolute"));
+    CHECK(session.ok);
+    if (!session.ok) {
+        printf("  open error: %s\n", qPrintable(session.error));
+        return;
+    }
+
+    const int port = server.port();
+    const QByteArray prefix = "/" + session.token.toLatin1();
+    const QByteArray cookie = "Cookie: kelp_preview=" + session.token.toLatin1() + "\r\n";
+
+    Reply reply = get(port, prefix + "/");
+    CHECK_EQ(reply.status, 200);
+    const QString setCookie = reply.header("set-cookie");
+    CHECK(setCookie.startsWith(QStringLiteral("kelp_preview=") + session.token));
+    CHECK(setCookie.contains(QStringLiteral("Path=/")));
+    CHECK(setCookie.contains(QStringLiteral("HttpOnly")));
+    CHECK(setCookie.contains(QStringLiteral("SameSite=Strict")));
+
+    // What a browser does with a page whose links are written from the site root.
+    reply = get(port, "/style.css", cookie);
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.css);
+
+    reply = get(port, "/", cookie);
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.html);
+
+    reply = get(port, "/sub/", cookie);
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.subHtml);
+
+    // Directory URLs keep their existing slash rule; the browser follows the
+    // redirect with the cookie still attached.
+    reply = get(port, "/sub", cookie);
+    CHECK_EQ(reply.status, 301);
+    CHECK_EQ(reply.header("location"), QStringLiteral("/sub/"));
+
+    // The cookie is not a second address: without it the root path is still a
+    // 404, and the token path still works unchanged.
+    reply = get(port, "/style.css");
+    CHECK_EQ(reply.status, 404);
+    reply = get(port, prefix + "/style.css");
+    CHECK_EQ(reply.status, 200);
+    CHECK_EQ(reply.body, site.css);
+
+    // A first segment with a token's shape is read as a token, not as a path,
+    // even when a valid page cookie is present.
+    const QByteArray unknown(64, '0');
+    reply = get(port, "/" + unknown + "/style.css", cookie);
+    CHECK_EQ(reply.status, 404);
+}
+
 // ---- holes ------------------------------------------------------------------
 
 // Every manifest object a bundle is made of, found by opening each object and
@@ -1346,6 +1420,7 @@ int main(int argc, char **argv)
     testChunkRange();
     testMime();
     testServing();
+    testRootAbsolute();
     testLazy();
     testOnDemand();
     testHoles();

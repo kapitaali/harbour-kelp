@@ -4,13 +4,16 @@ Implementation plan. `kelp-design.md` §5.1 and the K3 seam already say *what* t
 a view-only page should paint after its structure is here, not after every byte of the
 bundle. This file is only *how*, and it is written before code.
 
-> **Status: implemented 2026-10-21.** Code, tests and docs are in the tree; the i486 RPM
-> was installed in the emulator and the QML smoke passed 9/9. The C++ suites pass in both
-> dev-extras modes (`libkelp` 528, `tst_kelppreview` 262, `tst_kelpclient` 189, full suite
-> 1403). The first live large-share test exposed and removed the old `/info` total-size gate
-> (see below); the aarch64 release is rebuilt from the corrected tree. An on-device pass with
-> a real browser on this lazy build has not been done yet; see PROGRESS §3.45. K3 remains the
-> server seam this builds on (`b42262c`, tests in `e8a5139`).
+> **Status: implemented 2026-10-21; live browser pass completed 2026-10-22.** Code, tests and
+> docs are in the tree; the i486 RPM was installed in the emulator and the QML smoke passed
+> 9/9. The C++ suites pass in both dev-extras modes (`libkelp` 528, `tst_kelppreview` 281,
+> `tst_kelpclient` 189, full suite 1422). The first live large-share test exposed and removed
+> the old `/info` total-size gate (see below); the aarch64 release is rebuilt from the
+> corrected tree. The live pass found one more page-loading bug: root-absolute asset and
+> subpage URLs do not carry the preview token, so the page response now sets a host-only
+> loopback cookie (L9). The large-share page and a root-absolute subpage both render in the
+> emulator browser; see PROGRESS §3.45. K3 remains the server seam this builds on (`b42262c`,
+> tests in `e8a5139`).
 
 ## The split
 
@@ -41,6 +44,7 @@ source.
 | L6 | Source ownership | unchanged from K3: the session takes the source when it opens; the client keeps the decoded link for a fresh source after a sweep | Re-pressing *Open in browser* after the idle sweep must still work without another passphrase. |
 | L7 | Owner-side previews | unchanged: no source, no limit, read from the app's store | The owner's objects are on disk and are not a received page. |
 | L8 | `libkelp` | one new pure function, `missingManifests()` | The manifest-only walk is content-layer logic and belongs beside `missingObjects()`, not in QML or the client loop. |
+| L9 | A page's root-absolute URLs (`/style.css`, `/sub/`) | every served file sets a host-only loopback cookie `kelp_preview=<token>` (`Path=/`, `HttpOnly`, `SameSite=Strict`); `handle()` accepts it when the first path segment is not a known token | Rewriting HTML, CSS and JavaScript URL construction is brittle. The cookie keeps arbitrary assets, CSS `url()`, JavaScript fetches and navigation working; it is the same read capability, scoped to loopback and the browser session, and never logged. A 64-hex first segment is still always treated as a token, so an unknown token is a 404 even with a valid cookie. |
 
 **Live correction (2026-10-21).** The first implementation kept the eager flow's
 `/info` total-size gate: a sender claiming more than 32 MiB was refused before any
@@ -108,7 +112,10 @@ the whole bundle, so the `%1 of %2 objects` line would be misleading. It says
   manifests but no chunks; when the manifests are complete it is empty while
   `missingObjects()` still names chunks; the wrong key and a short id still fail.
 - `tst_kelppreview`: a session with a tight `storeLimit` refuses an object that would
-  pass it, answers the parked request `503`, stops the source and records `overLimit`.
+  pass it, answers the parked request `503`, stops the source and records `overLimit`;
+  a page over a real socket sets the host-only cookie, serves root-absolute paths and a
+  subdirectory page through it, still rejects them without it, and does not treat an
+  unknown 64-hex token path as a file.
 - `tst_kelpclient`:
   - `fetchForViewing()` requests fewer objects than the bundle holds and `viewBytes()`
     is the manifest size, not the bundle size;
@@ -120,8 +127,9 @@ the whole bundle, so the `%1 of %2 objects` line would be misleading. It says
   - a page-less bundle still fails at `openPageView()` and releases everything;
   - two live sessions, a swept re-mint, and the link-identity checks still pass with
     only manifests fetched up front.
-- Full suite both dev-extras modes, then the emulator smoke; the browser pass remains
-  the user's C2 check.
+- Full suite both dev-extras modes, then the emulator smoke; the browser pass was done on
+  the emulator (front page plus a root-absolute subpage, 2026-10-22). The user's C2 pass
+  remains the device check.
 
 ## Deliberately out of scope
 

@@ -49,6 +49,62 @@ const QByteArray kTooLarge = QByteArrayLiteral(
 const QByteArray kNoSuchPreview = QByteArrayLiteral(
     "no such preview: it has ended, or the address is wrong. Open the link again from Kelp.\n");
 
+// A session token is 32 random bytes in hex. The shape matters when the browser
+// asks for a root-absolute path: a first segment of that shape is a token even
+// when this server has never minted it, so an unknown token stays a 404 instead
+// of becoming a file name.
+const char kPreviewCookie[] = "kelp_preview";
+
+bool isTokenText(const QByteArray &value)
+{
+    if (value.size() != 64)
+        return false;
+    for (int i = 0; i < value.size(); ++i) {
+        const char c = value.at(i);
+        if ((c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F'))
+            return false;
+    }
+    return true;
+}
+
+// The cookie a served page sets so that its own root-absolute URLs ("/style.css",
+// "/sub/") still carry the capability when the browser asks for them. The token
+// in the path is still the primary address; this is only how that address follows
+// a page into the URL space the page itself wrote.
+QByteArray previewCookie(const QList<QByteArray> &headerLines)
+{
+    for (int i = 1; i < headerLines.size(); ++i) {
+        const QByteArray line = headerLines.at(i).trimmed();
+        const int colon = line.indexOf(':');
+        if (colon <= 0)
+            continue;
+        if (line.left(colon).trimmed().toLower() != QByteArrayLiteral("cookie"))
+            continue;
+
+        const QList<QByteArray> parts = line.mid(colon + 1).split(';');
+        for (int j = 0; j < parts.size(); ++j) {
+            const QByteArray part = parts.at(j).trimmed();
+            const int equals = part.indexOf('=');
+            if (equals <= 0)
+                continue;
+            if (part.left(equals).trimmed() != kPreviewCookie)
+                continue;
+
+            QByteArray value = part.mid(equals + 1).trimmed();
+            if (value.size() >= 2 && value.startsWith('"') && value.endsWith('"'))
+                value = value.mid(1, value.size() - 2);
+            return value;
+        }
+    }
+    return QByteArray();
+}
+
+QByteArray previewCookieHeader(const QString &token)
+{
+    return "Set-Cookie: " + QByteArray(kPreviewCookie) + '=' + token.toLatin1()
+        + "; Path=/; HttpOnly; SameSite=Strict\r\n";
+}
+
 // The policy is what makes "this page works offline and cannot phone home" true in
 // any browser. Inline style and script are allowed because a shared page is often
 // one file; everything else must come from this origin. frame-ancestors stops the
@@ -514,18 +570,46 @@ void KelpPreviewServer::handle(QTcpSocket *socket, const QByteArray &request)
             rangeHeader = value;
     }
 
-    // "/<token>/<path…>"; the target always begins with '/'.
+    // The token is normally the first path segment ("/<token>/…"). A page's own
+    // root-absolute URLs ("/style.css", "/sub/") do not carry it, so the page
+    // response also sets the same token as a loopback cookie; those requests are
+    // matched through it. Either way the token is the whole capability, and an
+    // unknown token remains the same 404.
     const QList<QByteArray> raw = rawTarget.split('/');
-    if (raw.isEmpty() || !raw.at(0).isEmpty() || raw.size() < 2 || raw.at(1).isEmpty()) {
+    if (raw.isEmpty() || !raw.at(0).isEmpty() || raw.size() < 2) {
         ++m_tally.refused;
-        respond(socket, 404, "Not Found", "text/plain; charset=utf-8",
-                QByteArrayLiteral("no such preview: it has ended, or the address is "
-                                  "wrong. Open the link again from Kelp.\n"),
+        respond(socket, 404, "Not Found", "text/plain; charset=utf-8", kNoSuchPreview,
                 headOnly);
         return;
     }
 
-    const QString token = QString::fromLatin1(raw.at(1)).toLower();
+    QString token;
+    int pathStart = 1;
+    if (!raw.at(1).isEmpty()) {
+        const QString candidate = QString::fromLatin1(raw.at(1)).toLower();
+        if (m_sessions.contains(candidate)) {
+            token = candidate;
+            pathStart = 2;
+        } else if (isTokenText(raw.at(1))) {
+            ++m_tally.refused;
+            respond(socket, 404, "Not Found", "text/plain; charset=utf-8", kNoSuchPreview,
+                    headOnly);
+            return;
+        }
+    }
+
+    if (token.isEmpty()) {
+        const QByteArray cookie = previewCookie(lines);
+        const QString candidate = QString::fromLatin1(cookie).toLower();
+        if (cookie.isEmpty() || !m_sessions.contains(candidate)) {
+            ++m_tally.refused;
+            respond(socket, 404, "Not Found", "text/plain; charset=utf-8", kNoSuchPreview,
+                    headOnly);
+            return;
+        }
+        token = candidate;
+    }
+
     QHash<QString, Session>::iterator found = m_sessions.find(token);
     if (found == m_sessions.end()) {
         // The token is the whole of the address: without it there is nothing to
@@ -533,9 +617,7 @@ void KelpPreviewServer::handle(QTcpSocket *socket, const QByteArray &request)
         // body says what a reader can do about it: a page that worked a moment ago
         // has usually just been idle past its timeout (§3.25).
         ++m_tally.refused;
-        respond(socket, 404, "Not Found", "text/plain; charset=utf-8",
-                QByteArrayLiteral("no such preview: it has ended, or the address is "
-                                  "wrong. Open the link again from Kelp.\n"),
+        respond(socket, 404, "Not Found", "text/plain; charset=utf-8", kNoSuchPreview,
                 headOnly);
         return;
     }
@@ -547,7 +629,7 @@ void KelpPreviewServer::handle(QTcpSocket *socket, const QByteArray &request)
     // separator, and nothing that fails the manifest's own name rules becomes a
     // path — ".." included, so the URL space cannot leave the bundle.
     QString urlPath;
-    for (int i = 2; i < raw.size(); ++i) {
+    for (int i = pathStart; i < raw.size(); ++i) {
         if (raw.at(i).isEmpty())
             continue;
         const QString segment = QUrl::fromPercentEncoding(raw.at(i));
@@ -711,6 +793,10 @@ void KelpPreviewServer::serve(QTcpSocket *socket, Session *session, const QStrin
     QByteArray extra = "Content-Type: " + Kelp::Web::mimeType(file, target.path).toUtf8() + "\r\n";
     extra += "Content-Length: " + QByteArray::number(length) + "\r\n";
     extra += "Accept-Ranges: bytes\r\n";
+    // The page may name its own assets by an absolute path. This host-only cookie
+    // keeps those requests inside the same capability; it is scoped to loopback
+    // and lasts only as long as the browser session.
+    extra += previewCookieHeader(token);
     if (partial) {
         extra += "Content-Range: bytes " + QByteArray::number(start) + "-"
                + QByteArray::number(start + length - 1) + "/"
