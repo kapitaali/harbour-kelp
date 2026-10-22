@@ -958,16 +958,19 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     rounds. `Kelp::missingObjects()` names what is missing — to begin with only the root
     manifest, because everything else is inside it — up to four objects are fetched at a
     time, and each one is kept only if it hashes to the address it was asked for
-    (`Kelp::storeReceived()`). When nothing is missing, `open()` reassembles the tree and
-    the files are written into *Downloads*: a bundle holding a single file becomes that
-    file, anything else a folder named for the link, and every name is validated again on
-    the way out so a hostile manifest cannot write outside it. Verified end-to-end on the
-    emulator with two instances and two stores: 22 objects fetched over the LAN, six files
-    written byte-identical to the source, plus the failure cases — a wrong key, a bundle
-    the sender is not serving, a link with no address, and a cancelled-then-retried fetch
-    (the objects already stored are kept, so the retry only asks for the rest).
-    Still open: no relay (a link with no address says so and stops), the whole tree is held in
-    memory before it is written, and nothing in the app can serve again what it downloaded.
+    (`Kelp::storeReceived()`). When nothing is missing, a streaming writer walks the
+    manifests again and writes one file at a time: each chunk is verified and written
+    before the next object is opened, so a large folder no longer has to fit in memory.
+    A bundle holding a single file becomes that file, anything else a folder named for
+    the link, and every name is validated again on the way out so a hostile manifest
+    cannot write outside it. Verified end-to-end on the emulator with two instances and
+    two stores: 22 objects fetched over the LAN, six files written byte-identical to the
+    source, plus the failure cases — a wrong key, a bundle the sender is not serving, a
+    link with no address, and a cancelled-then-retried fetch (the objects already stored
+    are kept, so the retry only asks for the rest). A later live 335.6 MiB folder proved
+    the streaming path at scale (PROGRESS §3.46).
+    Still open: no relay (a link with no address says so and stops), and nothing in the
+    app can serve again what it downloaded.
 - **C3** — Relay: outbound tunnel + object proxy + cache; cross-network fetch from a
   different network (this is the Kelp equivalent of the IPFS M0 NAT spike).
   - **C3.1 (done) — the tunnel transport.** `src/kelptls.{h,cpp}` is a `KelpTls` session

@@ -39,6 +39,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
 #include <QHash>
 #include <QHostAddress>
 #include <QJsonDocument>
@@ -694,6 +696,68 @@ void testNoPage()
     CHECK_EQ(appStore.count(), 0);
 }
 
+void testSaveStreamsFolder()
+{
+    section("save: a folder is written file by file, including multi-chunk files");
+
+    MemoryStore sealed;
+    MapSource source;
+    const QByteArray big = pattern("stream", Manifest::ChunkSize * 2 + 123);
+    const QByteArray small = QByteArrayLiteral("a smaller file in a subfolder\n");
+    source.files.insert(QStringLiteral("streams/big.bin"), big);
+    source.files.insert(QStringLiteral("streams/sub/small.txt"), small);
+
+    SourceNode root = dirNode(QStringLiteral("streams"));
+    root.children.append(fileNode(QStringLiteral("big.bin"),
+                                  QStringLiteral("streams/big.bin"), big.size()));
+    SourceNode sub = dirNode(QStringLiteral("sub"));
+    sub.children.append(fileNode(QStringLiteral("small.txt"),
+                                 QStringLiteral("streams/sub/small.txt"), small.size()));
+    root.children.append(sub);
+
+    const QByteArray secret = Crypto::sha256("client-stream");
+    SealedBundle bundle;
+    QString error;
+    CHECK(seal(&sealed, contentKey(secret), root, &source, &bundle, &error));
+    if (!error.isEmpty()) {
+        printf("  seal failed: %s\n", qPrintable(error));
+        return;
+    }
+
+    Sealed streams;
+    streams.rootId = bundle.rootId;
+    streams.secret = secret;
+    streams.bundleId = Link::base32Encode(bundle.rootId);
+    streams.secretText = Link::base64UrlEncode(secret);
+    StubPublisher stub(&sealed);
+
+    QTemporaryDir downloads;
+    CHECK(downloads.isValid());
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    client.setDirectory(downloads.path());
+
+    CHECK(client.fetch(linkFor(streams, stub, false)));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK_EQ(client.files(), 2);
+    CHECK_EQ(client.bytes(), quint64(big.size() + small.size()));
+
+    const QString destination = client.destination();
+    CHECK(!destination.isEmpty());
+    CHECK(QFileInfo(destination).isDir());
+
+    // The single root folder is the container the link named, not an extra
+    // nesting level: its children are directly under `destination`.
+    QFile bigFile(destination + QStringLiteral("/big.bin"));
+    CHECK(bigFile.open(QIODevice::ReadOnly));
+    CHECK_EQ(bigFile.readAll(), big);
+
+    QFile smallFile(destination + QStringLiteral("/sub/small.txt"));
+    CHECK(smallFile.open(QIODevice::ReadOnly));
+    CHECK_EQ(smallFile.readAll(), small);
+}
+
 void testSavePathUnchanged()
 {
     section("save: the ordinary path still writes files, and keeps no view memory");
@@ -1007,6 +1071,7 @@ int main(int argc, char **argv)
     testManifestCeiling();
     testCeilingWhileStoring();
     testNoPage();
+    testSaveStreamsFolder();
     testSavePathUnchanged();
     testTwoSessions();
     testViewRemintsAfterSweep();

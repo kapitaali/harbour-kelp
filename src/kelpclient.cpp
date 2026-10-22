@@ -12,6 +12,7 @@
 #include "kelpfetch.h"
 #include "kelp_link.h"
 #include "kelp_manifest.h"
+#include "kelp_object.h"
 #include "kelp_store.h"
 #include "kelp_web.h"
 #include "kelpbuild.h"
@@ -104,55 +105,265 @@ QString uniquePath(const QString &parent, const QString &name, bool isDir)
     return candidate;
 }
 
-// One entry of a bundle, written at `path`. Names come from the sender, so each
-// one is checked again here: a manifest may only name one entry per folder, and
-// it may not name a path.
-bool writeNode(const Kelp::TreeNode &node, const QString &path,
-               int *files, quint64 *bytes, QString *error)
-{
-    if (!Kelp::Manifest::isValidName(node.name) || node.name.size() > 255) {
-        *error = QStringLiteral("the sender used a name that cannot be saved");
-        return false;
-    }
+// The same depth limit libkelp's opener uses. Keeping it here means a hostile
+// manifest cannot make the writer recurse without bound even though the writer
+// walks the manifests itself instead of asking open() for the whole tree.
+const int kMaxTreeDepth = 128;
 
-    if (node.isDir) {
-        if (!QDir().mkpath(path)) {
-            *error = QStringLiteral("could not make the folder %1").arg(node.name);
+/*
+ * Writes a received bundle one file at a time.
+ *
+ * `Kelp::open()` reassembles the whole tree, file data included, before the
+ * caller can write anything. That is fine for the small bundles the first
+ * tests used, but a 335 MiB folder is a `std::bad_alloc` on a low-memory
+ * device. This walks the same manifests again, but keeps only the current
+ * chunk in memory: a file is opened when its manifest says how big it is, each
+ * chunk is verified and written as it arrives, and the file is closed before
+ * the next one starts.
+ *
+ * The walk repeats the checks the opener does — manifest ids, chunk sizes,
+ * subtree sizes, and names from the sender — so a bundle that open() would
+ * refuse is refused here too. The difference is only that content is not
+ * accumulated.
+ */
+class TreeWriter
+{
+public:
+    TreeWriter(Kelp::ObjectStore *store, const QByteArray &key)
+        : m_store(store), m_key(key), m_files(0), m_bytes(0) {}
+
+    bool writeRoot(const QByteArray &rootId, const QString &base,
+                   const QString &label, QString *destination, QString *error)
+    {
+        if (rootId.size() != Kelp::Crypto::Sha256Size) {
+            *error = QStringLiteral("bundle id is not a 32-byte object id");
             return false;
         }
-        for (int i = 0; i < node.children.size(); ++i) {
-            const Kelp::TreeNode &child = node.children.at(i);
-            if (!writeNode(child, path + QLatin1Char('/') + child.name, files, bytes, error))
+
+        QVector<Kelp::Manifest::Entry> roots;
+        if (!readDirectory(rootId, 0, &roots, error))
+            return false;
+
+        // A single file becomes that file in the chosen folder; a single folder
+        // becomes a folder named for the link, holding what the picked folder
+        // held; anything else becomes a folder named for the link. This is the
+        // same shape writeFiles() documented before the streaming writer.
+        if (roots.size() == 1 && !roots.at(0).isDir) {
+            if (!Kelp::Manifest::isValidName(roots.at(0).name)
+                || roots.at(0).name.size() > 255) {
+                *error = QStringLiteral("the sender used a name that cannot be saved");
                 return false;
+            }
+            const QString path = uniquePath(base, roots.at(0).name, false);
+            if (QFileInfo::exists(path)) {
+                *error = QStringLiteral("there are already too many copies of this in %1")
+                             .arg(QDir(base).dirName());
+                return false;
+            }
+            *destination = path;
+            if (!QDir().mkpath(QFileInfo(path).path())) {
+                *error = QStringLiteral("could not make a folder to save into");
+                return false;
+            }
+            quint64 size = 0;
+            return writeFile(roots.at(0), path, 1, &size, error);
+        }
+
+        const QString path = uniquePath(base, label, true);
+        if (QFileInfo::exists(path)) {
+            *error = QStringLiteral("there are already too many copies of this in %1")
+                         .arg(QDir(base).dirName());
+            return false;
+        }
+        *destination = path;
+        if (!QDir().mkpath(path)) {
+            *error = QStringLiteral("could not make a folder to save into");
+            return false;
+        }
+
+        quint64 total = 0;
+        if (roots.size() == 1) {
+            QVector<Kelp::Manifest::Entry> inside;
+            if (!readDirectory(roots.at(0).hash, 1, &inside, error))
+                return false;
+            if (!writeEntries(inside, path, 1, &total, error))
+                return false;
+            if (total != roots.at(0).size) {
+                *error = QStringLiteral("\"%1\" does not match the size in its parent")
+                             .arg(roots.at(0).name);
+                return false;
+            }
+        } else if (!writeEntries(roots, path, 0, &total, error)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    int files() const { return m_files; }
+    quint64 bytes() const { return m_bytes; }
+
+private:
+    bool readObject(const QByteArray &id, QByteArray *plaintext, QString *error)
+    {
+        QByteArray object;
+        if (!m_store->get(id, &object)) {
+            *error = QStringLiteral("object %1 is missing or corrupt")
+                         .arg(QString::fromLatin1(id.toHex()));
+            return false;
+        }
+        if (!Kelp::Object::open(m_key, object, plaintext, error)) {
+            if (error->isEmpty())
+                *error = QStringLiteral("an object failed to decrypt");
+            return false;
         }
         return true;
     }
 
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        *error = QStringLiteral("could not write %1").arg(node.name);
-        return false;
-    }
-    if (file.write(node.data) != node.data.size()) {
-        *error = QStringLiteral("could not write all of %1").arg(node.name);
-        return false;
-    }
-    file.close();
-    ++(*files);
-    *bytes += quint64(node.data.size());
-    return true;
-}
-
-bool writeChildren(const QVector<Kelp::TreeNode> &children, const QString &dir,
-                   int *files, quint64 *bytes, QString *error)
-{
-    for (int i = 0; i < children.size(); ++i) {
-        const Kelp::TreeNode &child = children.at(i);
-        if (!writeNode(child, dir + QLatin1Char('/') + child.name, files, bytes, error))
+    bool readDirectory(const QByteArray &id, int depth,
+                       QVector<Kelp::Manifest::Entry> *entries, QString *error)
+    {
+        if (depth > kMaxTreeDepth) {
+            *error = QStringLiteral("bundle tree is nested too deeply");
             return false;
+        }
+
+        QByteArray manifest;
+        if (!readObject(id, &manifest, error))
+            return false;
+
+        Kelp::Manifest::Directory directory;
+        if (!Kelp::Manifest::decodeDirectory(manifest, &directory, error))
+            return false;
+
+        if (!directory.segment) {
+            *entries = directory.entries;
+            return true;
+        }
+
+        for (int i = 0; i < directory.children.size(); ++i) {
+            QByteArray leafManifest;
+            if (!readObject(directory.children.at(i), &leafManifest, error))
+                return false;
+            Kelp::Manifest::Directory leaf;
+            if (!Kelp::Manifest::decodeDirectory(leafManifest, &leaf, error))
+                return false;
+            if (leaf.segment) {
+                *error = QStringLiteral("segment index points at another segment index");
+                return false;
+            }
+            entries->append(leaf.entries);
+        }
+        return true;
     }
-    return true;
-}
+
+    bool writeEntries(const QVector<Kelp::Manifest::Entry> &entries,
+                      const QString &dir, int depth, quint64 *total, QString *error)
+    {
+        if (depth > kMaxTreeDepth) {
+            *error = QStringLiteral("bundle tree is nested too deeply");
+            return false;
+        }
+
+        quint64 sum = 0;
+        for (int i = 0; i < entries.size(); ++i) {
+            const Kelp::Manifest::Entry &entry = entries.at(i);
+            if (!Kelp::Manifest::isValidName(entry.name) || entry.name.size() > 255) {
+                *error = QStringLiteral("the sender used a name that cannot be saved");
+                return false;
+            }
+
+            const QString path = dir + QLatin1Char('/') + entry.name;
+            if (entry.isDir) {
+                if (!QDir().mkpath(path)) {
+                    *error = QStringLiteral("could not make the folder %1").arg(entry.name);
+                    return false;
+                }
+                QVector<Kelp::Manifest::Entry> children;
+                if (!readDirectory(entry.hash, depth + 1, &children, error))
+                    return false;
+                quint64 childTotal = 0;
+                if (!writeEntries(children, path, depth + 1, &childTotal, error))
+                    return false;
+                if (childTotal != entry.size) {
+                    *error = QStringLiteral("\"%1\" does not match the size in its parent")
+                                 .arg(entry.name);
+                    return false;
+                }
+                sum += childTotal;
+            } else {
+                quint64 written = 0;
+                if (!writeFile(entry, path, depth + 1, &written, error))
+                    return false;
+                sum += written;
+            }
+        }
+        *total = sum;
+        return true;
+    }
+
+    bool writeFile(const Kelp::Manifest::Entry &entry, const QString &path,
+                   int depth, quint64 *size, QString *error)
+    {
+        if (depth > kMaxTreeDepth) {
+            *error = QStringLiteral("bundle tree is nested too deeply");
+            return false;
+        }
+
+        QByteArray manifest;
+        if (!readObject(entry.hash, &manifest, error))
+            return false;
+
+        Kelp::Manifest::File file;
+        if (!Kelp::Manifest::decodeFile(manifest, &file, error))
+            return false;
+        if (file.size != entry.size) {
+            *error = QStringLiteral("\"%1\" does not match the size in its parent")
+                         .arg(entry.name);
+            return false;
+        }
+
+        QFile out(path);
+        if (!out.open(QIODevice::WriteOnly)) {
+            *error = QStringLiteral("could not write %1").arg(entry.name);
+            return false;
+        }
+
+        for (int i = 0; i < file.chunks.size(); ++i) {
+            const quint64 offset = quint64(i) * Kelp::Manifest::ChunkSize;
+            const quint64 remaining = file.size - offset;
+            const quint64 expected =
+                qMin<quint64>(Kelp::Manifest::ChunkSize, remaining);
+
+            QByteArray chunk;
+            if (!readObject(file.chunks.at(i), &chunk, error)) {
+                out.close();
+                return false;
+            }
+            if (quint64(chunk.size()) != expected) {
+                *error = QStringLiteral("a chunk does not have the size the manifest promises");
+                out.close();
+                return false;
+            }
+            if (out.write(chunk) != chunk.size()) {
+                *error = QStringLiteral("could not write all of %1").arg(entry.name);
+                out.close();
+                return false;
+            }
+        }
+        out.close();
+
+        ++m_files;
+        m_bytes += file.size;
+        *size = file.size;
+        return true;
+    }
+
+    Kelp::ObjectStore *m_store;
+    QByteArray m_key;
+    int m_files;
+    quint64 m_bytes;
+};
 
 } // namespace
 
@@ -539,17 +750,6 @@ void KelpClient::writeFiles()
     m_phase = Saving;
     emit changed();
 
-    Kelp::TreeNode tree;
-    QString error;
-    if (!Kelp::open(m_store, m_key, m_bundleId, &tree, &error)) {
-        failed(error);
-        return;
-    }
-    if (!tree.isDir) {
-        failed(QStringLiteral("the bundle root is not a folder"));
-        return;
-    }
-
     // Where the files are written. The user picks this on the link page; an
     // empty choice means the platform's Downloads folder.
     QString base = m_directory;
@@ -559,65 +759,23 @@ void KelpClient::writeFiles()
             base = QDir::homePath() + QStringLiteral("/Downloads");
     }
 
-    // Where it lands. A bundle root is a container, and today the Add page puts
-    // the one item that was picked in it — so the item is what the user asked
-    // for, not a folder to be nested inside a copy of itself:
-    //
-    //   * a single file becomes that file in the chosen folder;
-    //   * a single folder becomes a folder named for the link, holding what the
-    //     picked folder held;
-    //   * anything else becomes a folder named for the link.
     const QString label = m_name.isEmpty() ? m_bundleIdText.left(8) : m_name;
-    const QVector<Kelp::TreeNode> roots = tree.children;
-
-    int files = 0;
-    quint64 bytes = 0;
+    TreeWriter writer(m_store, m_key);
     QString destination;
-
-    if (roots.size() == 1 && !roots.at(0).isDir) {
-        destination = uniquePath(base, roots.at(0).name, false);
-        if (QFileInfo::exists(destination)) {
-            failed(QStringLiteral("there are already too many copies of this in %1")
-                       .arg(QDir(base).dirName()));
-            return;
-        }
+    QString error;
+    if (!writer.writeRoot(m_bundleId, base, label, &destination, &error)) {
         m_destination = destination;
-        if (!QDir().mkpath(QFileInfo(destination).path())) {
-            failed(QStringLiteral("could not make a folder to save into"));
-            return;
-        }
-        if (!writeNode(roots.at(0), destination, &files, &bytes, &error)) {
-            m_files = files;
-            m_bytes = bytes;
-            failed(error);
-            return;
-        }
-    } else {
-        const QVector<Kelp::TreeNode> inside =
-            roots.size() == 1 ? roots.at(0).children : roots;
-        destination = uniquePath(base, label, true);
-        if (QFileInfo::exists(destination)) {
-            failed(QStringLiteral("there are already too many copies of this in %1")
-                       .arg(QDir(base).dirName()));
-            return;
-        }
-        m_destination = destination;
-        if (!QDir().mkpath(destination)) {
-            failed(QStringLiteral("could not make a folder to save into"));
-            return;
-        }
-        if (!writeChildren(inside, destination, &files, &bytes, &error)) {
-            m_files = files;
-            m_bytes = bytes;
-            failed(error);
-            return;
-        }
+        m_files = writer.files();
+        m_bytes = writer.bytes();
+        failed(error);
+        return;
     }
 
-    m_files = files;
-    m_bytes = bytes;
+    m_destination = destination;
+    m_files = writer.files();
+    m_bytes = writer.bytes();
     m_phase = Done;
-    qInfo() << "KelpClient: wrote" << files << "files," << bytes << "bytes to"
+    qInfo() << "KelpClient: wrote" << m_files << "files," << m_bytes << "bytes to"
             << destination;
     emit changed();
 }
