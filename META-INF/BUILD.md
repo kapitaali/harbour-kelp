@@ -52,7 +52,7 @@ asks for it:
 | | dev build | release build |
 |---|---|---|
 | How | `KELP_DEV_EXTRAS=1` at build time → `DEFINES += KELP_DEV_BUILD` (`src/kelpbuild.pri`) | anything else, including unset |
-| Spec | `%define kelp_dev_extras 1` (currently set) | `%define kelp_dev_extras 0` |
+| Spec | `%define kelp_dev_extras 1` while developing | `%define kelp_dev_extras 0` (currently set for release) |
 | Link logging | *Include links in the log* defaults **on**, the switch is offered | never: no default, no switch, and `KelpBundles` refuses to write a link whatever the preference or `KELP_DEBUG_LINK` say |
 | Says so | `Kelp: build mode — dev extras on` | `Kelp: build mode — dev extras off` |
 

@@ -12,7 +12,7 @@ Source0:    %{name}-%{version}.tar.bz2
 # share's kelp:// link, and so that bundle's key, into the log by default. 1 while
 # developing; a release build sets this to 0, which is also what a build outside
 # this spec gets (harbour-kelp.pro). See README, "Development builds".
-%define kelp_dev_extras 1
+%define kelp_dev_extras 0
 
 # The UI uses Sailfish.Pickers (FilePickerPage / FolderPickerPage) from
 # sailfish-components-pickers-qt5. Deliberately no Requires for it: the Harbour
