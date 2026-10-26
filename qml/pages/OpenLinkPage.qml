@@ -86,6 +86,15 @@ Page {
     property bool busy: kelpClient.busy
     property string phase: kelpClient.phase
 
+    // A page view fetches its manifest index first and then lets the browser pull
+    // content on demand. `fetched` therefore keeps growing while the browser is
+    // open, and the sender's `/info` total is the whole bundle. Show both rather
+    // than a phase name that only covers the first handful of objects.
+    property string viewObjectsText: kelpClient.total > 0
+                                     ? qsTr("%1 of %2 objects")
+                                       .arg(kelpClient.fetched).arg(kelpClient.total)
+                                     : qsTr("%1 objects").arg(kelpClient.fetched)
+
     // What the busy row says. Two different questions, so two different answers:
     // a transfer this page did not start names the bundle it is waiting on
     // (§3.38) — `kelpClient.name` is the transfer in flight, and a link that
@@ -102,7 +111,8 @@ Page {
                                 : openPage.phase === "saving"
                                   ? qsTr("Saving the files…")
                                   : openPage.viewOnly
-                                    ? qsTr("Preparing the page…")
+                                    ? qsTr("Downloading page… %1")
+                                      .arg(openPage.viewObjectsText)
                                     : kelpClient.total > 0
                                       ? qsTr("Fetched %1 of %2 objects")
                                         .arg(kelpClient.fetched).arg(kelpClient.total)
@@ -600,6 +610,16 @@ Page {
                         font.pixelSize: Theme.fontSizeSmall
                         visible: openPage.viewOnly
                         text: qsTr("Nothing was saved — a page shared with you is only looked at.")
+                    }
+
+                    Label {
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        visible: openPage.viewOnly
+                        color: Theme.secondaryColor
+                        font.pixelSize: Theme.fontSizeExtraSmall
+                        text: qsTr("%1 downloaded; assets load as you browse.")
+                              .arg(openPage.viewObjectsText)
                     }
 
                     Label {
