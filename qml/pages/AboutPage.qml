@@ -44,7 +44,7 @@ Page {
                 wrapMode: Text.Wrap
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
-                text: qsTr("The content layer is real: files are chunked, encrypted with AES-256-GCM and stored as SHA-256-addressed objects, and the kelp:// link carries the key. What is missing is everyone else — nothing yet serves those objects to a recipient, so a shared link opens only on this device.")
+                text: qsTr("Files are chunked, encrypted with AES-256-GCM and stored as SHA-256-addressed objects, and the kelp:// link carries the key. Kelp serves a shared bundle to anyone holding the link on the same local network, and a recipient checks every object against its address before keeping it. Relays and peer swarm are not implemented yet.")
             }
 
             SectionHeader { text: qsTr("Diagnostics") }

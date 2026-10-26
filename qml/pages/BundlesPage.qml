@@ -79,8 +79,8 @@ Page {
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                     text: (page === true ? qsTr("Web page") + " · " : "")
-                          + (kind === "folder" ? qsTr("%1 files").arg(files)
-                                               : qsTr("%1 file").arg(files))
+                          + (files === 1 ? qsTr("1 file")
+                                         : qsTr("%1 files").arg(files))
                           + " · " + size
                 }
             }
