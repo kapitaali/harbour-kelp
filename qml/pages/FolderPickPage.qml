@@ -1,6 +1,6 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
-import Nemo.FileManager 1.0
+import Qt.labs.folderlistmodel 2.1
 
 /*
  * Folder chooser.
@@ -14,6 +14,9 @@ import Nemo.FileManager 1.0
  * The wording is configurable so the same page serves both "pick a folder to
  * share" (the Add page) and "pick a folder to save into" (Open a link); the
  * defaults keep the sharing wording.
+ *
+ * Qt.labs.folderlistmodel is on Harbour's allowed list; Nemo.FileManager,
+ * which the packaged picker uses internally, is not importable from an app.
  */
 Page {
     id: pickPage
@@ -29,6 +32,15 @@ Page {
     property string itemMenuText: qsTr("Share this folder")
 
     property string currentPath: startPath
+
+    // The row above the model: the folder that holds this one. Root has none.
+    property string parentPath: {
+        var path = currentPath.replace(/\/+$/, "")
+        var cut = path.lastIndexOf("/")
+        if (cut <= 0)
+            return "/"
+        return path.substring(0, cut)
+    }
 
     function pick(path) {
         kelpLog.info("FolderPickPage: picked \"" + path + "\"")
@@ -46,18 +58,6 @@ Page {
             right: parent.right
             bottom: shareButton.top
             bottomMargin: Theme.paddingMedium
-        }
-
-        model: FileModel {
-            id: fileModel
-
-            path: pickPage.currentPath
-            active: pickPage.status === PageStatus.Active
-            includeFiles: false
-            includeDirectories: true
-            includeParentDirectory: true
-            sortBy: FileModel.SortByName
-            directorySort: FileModel.SortDirectoriesBeforeFiles
         }
 
         header: Column {
@@ -81,6 +81,33 @@ Page {
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeExtraSmall
             }
+
+            ListItem {
+                id: parentRow
+
+                contentHeight: Theme.itemSizeSmall
+                visible: pickPage.currentPath !== "/"
+
+                Label {
+                    x: Theme.horizontalPageMargin
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - 2 * Theme.horizontalPageMargin
+                    text: qsTr("Parent folder")
+                    color: parentRow.highlighted ? Theme.highlightColor : Theme.primaryColor
+                }
+
+                onClicked: pickPage.currentPath = pickPage.parentPath
+            }
+        }
+
+        model: FolderListModel {
+            id: folderModel
+
+            folder: "file://" + pickPage.currentPath
+            showDirs: true
+            showFiles: false
+            showDotAndDotDot: false
+            sortField: FolderListModel.Name
         }
 
         delegate: ListItem {
@@ -88,25 +115,29 @@ Page {
 
             contentHeight: Theme.itemSizeSmall
 
-            property bool isParent: model.baseName === ".." && model.extension === ""
-
             Label {
                 x: Theme.horizontalPageMargin
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - 2 * Theme.horizontalPageMargin
-                text: row.isParent ? qsTr("Parent folder") : model.fileName
+                text: model.fileName
                 truncationMode: TruncationMode.Elide
                 color: row.highlighted ? Theme.highlightColor : Theme.primaryColor
             }
 
-            onClicked: pickPage.currentPath = model.absolutePath
+            onClicked: pickPage.currentPath = model.filePath
 
             menu: ContextMenu {
                 MenuItem {
                     text: pickPage.itemMenuText
-                    onClicked: pickPage.pick(model.absolutePath)
+                    onClicked: pickPage.pick(model.filePath)
                 }
             }
+        }
+
+        ViewPlaceholder {
+            text: qsTr("No subfolders")
+            enabled: listView.count === 0
+            hintText: qsTr("Tap the button below to choose this folder")
         }
 
         VerticalScrollDecorator {}

@@ -3,7 +3,7 @@ Type=Application
 X-Nemo-Application-Type=silica-qt5
 Name=Kelp
 Icon=harbour-kelp
-Exec=/usr/bin/invoker --type=silica-qt5 -- /usr/bin/harbour-kelp %u
+Exec=harbour-kelp %u
 MimeType=x-scheme-handler/kelp;
 
 [X-Sailjail]

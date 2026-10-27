@@ -75,15 +75,13 @@ rm -rf %{buildroot}
 
 %files
 %defattr(-,root,root,-)
+# LICENSE stays in the repo for the Harbour submission; /usr/share/licenses is
+# not an allowed install location, so it is deliberately not packaged.
 %{_bindir}/harbour-kelp
 %{_datadir}/harbour-kelp
 %{_datadir}/applications/harbour-kelp.desktop
 %{_datadir}/icons/hicolor/*/apps/harbour-kelp.png
 
-# The desktop file claims x-scheme-handler/kelp, and GIO only finds a handler
-# through the desktop database this rebuilds (scheme-plan.md).
-%post
-update-desktop-database %{_datadir}/applications &>/dev/null || :
-
-%postun
-update-desktop-database %{_datadir}/applications &>/dev/null || :
+# No %post/%postun: Harbour rejects RPM scriptlets, and a scriptlet would also
+# pull in /bin/sh. The desktop file still declares x-scheme-handler/kelp; the
+# platform's own desktop-database handling is what registers it.

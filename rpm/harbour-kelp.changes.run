@@ -36,6 +36,15 @@ if [ -n "$entries" ]; then
     echo
 fi
 
+# First release and no tag yet: sfdk-changelog has nothing to report, so use the
+# hand-written entry. Without this the first release RPM ships an empty
+# %changelog. Once a tag exists, sfdk-changelog supplies released entries instead.
+if [ -z "$entries" ] && [ -z "$(git tag -l 2>/dev/null)" ] \
+        && [ -f "$(dirname "$0")/harbour-kelp.changes" ]; then
+    sed '1{/^-*$/d;}' "$(dirname "$0")/harbour-kelp.changes"
+    exit 0
+fi
+
 # Released entries, each with its own headline. Warns (harmlessly) until the
 # first tag exists, so it must not fail the build.
 sfdk-changelog || true

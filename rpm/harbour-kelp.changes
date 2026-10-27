@@ -1,3 +1,13 @@
 -------------------------------------------------------------------
-Thu Oct 15 2026 kapitaali <teppo@kapitaali.com> 0.1.0-1
-- M0 scaffold: UI-only app shell, bundle list, add/settings/about pages.
+* Tue Oct 27 2026 kapitaali <teppo@kapitaali.com> 0.1.0-1
+- Share a file, folder or webpage as an encrypted kelp:// link and serve it
+  directly on the local network
+- Open links on another device: passphrase unlock, save-folder choice,
+  per-file progress and verified, decrypted downloads
+- Content-addressed, AES-256-GCM-sealed object store; links carry the key in
+  the fragment and passphrase-protected links wrap it instead
+- LAN-only serving with Wi-Fi-only and low-battery policy, background
+  keepalive, and a remembered share list with pause, resume and stop
+- Offline webpage preview for shares published as a page
+- Settings for storage, logging and local-address inclusion; About page
+- Sailjail permissions Internet and UserDirs only
