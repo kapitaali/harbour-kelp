@@ -94,8 +94,9 @@ key, QR payload, share dialog or real phone address.
 
 ## 8. Remaining external actions
 
-- **GitHub push:** three commits are waiting on `origin/master`. Rotate the
-  exposed PAT first; never reuse it. Then `git push origin master`.
+- **GitHub push:** four commits are waiting on `origin/master` (`a4f4c95`,
+  `f11af25` plus the two handoff commits). Rotate the exposed PAT first; never
+  reuse it. Then `git push origin master`.
 - **Harbour upload:** requires the owner's account; not performed here.
 - **Optional:** replace `03-receive.png` with a clean phone capture after
   restarting Kelp to clear the Done panel. Not a blocker.
