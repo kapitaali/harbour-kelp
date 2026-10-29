@@ -332,6 +332,8 @@ public:
         return QStringLiteral("relay %1:%2").arg(m_host).arg(m_port);
     }
 
+    bool fromRelay() const override { return true; }
+
 private:
     struct Request {
         QString path;
@@ -495,6 +497,14 @@ KelpSource *KelpSource::create(const Kelp::Link::Bundle &link, QObject *parent, 
             : QStringLiteral("this link's address is not one to fetch from");
         return nullptr;
     }
+
+    return createFromRelay(link, parent, error);
+}
+
+KelpSource *KelpSource::createFromRelay(const Kelp::Link::Bundle &link, QObject *parent,
+                                        QString *error)
+{
+    const QString bundleIdText = QString::fromLatin1(Kelp::Link::base32Encode(link.bundleId));
 
     const QByteArray token = Kelp::relayToken(link.secret);
     if (token.size() != Kelp::Crypto::KeySize) {

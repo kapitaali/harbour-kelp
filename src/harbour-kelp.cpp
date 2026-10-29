@@ -33,6 +33,7 @@
 #include "kelppolicy.h"
 #include "kelpqr.h"
 #include "kelppreviewserver.h"
+#include "kelprelay.h"
 #include "kelpserver.h"
 #include "kelpsettings.h"
 #include "kelpshares.h"
@@ -139,6 +140,11 @@ int main(int argc, char *argv[])
     // the Settings page writes to.
     kelpBundles.setSettings(&kelpSettings);
     kelpBundles.setPreviewServer(&previewServer);
+    // Every share published from this build is reachable over the internet: the
+    // relay is named here, once, and links minted by this device carry it. The
+    // LAN stays in the link too, and recipients prefer it; the relay is the path
+    // that works from anywhere. Not a setting — see src/kelprelay.h.
+    kelpBundles.setRelays(kelpDefaultRelays());
 
     // The receiving end shares the same object store: an object received for one
     // bundle is verified content like any other, and nothing here can be confused

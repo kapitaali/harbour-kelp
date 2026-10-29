@@ -220,6 +220,48 @@ QString fetchVerdict(KelpSource *source, int guardMs, qint64 *elapsedMs)
     return message;
 }
 
+void testRelayRetryIgnoresLanAddress()
+{
+    section("relay retry skips the LAN address");
+
+    const QByteArray secret = testHash("retry-secret");
+
+    Link::Bundle link;
+    link.bundleId = testHash("retry-bundle");
+    link.secret = secret;
+    link.lan = QStringLiteral("192.168.1.7:7373");
+    link.relays << QStringLiteral("relay.example:9443");
+
+    QString error;
+
+    // create() prefers the address: the same-network path is the cheap one.
+    KelpSource *preferred = KelpSource::create(link, nullptr, &error);
+    CHECK(preferred != nullptr);
+    if (preferred) {
+        CHECK(!preferred->fromRelay());
+        CHECK_EQ(preferred->describe(), link.lan);
+        delete preferred;
+    }
+
+    // createFromRelay() is the retry: same link, the relay only.
+    KelpSource *retry = KelpSource::createFromRelay(link, nullptr, &error);
+    CHECK(retry != nullptr);
+    if (retry) {
+        CHECK(retry->fromRelay());
+        CHECK(retry->describe().startsWith(QStringLiteral("relay ")));
+        CHECK(retry->describe().contains(QStringLiteral("relay.example:9443")));
+        delete retry;
+    }
+
+    // A link with no relay has no retry to offer.
+    Link::Bundle addressOnly;
+    addressOnly.bundleId = link.bundleId;
+    addressOnly.secret = link.secret;
+    addressOnly.lan = link.lan;
+    CHECK(KelpSource::createFromRelay(addressOnly, nullptr, &error) == nullptr);
+    CHECK(!error.isEmpty());
+}
+
 void testUnreachableSender()
 {
     section("a sender that never answers is called unreachable");
@@ -316,6 +358,7 @@ int main(int argc, char **argv)
     printf("kelpfetch unit test\n");
 
     testLanAuthHeader();
+    testRelayRetryIgnoresLanAddress();
     testUnreachableSender();
     testReachableButRejecting();
 

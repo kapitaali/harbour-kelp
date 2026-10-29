@@ -477,6 +477,8 @@ void KelpClient::reset()
     // reference of its own and keeps working.
     m_viewing = false;
     m_link.clear();
+    m_fetchLink = Kelp::Link::Bundle();
+    m_relayRetried = false;
     m_viewLink = Kelp::Link::Bundle();
     m_viewSecret.clear();
     m_viewToken.clear();
@@ -575,6 +577,12 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing,
             return failed(error);
     }
 
+    // Kept for the whole fetch: a link that names both an address and a relay is
+    // retried on the relay if the address cannot answer (see onFailed()). After
+    // unlock(), so a passphrase link's retry has the secret the first attempt used.
+    m_fetchLink = link;
+    m_relayRetried = false;
+
     // The LAN address is preferred when the link has one — it needs no third
     // party — and a relay is the fallback for everything wider than one network.
     KelpSource *source = KelpSource::create(link, this, &error);
@@ -644,7 +652,59 @@ void KelpClient::onFailed(const QString &message)
 {
     if (m_phase == Idle || m_phase == Done || m_phase == Failed)
         return;
+
+    // LAN first, relay second. A link minted by a publisher that has both names
+    // both, and the address is only useful on the publisher's own network: a
+    // phone on mobile data advertises a 10.x or 100.64.x address nothing else can
+    // route to. `KelpSource::create` prefers the address and stops there, so an
+    // off-network recipient would otherwise be told the sender stopped answering
+    // while the link carried a perfectly good relay.
+    //
+    // Only before the sender has said what it holds: at that point nothing has
+    // been asked for, so restarting on the relay cannot duplicate or half-fill a
+    // bundle. `fromRelay()` keeps a relay source from being retried on a relay.
+    if (m_phase == Checking && m_source && !m_source->fromRelay() && !m_relayRetried
+        && !m_fetchLink.relays.isEmpty()) {
+        retryOnRelay();
+        return;
+    }
+
     failed(message);
+}
+
+// Starts the same fetch again over the link's first relay. The link itself is
+// unchanged — only the path to the publisher — so the bundle id, the key and the
+// password-derived secret stay exactly as beginFetch() made them.
+bool KelpClient::retryOnRelay()
+{
+    m_relayRetried = true;
+
+    // Leaving the address source is not a failure to report: drop it silently,
+    // then let the same walk begin again over the relay.
+    dropSource();
+
+    QString error;
+    KelpSource *source = KelpSource::createFromRelay(m_fetchLink, this, &error);
+    if (!source)
+        return failed(error);
+
+    m_source = source;
+    m_sourceLabel = source->describe();
+    m_phase = Checking;
+    m_rounds = 0;
+    m_storedThisRound = 0;
+    emit changed();
+
+    qInfo() << "KelpClient: the link's address did not answer; trying"
+            << m_sourceLabel << "for" << m_bundleIdText.left(16);
+
+    connect(source, &KelpSource::infoReady, this, &KelpClient::onInfo);
+    connect(source, &KelpSource::objectReady, this, &KelpClient::onObject);
+    connect(source, &KelpSource::failed, this, &KelpClient::onFailed);
+
+    m_deadline->start();
+    source->begin();
+    return true;
 }
 
 void KelpClient::walk()

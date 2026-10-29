@@ -26,7 +26,10 @@ class QTimer;
  * source the link offers: the publisher on the LAN (`l=`, wire spec §7.2) or a
  * relay (`r=`, §12.1). Which one that is is `KelpSource`'s business; the walk
  * here is the same either way, and nothing is stored until it hashes to the id
- * it was asked for, so a source can withhold but never substitute.
+ * it was asked for, so a source can withhold but never substitute. When a link
+ * names both, the address is preferred and the relay is a retry: a LAN address
+ * is often meaningless to the recipient (a publisher behind carrier NAT), so a
+ * failure before the sender answers is answered by starting over on the relay.
  *
  * The two decisions — what is still missing, and what counts as an object worth
  * keeping — live in libkelp. This class is only the bookkeeping the UI binds to:
@@ -177,6 +180,7 @@ private:
     void writeFiles();
     void finishViewing();
     bool failed(const QString &message);
+    bool retryOnRelay();
     void dropSource();
 
     Kelp::ObjectStore *m_store;
@@ -192,6 +196,8 @@ private:
     QSharedPointer<Kelp::MemoryStore> m_viewStore;
     bool m_viewing;
     QString m_link;            // the link this fetch belongs to; its identity
+    Kelp::Link::Bundle m_fetchLink; // decoded link, for a retry on another source
+    bool m_relayRetried;       // whether this fetch has already tried a relay
     Kelp::Link::Bundle m_viewLink; // decoded link, for a source a re-minted session needs
     QString m_viewSecret;      // the link's secret, for the preview server
     QString m_viewToken;

@@ -46,6 +46,13 @@ public:
     // relay. Returns nullptr (and sets `error`) when the link names neither.
     static KelpSource *create(const Kelp::Link::Bundle &link, QObject *parent, QString *error);
 
+    // The same for the link's first relay only, ignoring its LAN address. This is
+    // the retry KelpClient makes when the address a link carries cannot answer
+    // (a publisher on mobile data advertises an address no other network can
+    // route to): the LAN is preferred while it works, not the only path tried.
+    static KelpSource *createFromRelay(const Kelp::Link::Bundle &link, QObject *parent,
+                                       QString *error);
+
     // What the sender says the bundle holds. Also the first thing asked for.
     virtual void begin() = 0;
 
@@ -57,6 +64,11 @@ public:
 
     // A short human string for the UI — "10.0.2.15:1234" or "relay host:port".
     virtual QString describe() const = 0;
+
+    // Whether this source reaches the publisher through a relay. KelpClient uses
+    // it to decide whether a failure is worth retrying the other way; a source
+    // that already goes through a relay has nowhere else to go.
+    virtual bool fromRelay() const { return false; }
 
 signals:
     void infoReady(int objects, int files, quint64 bytes);

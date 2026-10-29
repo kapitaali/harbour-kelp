@@ -74,6 +74,7 @@ HEADERS += \
     src/kelppolicy.h \
     src/kelpqr.h \
     src/kelppreviewserver.h \
+    src/kelprelay.h \
     src/kelpserver.h \
     src/kelpsettings.h \
     src/kelpshares.h \
