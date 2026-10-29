@@ -18,7 +18,9 @@ Sailfish OS 5.1.0.11.
 | Website / support | <https://github.com/kapitaali/harbour-kelp> |
 | Privacy policy | `PRIVACY.md` in the repo, <https://github.com/kapitaali/harbour-kelp/blob/main/PRIVACY.md> |
 
-Kelp has no account system, no ads, no in-app purchases and no telemetry.
+Kelp has no account system, no ads, no in-app purchases and no telemetry. It
+shares on the local network first; a relay is used only as a fallback when a
+recipient cannot reach your device directly.
 
 ## 2. Upload artifacts
 
@@ -26,8 +28,8 @@ Upload **both** architecture builds:
 
 | Architecture | File | Size | SHA-256 |
 |---|---|---|---|
-| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 329,580 B | `7345deda36576e53017b4dfe5db9ad1df74311d9a761fa0ec5cd7ef753bcf150` |
-| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 301,519 B | `c920acbec6fdbf0018802a3315f53270bf78d0f1fc3280f5eca3a5934bc895c6` |
+| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 331,171 B | `9d9cdfdc2bb74b607991569a7a45effd6da61729efe6d48cf54cff8845e9dce6` |
+| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 302,839 B | `8bc2707f919aee0a84f7a1108f08941af6f95aadd52198f37bb3f17d57f78d76` |
 
 The i486 emulator RPM (`RPMS/SailfishOS-5.1.0.11-i486/`) is for local testing
 only and is **not** uploaded. No GPG signature is needed; Harbour accepts an
@@ -59,22 +61,26 @@ sees ciphertext. There is no account, no cloud and no tracking.
   passphrase, and there is no recovery if it is forgotten.
 - **Hand it over without retyping** — copy the link, show it as a QR code, or tap
   a `kelp://` link in another app to open Kelp with the link already filled in.
-- **Local network only** — shares are served directly from your phone to devices
-  on the same network. *Wi-Fi only* prevents serving over mobile data, and
-  serving pauses on low battery.
+- **Local network first** — shares are served directly from your phone to devices
+  on the same network. When a recipient cannot reach your device directly (for
+  example, behind carrier NAT), Kelp falls back to a relay that forwards only
+  ciphertext; the key never leaves the link. *Wi-Fi only* prevents serving over
+  mobile data, and serving pauses on low battery.
 - **Stay in control** — pause, resume or stop a share; keep serving while Kelp is
   in the background; see what the object store uses and remove unused objects.
 - **Private by construction** — AES-256-GCM encryption, content-addressed
   objects, no analytics and no third-party SDKs.
 
-Both devices need to be on the same local network. Kelp 0.1.0 has no relay or
-cloud path, and the peer-swarm switch is present but not active yet.
+Both devices need Kelp installed. On the same network, no relay or third party
+is involved. The peer-swarm switch is present but not active yet.
 
 ### What's new — 0.1.0-1
 
 - First Harbour release.
 - Share a file, folder or webpage as an encrypted `kelp://` link and serve it on
   the local network.
+- Relay fallback for recipients outside the sender's network; the relay forwards
+  only ciphertext and never sees the decryption key.
 - Open links with passphrase unlock, save-folder choice, per-file progress and
   verified, decrypted downloads.
 - Content-addressed, AES-256-GCM-sealed object store; keys stay in link fragments,
@@ -121,9 +127,11 @@ Short version:
 
 > Kelp shares files only on your local network. There is no account, no cloud
 > service, no analytics and no third-party SDK. Shared content is stored encrypted
-> on the device, and the key is carried in the `kelp://` link. Kelp requests only
-> `Internet` (to serve shares and fetch links on the LAN) and `UserDirs` (to read
-> the files you choose and write your downloads). Full policy:
+> on the device, and the key is carried in the `kelp://` link. A relay is used
+> only as a fallback when a recipient cannot reach your device directly; the relay
+> forwards only ciphertext and never sees the key. Kelp requests only `Internet`
+> (to serve shares and fetch links on the LAN, and for the relay fallback) and
+> `UserDirs` (to read the files you choose and write your downloads). Full policy:
 > https://github.com/kapitaali/harbour-kelp/blob/main/PRIVACY.md
 
 Full policy: `PRIVACY.md` in the repo root. It covers the encrypted object store,
@@ -148,7 +156,8 @@ ApplicationName=harbour-kelp
 - `UserDirs` — file/folder pickers, measuring and sealing a share, and writing
   downloads into *Downloads* or a chosen folder.
 - `Internet` — serving objects on the LAN and fetching a link. Sailfish has no
-  separate local-network permission.
+  separate local-network permission. Also covers the relay fallback when a
+  recipient cannot reach the sender's LAN address.
 - `Exec=harbour-kelp %u` gives both warm and cold `kelp://` handoff; verified with
   `gio open kelp://test` after a clean install.
 - No RPM `%post`/`%postun` scriptlets. The platform repopulates

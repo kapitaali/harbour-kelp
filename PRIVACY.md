@@ -36,17 +36,26 @@ actions first, if you want the data gone.
 
 ## Network use
 
-- Kelp has no relay or cloud path. It listens only on the device's local network
-  address, and only while a share is being served.
-- Opening a `kelp://` link connects to the address carried inside that link — the
-  sender's device on the same network — and fetches the bundle's objects from it.
-  No other host is contacted.
+- Kelp serves shares directly between devices on the same local network. When
+  both devices are on the same network, **no relay or third party is involved**:
+  the recipient connects straight to your device and all traffic stays on the
+  LAN.
+- When a recipient cannot reach your device directly (for example, you are on
+  mobile data or behind carrier NAT), Kelp can fall back to a relay at
+  `82.70.43.26:9443`. The relay only forwards ciphertext: the decryption key
+  travels in the `kelp://` link fragment and is never sent to the relay. The
+  relay cannot read, modify or store the content of your shares.
+- The relay is used only as a fallback. If the recipient is on the same network
+  as you, the relay is never contacted and no data leaves the LAN.
+- Opening a `kelp://` link connects to the address carried inside that link —
+  your device on the same network, or the relay as a fallback — and fetches
+  the bundle's objects from it. No other host is contacted.
 - The link contains the key needed to decrypt the bundle, so treat a link as a
-  secret. Anyone who has the link can read the share. A passphrase-protected link
-  carries the key wrapped under the passphrase; the passphrase itself is never
-  stored or sent anywhere.
-- The optional *Wi-Fi only* setting (on by default) stops serving over mobile data,
-  and serving also stops on low battery while unplugged.
+  secret. Anyone who has the link can read the share. A passphrase-protected
+  link carries the key wrapped under the passphrase; the passphrase itself is
+  never stored or sent anywhere.
+- The optional *Wi-Fi only* setting (on by default) stops serving over mobile
+  data, and serving also stops on low battery while unplugged.
 
 ## Permissions
 
@@ -75,4 +84,4 @@ If a future version changes how Kelp handles data or network access, this policy
 will be updated in the source repository before that version is published:
 <https://github.com/kapitaali/harbour-kelp>.
 
-_Last updated: 2026-10-27._
+_Last updated: 2026-10-28._

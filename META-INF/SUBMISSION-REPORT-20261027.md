@@ -4,7 +4,7 @@
 validated and copied out. The only remaining steps are the authenticated GitHub
 push (after PAT rotation) and the Harbour dashboard upload itself.
 
-**Prepared:** 2026-10-27. Target: Sailfish OS 5.1.0.11, SDK 3.13.5.
+**Prepared:** 2026-10-28. Target: Sailfish OS 5.1.0.11, SDK 3.13.5.
 
 ## 1. Identity
 
@@ -25,8 +25,8 @@ Paste-ready description and changelog: `META-INF/STORE-LISTING.md` §3.
 
 | Arch | Path | Size | SHA-256 |
 |---|---|---|---|
-| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 329,580 B | `7345deda36576e53017b4dfe5db9ad1df74311d9a761fa0ec5cd7ef753bcf150` |
-| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 301,519 B | `c920acbec6fdbf0018802a3315f53270bf78d0f1fc3280f5eca3a5934bc895c6` |
+| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 331,171 B | `9d9cdfdc2bb74b607991569a7a45effd6da61729efe6d48cf54cff8845e9dce6` |
+| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 302,839 B | `8bc2707f919aee0a84f7a1108f08941af6f95aadd52198f37bb3f17d57f78d76` |
 
 Do **not** upload the i486 emulator build from `RPMS/SailfishOS-5.1.0.11-i486/`.
 
@@ -68,8 +68,12 @@ key, QR payload, share dialog or real phone address.
 
 - **UserDirs** — file/folder pickers, reading the chosen share, writing downloads.
 - **Internet** — serving objects on the LAN and fetching links; Sailfish has no
-  separate local-network permission.
-- No account, cloud, relay, analytics, ads or third-party SDK.
+  separate local-network permission. Also covers the relay fallback when a
+  recipient cannot reach the sender's LAN address.
+- No account, analytics, ads or third-party SDK. A relay at `82.70.43.26:9443`
+  is used only as a fallback when a recipient cannot reach the sender's LAN
+  address; the relay forwards only ciphertext and never sees the decryption key.
+  On the same network, no relay is contacted.
 - Full policy: `PRIVACY.md`.
 
 ## 6. Packaging fixes included
@@ -80,6 +84,7 @@ key, QR payload, share dialog or real phone address.
 - Repo-root `LICENSE` (not installed; `/usr/share/licenses` is rejected).
 - Populated RPM changelog for the first release.
 - `%define kelp_dev_extras 0`.
+- Relay support: LAN-first with relay fallback for off-network recipients.
 
 ## 7. Dashboard checklist
 
