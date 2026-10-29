@@ -443,7 +443,7 @@ Page {
                     font.pixelSize: Theme.fontSizeExtraSmall
                     text: openPage.facts && openPage.facts.lan.length > 0
                           ? qsTr("Fetching from %1").arg(openPage.facts.lan)
-                          : qsTr("No address to fetch from yet — relays are not implemented")
+                          : qsTr("No LAN address in this link — will try the relay if one is listed")
                 }
 
                 Label {

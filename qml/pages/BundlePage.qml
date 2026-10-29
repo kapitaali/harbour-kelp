@@ -33,9 +33,8 @@ Page {
 
     /*
      * Where the objects can be fetched from, which is not part of the hash: the
-     * address is a hint carried in the link's query. Today that is only the
-     * sender's LAN address, when it is listening; the app does not configure a
-     * relay.
+     * address is a hint carried in the link's query. Today that is the sender's
+     * LAN address (when it is listening) and, if configured, a relay.
      */
     function whereText() {
         if (!linkParts || !linkParts.ok)
@@ -189,8 +188,8 @@ Page {
 
             // A kelp:// link is three parts: the content address, where to fetch
             // the objects from, and the key. Spelling them out makes it obvious
-            // which one is missing — the middle one is the LAN address, because
-            // the app does not configure a relay.
+            // which one is missing — the middle one is the LAN address (and the
+            // relay, if the link carries one).
             Label {
                 visible: !bundlePage.paused
                 x: Theme.horizontalPageMargin
@@ -380,7 +379,7 @@ Page {
                          : (bundlePage.entry && bundlePage.linkParts && bundlePage.linkParts.ok
                             && bundlePage.linkParts.lan
                             && bundlePage.linkParts.lan.length > 0
-                            ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network cannot: this app does not configure a relay.")
+                            ? qsTr("Anyone on this Wi-Fi who has the link can fetch these objects while the app is sharing them. A recipient on another network can use the relay fallback if the link carries one.")
                             : qsTr("This bundle is not being served, so nobody can fetch it. It is still sealed in the object store on this device.")))
                       + bundlePage.swarmNote
             }
