@@ -16,8 +16,8 @@ push (after PAT rotation) and the Harbour dashboard upload itself.
 | Category | **Utilities** |
 | License | `GPL-3.0-only` |
 | Source | <https://github.com/kapitaali/harbour-kelp> |
-| Summary | Encrypted file sharing over your local network. |
-| Privacy policy | <https://github.com/kapitaali/harbour-kelp/blob/main/PRIVACY.md> |
+| Summary | Encrypted file sharing, on your network or across the internet. |
+| Privacy policy | <https://github.com/kapitaali/harbour-kelp/blob/master/PRIVACY.md> |
 
 Paste-ready description and changelog: `META-INF/STORE-LISTING.md` §3.
 

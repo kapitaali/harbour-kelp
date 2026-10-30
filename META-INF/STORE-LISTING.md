@@ -14,9 +14,9 @@ Sailfish OS 5.1.0.11.
 | Category | **Utilities** (matches the developer's previous Harbour app) |
 | License | `GPL-3.0-only` |
 | Source | <https://github.com/kapitaali/harbour-kelp> |
-| Summary | Encrypted file sharing over your local network. |
+| Summary | Encrypted file sharing, on your network or across the internet. |
 | Website / support | <https://github.com/kapitaali/harbour-kelp> |
-| Privacy policy | `PRIVACY.md` in the repo, <https://github.com/kapitaali/harbour-kelp/blob/main/PRIVACY.md> |
+| Privacy policy | `PRIVACY.md` in the repo, <https://github.com/kapitaali/harbour-kelp/blob/master/PRIVACY.md> |
 
 Kelp has no account system, no ads, no in-app purchases and no telemetry. It
 shares on the local network first; a relay is used only as a fallback when a
@@ -42,14 +42,16 @@ write `kelp://` links or keys to the log and do not offer the link-logging switc
 
 ### Summary
 
-Encrypted file sharing over your local network.
+Encrypted file sharing, on your network or across the internet.
 
 ### Full description
 
-Kelp shares a file, a folder, or a webpage from your phone as a `kelp://` link
-that works on the same Wi-Fi. Everything is encrypted on the device before it is
-served: the key travels in the link fragment, so a relay or another peer only ever
-sees ciphertext. There is no account, no cloud and no tracking.
+Kelp shares a file, a folder, or a webpage from your phone as a `kelp://` link.
+On the same Wi-Fi the transfer goes straight between the two devices; a recipient
+on another network can fetch it through a relay fallback. Everything is encrypted
+on the device before it is served: the key travels in the link fragment, so a
+relay or another peer only ever sees ciphertext. There is no account, no cloud
+and no tracking.
 
 - **Share what you mean to share** — one file, one folder, or one webpage (the
   folder holding a site), each sealed into its own bundle with its own link.
@@ -132,7 +134,7 @@ Short version:
 > forwards only ciphertext and never sees the key. Kelp requests only `Internet`
 > (to serve shares and fetch links on the LAN, and for the relay fallback) and
 > `UserDirs` (to read the files you choose and write your downloads). Full policy:
-> https://github.com/kapitaali/harbour-kelp/blob/main/PRIVACY.md
+> https://github.com/kapitaali/harbour-kelp/blob/master/PRIVACY.md
 
 Full policy: `PRIVACY.md` in the repo root. It covers the encrypted object store,
 settings and share list, the diagnostic log, downloads, LAN-only networking,
