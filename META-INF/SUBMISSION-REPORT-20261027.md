@@ -99,12 +99,17 @@ key, QR payload, share dialog or real phone address.
 
 ## 8. Remaining external actions
 
-- **GitHub push:** four commits are waiting on `origin/master` (`a4f4c95`,
-  `f11af25` plus the two handoff commits). Rotate the exposed PAT first; never
-  reuse it. Then `git push origin master`.
+- **GitHub push:** the local branch carries the relay work, the client retry
+  test, the documentation scrub and the store-listing fix. Two earlier commits
+  of the same work are already on `origin/master`; they name the relay address
+  in `PRIVACY.md`, in this report and in one commit message. The local history
+  replaces them, so publish it with
+  `git push --force-with-lease origin master` — with a fresh PAT, never the
+  exposed one. The replaced commits stay reachable by hash for a while but are
+  no longer on the branch.
 - **Harbour upload:** requires the owner's account; not performed here.
 - **Optional:** replace `03-receive.png` with a clean phone capture after
   restarting Kelp to clear the Done panel. Not a blocker.
 
-No `kelp://` link, fragment, key, QR content or phone LAN address is recorded in
-this report.
+No `kelp://` link, fragment, key, QR content, relay address or phone LAN address
+is recorded in this report.
