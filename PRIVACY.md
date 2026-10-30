@@ -41,10 +41,10 @@ actions first, if you want the data gone.
   the recipient connects straight to your device and all traffic stays on the
   LAN.
 - When a recipient cannot reach your device directly (for example, you are on
-  mobile data or behind carrier NAT), Kelp can fall back to a relay at
-  `82.70.43.26:9443`. The relay only forwards ciphertext: the decryption key
-  travels in the `kelp://` link fragment and is never sent to the relay. The
-  relay cannot read, modify or store the content of your shares.
+  mobile data or behind carrier NAT), Kelp can fall back to a relay operated for
+  the app. The relay only forwards ciphertext: the decryption key travels in the
+  `kelp://` link fragment and is never sent to the relay. The relay cannot read,
+  modify or store the content of your shares.
 - The relay is used only as a fallback. If the recipient is on the same network
   as you, the relay is never contacted and no data leaves the LAN.
 - Opening a `kelp://` link connects to the address carried inside that link —

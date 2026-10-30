@@ -70,7 +70,7 @@ key, QR payload, share dialog or real phone address.
 - **Internet** — serving objects on the LAN and fetching links; Sailfish has no
   separate local-network permission. Also covers the relay fallback when a
   recipient cannot reach the sender's LAN address.
-- No account, analytics, ads or third-party SDK. A relay at `82.70.43.26:9443`
+- No account, analytics, ads or third-party SDK. A relay operated for the app
   is used only as a fallback when a recipient cannot reach the sender's LAN
   address; the relay forwards only ciphertext and never sees the decryption key.
   On the same network, no relay is contacted.
