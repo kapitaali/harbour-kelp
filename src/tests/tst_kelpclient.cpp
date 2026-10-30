@@ -1058,6 +1058,36 @@ void testPassphraseLink()
     CHECK(client.error().contains(QStringLiteral("passphrase")));
 }
 
+void testRelayFallbackAfterDeadAddress()
+{
+    section("a dead LAN address retries on the link's relay");
+
+    QTemporaryDir downloads;
+    CHECK(downloads.isValid());
+
+    MemoryStore appStore;                        // empty: nothing served locally
+    KelpClient client(&appStore);
+    client.setDirectory(downloads.path());
+
+    Link::Bundle link;
+    link.bundleId = Crypto::sha256(QByteArrayLiteral("fallback-bundle"));
+    link.secret = Crypto::sha256(QByteArrayLiteral("fallback-secret"));
+    link.lan = QStringLiteral("127.0.0.1:1");     // nothing listens here
+    link.relays << QStringLiteral("127.0.0.1:1"); // nor there
+    link.name = QStringLiteral("site");
+
+    CHECK(client.fetch(Link::encode(link)));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("failed"));
+
+    // The source the client settled on is the relay, not the address: the retry
+    // happened. Both are unreachable in this test, so what it reports is the
+    // relay's failure — a live relay is the relay suite's job.
+    CHECK(client.source().startsWith(QStringLiteral("relay ")));
+    CHECK(client.error().contains(QStringLiteral("relay")));
+    CHECK_EQ(appStore.count(), 0);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1077,6 +1107,7 @@ int main(int argc, char **argv)
     testViewRemintsAfterSweep();
     testHandlingIsTiedToItsLink();
     testPassphraseLink();
+    testRelayFallbackAfterDeadAddress();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
