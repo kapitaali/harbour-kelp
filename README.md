@@ -23,13 +23,7 @@ objects, checks each one against its address, decrypts the bundle and writes the
 files into *Downloads*. A webpage share also *says* it is a page, inside the link
 and under the key, so the link text still reveals nothing — that hint is what will
 let a recipient open the page in a browser and keep nothing (design §5.5); the
-receiving half of that is not built yet. The app serves and fetches on the local
-network only: it has no relay address field and no relay fetch path. The
-`kelp-relay` program and its browser gateway remain separate programs in the
-tree, with their own tests, for a client that has one — see *Across networks*
-below. Still missing: peers helping each other serve (the swarm) and the receiving
-half of webpage shares. Also sketched there, and deliberately *not* planned before
-a release: anonymous ephemeral chat (Appendix B) — parked, not a milestone.
+receiving half of that is not built yet. The app serves on the local network and fetches LAN-first; when a recipient cannot reach the sender's LAN address (carrier NAT, mobile data) it falls back to a relay operated for the app. The relay is a build-time constant (`kelpDefaultRelays()`, overridable via `KELP_RELAY`), not a Settings field — see *Across networks* below. The `kelp-relay` program and its browser gateway remain separate programs in the tree, with their own tests. Still missing: peers helping each other serve (the swarm) and the receiving half of webpage shares. Also sketched there, and deliberately *not* planned before a release: anonymous ephemeral chat (Appendix B) — parked, not a milestone.
 See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design,
 [`META-INF/kelp-swarm-wire-spec.md`](META-INF/kelp-swarm-wire-spec.md) for the
 swarm wire format, and [`META-INF/BUILD.md`](META-INF/BUILD.md) for how to build
@@ -143,9 +137,7 @@ without breaking links already out there.
 
 What varies per bundle is **how it is served**:
 
-- **Relay** — not available from this app: there is no relay address field, and
-  every share is served on the local network. The relay and gateway are separate
-  programs (see *Across networks* below), not a mode this app can enter.
+- **Relay** — available as a fallback, not a setting. Every share published from this build is reachable over the internet through a relay operated for the app (`kelpDefaultRelays()`, a build-time constant overridable via `KELP_RELAY`). The link carries `r=` alongside the LAN address; recipients prefer the LAN and retry on the relay when it cannot answer. Publishing through a relay that cannot be reached is not fatal: the link is minted without `r=` and works on the LAN. The relay and gateway are separate programs (see *Across networks* below).
 - **Swarm** (opt-in per share) — not implemented yet. Other downloaders trade pieces directly with each
   other, offloading your connection for popular shares at the cost of exposing your
   IP to those peers. Available only when *Allow peer swarm* is on in Settings.
@@ -189,9 +181,7 @@ Because a link is handed to whoever it is sent to, the address in it reaches all
 them — normally a private `192.168.x.x`, but a cellular bearer is a real IP. Sealing
 keeps it out of the link *text*, but the recipient must still learn it to connect, so
 for a share that must not disclose where it is served from at all there is the switch:
-*Settings → Include my local address in the link* turns the whole path off — nothing
-is served locally, the link carries no address, and this app has no relay path to
-carry it.
+*Settings → Include my local address in the link* turns the whole path off — nothing is served locally, the link carries no address. The relay path is unaffected by this switch: a share with no LAN address still carries `r=` when a relay is configured, so off-network recipients can still fetch.
 
 Sharing is remembered. Each row — name, size, object counts, the bundle id and the
 secret — is written to a small owner-only file (`shares.json`, mode `0600`) beside
@@ -302,11 +292,7 @@ memory and so is capped at 32 MiB on purpose.
 
 ## Across networks: the relay
 
-> **Not in this app.** The app has no relay address field and no relay fetch path;
-> every share and every fetch is on the local network. The `kelp-relay` program,
-> its browser gateway and their tests remain in the tree for a client that has one,
-> but nothing in the app configures or uses them. The rest of this section
-> describes that separate piece.
+> **In this app, as a fallback.** Every share published from this build is also reachable over the internet through a relay operated for the app: the phone dials out to it and keeps the tunnel open, and the link carries `r=` alongside the (optional) LAN address. Recipients prefer the LAN and retry on the relay when it cannot answer. The relay is a build-time constant (`kelpDefaultRelays()`, overridable via `KELP_RELAY`), not a Settings field — see `src/kelprelay.h`. Publishing through a relay that cannot be reached is not fatal: the link is minted without `r=` and works on the LAN. The `kelp-relay` program, its browser gateway and their tests remain in the tree as the same protocol implemented separately, for a client or a self-hosted relay. The rest of this section describes that separate piece.
 
 Two devices on one Wi-Fi need nothing but each other. Anything wider needs a third
 party, because a phone behind carrier NAT cannot accept a connection — so Kelp
