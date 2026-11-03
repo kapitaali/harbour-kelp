@@ -44,4 +44,5 @@ HEADERS += \
     ../../src/kelpsettings.h \
     ../../src/kelpstore.h \
     ../../src/kelptls.h \
-    ../../src/kelptunnel.h
+    ../../src/kelptunnel.h \
+    ../../src/kelpwork.h

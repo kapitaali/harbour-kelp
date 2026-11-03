@@ -16,6 +16,7 @@
 class KelpPreviewServer;
 class KelpSettings;
 class KelpSource;
+class QThread;
 class QTimer;
 
 /*
@@ -51,7 +52,7 @@ class KelpClient : public QObject
 {
     Q_OBJECT
 
-    // "idle", "checking", "fetching", "saving", "done" or "failed".
+    // "idle", "unlocking", "checking", "fetching", "saving", "done" or "failed".
     Q_PROPERTY(QString phase READ phase NOTIFY changed)
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
     Q_PROPERTY(QString name READ name NOTIFY changed)
@@ -90,6 +91,13 @@ public:
     // link's key.
     Q_INVOKABLE bool fetch(const QString &link, const QString &passphrase = QString());
 
+    // The same fetch with the passphrase derivation off the GUI thread. It
+    // returns true once the work has started; a wrong passphrase then arrives as
+    // the ordinary failed phase, with `error` set. Use this from QML, where the
+    // derivation would otherwise freeze the page for a noticeable moment.
+    Q_INVOKABLE bool fetchAsync(const QString &link,
+                                const QString &passphrase = QString());
+
     // The same fetch, for a link that declares itself a webpage (design §5.5):
     // only the manifests are fetched, into a memory store belonging to this view,
     // and *nothing* is written. The page's content is fetched by the session that
@@ -97,6 +105,10 @@ public:
     // disturbs the first — each one owns its store.
     Q_INVOKABLE bool fetchForViewing(const QString &link,
                                      const QString &passphrase = QString());
+
+    // The same view, with the derivation off the GUI thread (see fetchAsync).
+    Q_INVOKABLE bool fetchForViewingAsync(const QString &link,
+                                          const QString &passphrase = QString());
 
     // Serves the page whose manifests are already in the view store to this
     // device's browser through the preview listener, as §5.1 does, and returns
@@ -171,9 +183,11 @@ private slots:
     void timedOut();
 
 private:
-    enum Phase { Idle, Checking, Fetching, Saving, Done, Failed };
+    enum Phase { Idle, Unlocking, Checking, Fetching, Saving, Done, Failed };
 
-    bool beginFetch(const QString &linkText, bool viewing, const QString &passphrase);
+    bool beginFetch(const QString &linkText, bool viewing, const QString &passphrase,
+                    bool threaded = false);
+    bool startFetch(const Kelp::Link::Bundle &link);
     Kelp::ObjectStore *activeStore() const;
     void walk();
     void pump();
@@ -214,6 +228,8 @@ private:
     QString m_directory;
     QString m_error;
     Phase m_phase;
+    int m_generation;          // invalidates a derivation whose fetch was left
+    QThread *m_unlockThread;   // the derivation in flight, if any
     int m_total;
     int m_fetched;
     int m_storedThisRound;

@@ -1226,6 +1226,68 @@ static void testWebpageShare()
         CHECK_EQ(refused.value(QStringLiteral("bundleId")).toString(), QString());
     }
 
+    section("sealing on a worker reports the same answer");
+    {
+        QVariantMap outcome;
+        bool emitted = false;
+        QEventLoop loop;
+        QObject::connect(&bundles, &KelpBundles::sealed, &loop,
+                         [&](const QVariantMap &map) {
+                             outcome = map;
+                             emitted = true;
+                             loop.quit();
+                         });
+        QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+
+        CHECK(bundles.sealAsync(QStringList() << (base + "/web/site"),
+                                QStringLiteral("worker-site"), QStringLiteral("folder"),
+                                false, QString(), false));
+        CHECK(bundles.sealing());
+        loop.exec();
+
+        CHECK(emitted);
+        CHECK_EQ(bundles.sealing(), false);
+        CHECK(outcome.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(outcome.value(QStringLiteral("name")).toString(),
+                 QStringLiteral("worker-site"));
+        CHECK_EQ(outcome.value(QStringLiteral("kind")).toString(),
+                 QStringLiteral("folder"));
+        CHECK(!outcome.value(QStringLiteral("link")).toString().isEmpty());
+        CHECK(!outcome.value(QStringLiteral("bundleId")).toString().isEmpty());
+        bundles.unshare(outcome.value(QStringLiteral("bundleId")).toString());
+    }
+
+    section("unlocking a passphrase link on a worker");
+    {
+        const QVariantMap sealed = bundles.seal(QStringList() << (base + "/web/site"),
+                                                QStringLiteral("worker-protected"), false,
+                                                QStringLiteral("another long passphrase"));
+        CHECK(sealed.value(QStringLiteral("ok")).toBool());
+
+        QVariantMap outcome;
+        bool emitted = false;
+        QEventLoop loop;
+        QObject::connect(&bundles, &KelpBundles::unlocked, &loop,
+                         [&](const QVariantMap &map) {
+                             outcome = map;
+                             emitted = true;
+                             loop.quit();
+                         });
+        QTimer::singleShot(120000, &loop, &QEventLoop::quit);
+
+        CHECK(bundles.unlockLinkAsync(sealed.value(QStringLiteral("link")).toString(),
+                                      QStringLiteral("another long passphrase")));
+        CHECK(bundles.unlocking());
+        loop.exec();
+
+        CHECK(emitted);
+        CHECK_EQ(bundles.unlocking(), false);
+        CHECK(outcome.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(outcome.value(QStringLiteral("name")).toString(),
+                 QStringLiteral("worker-protected"));
+        bundles.unshare(sealed.value(QStringLiteral("bundleId")).toString());
+    }
+
     QDir(base + "/web").removeRecursively();
     QFile::remove(KelpSettings::filePath());
 }

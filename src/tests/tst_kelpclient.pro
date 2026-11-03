@@ -39,4 +39,5 @@ HEADERS += \
     ../../src/kelplog.h \
     ../../src/kelppreviewserver.h \
     ../../src/kelpsettings.h \
-    ../../src/kelptls.h
+    ../../src/kelptls.h \
+    ../../src/kelpwork.h

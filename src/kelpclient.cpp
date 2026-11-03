@@ -17,6 +17,7 @@
 #include "kelp_web.h"
 #include "kelpbuild.h"
 #include "kelppreviewserver.h"
+#include "kelpwork.h"
 
 namespace {
 
@@ -365,6 +366,14 @@ private:
     quint64 m_bytes;
 };
 
+// What a worker's passphrase derivation hands back: the link with its secret
+// unwrapped, or the derivation's own reason for refusing.
+struct UnlockOutcome {
+    bool ok = false;
+    QString error;
+    Kelp::Link::Bundle link;
+};
+
 } // namespace
 
 KelpClient::KelpClient(Kelp::ObjectStore *store, QObject *parent)
@@ -378,6 +387,8 @@ KelpClient::KelpClient(Kelp::ObjectStore *store, QObject *parent)
       m_viewBytes(0),
       m_viewCeiling(kViewCeilingBytes),
       m_phase(Idle),
+      m_generation(0),
+      m_unlockThread(nullptr),
       m_total(0),
       m_fetched(0),
       m_storedThisRound(0),
@@ -413,6 +424,8 @@ Kelp::ObjectStore *KelpClient::activeStore() const
 QString KelpClient::phase() const
 {
     switch (m_phase) {
+    case Unlocking:
+        return QStringLiteral("unlocking");
     case Checking:
         return QStringLiteral("checking");
     case Fetching:
@@ -431,7 +444,8 @@ QString KelpClient::phase() const
 
 bool KelpClient::busy() const
 {
-    return m_phase == Checking || m_phase == Fetching || m_phase == Saving;
+    return m_phase == Unlocking || m_phase == Checking || m_phase == Fetching
+        || m_phase == Saving;
 }
 
 void KelpClient::setDirectory(const QString &path)
@@ -461,6 +475,7 @@ void KelpClient::dropSource()
 void KelpClient::reset()
 {
     dropSource();
+    ++m_generation;
     m_error.clear();
     m_name.clear();
     m_sourceLabel.clear();
@@ -501,6 +516,7 @@ void KelpClient::cancel()
     }
     if (wasBusy) {
         m_phase = Idle;
+        ++m_generation;
         qInfo() << "KelpClient: fetch cancelled after" << m_fetched << "objects";
         emit changed();
     }
@@ -525,16 +541,26 @@ bool KelpClient::failed(const QString &message)
 
 bool KelpClient::fetch(const QString &linkText, const QString &passphrase)
 {
-    return beginFetch(linkText, false, passphrase);
+    return beginFetch(linkText, false, passphrase, false);
+}
+
+bool KelpClient::fetchAsync(const QString &linkText, const QString &passphrase)
+{
+    return beginFetch(linkText, false, passphrase, true);
 }
 
 bool KelpClient::fetchForViewing(const QString &linkText, const QString &passphrase)
 {
-    return beginFetch(linkText, true, passphrase);
+    return beginFetch(linkText, true, passphrase, false);
+}
+
+bool KelpClient::fetchForViewingAsync(const QString &linkText, const QString &passphrase)
+{
+    return beginFetch(linkText, true, passphrase, true);
 }
 
 bool KelpClient::beginFetch(const QString &linkText, bool viewing,
-                            const QString &passphrase)
+                            const QString &passphrase, bool threaded)
 {
     if (busy()) {
         m_error = QStringLiteral("another fetch is still running");
@@ -542,6 +568,7 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing,
         return false;
     }
     reset();
+    const int generation = m_generation;
 
     // The link this fetch is about, trimmed exactly as it is decoded below: the
     // identity a page asks by when it needs to know whether what it sees in this
@@ -573,9 +600,55 @@ bool KelpClient::beginFetch(const QString &linkText, bool viewing,
     if (Kelp::Link::needsPassphrase(link)) {
         if (passphrase.isEmpty())
             return failed(QStringLiteral("this link needs a passphrase"));
-        if (!Kelp::Link::unlock(&link, passphrase, &error))
-            return failed(error);
+
+        if (!threaded) {
+            if (!Kelp::Link::unlock(&link, passphrase, &error))
+                return failed(error);
+        } else {
+            // 600 000 PBKDF2 rounds: the page stays responsive while a worker
+            // derives the key, and the rest of the fetch starts when it answers.
+            m_phase = Unlocking;
+            emit changed();
+
+            const Kelp::Link::Bundle sealed = link;
+            KelpWork<UnlockOutcome> *work = new KelpWork<UnlockOutcome>(
+                [sealed, passphrase]() {
+                    UnlockOutcome outcome;
+                    outcome.link = sealed;
+                    outcome.ok = Kelp::Link::unlock(&outcome.link, passphrase,
+                                                   &outcome.error);
+                    return outcome;
+                },
+                this);
+            m_unlockThread = work;
+
+            connect(work, &QThread::finished, this, [this, work, generation]() {
+                const UnlockOutcome outcome = work->result();
+                work->deleteLater();
+                if (m_unlockThread == work)
+                    m_unlockThread = nullptr;
+                // The page may have cancelled or started another fetch while the
+                // worker ran; its answer is then no longer anyone's.
+                if (generation != m_generation || m_phase != Unlocking)
+                    return;
+                if (!outcome.ok) {
+                    failed(outcome.error);
+                    return;
+                }
+                startFetch(outcome.link);
+            });
+
+            work->start();
+            return true;
+        }
     }
+
+    return startFetch(link);
+}
+
+bool KelpClient::startFetch(const Kelp::Link::Bundle &link)
+{
+    QString error;
 
     // Kept for the whole fetch: a link that names both an address and a relay is
     // retried on the relay if the address cannot answer (see onFailed()). After

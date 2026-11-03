@@ -21,16 +21,13 @@ import "../components"
 Page {
     id: addPage
 
-    // Injected by BundlesPage.
-    property var store
-
     // Whether peers may help serve the shares made from this page. Off by default
     // and gated by the global "Allow peer swarm" permission in Settings.
     property bool swarm: false
 
-    // True while sealing, so a button cannot be pressed twice. Sealing blocks the
-    // UI thread, so this never actually paints.
-    property bool sealing: false
+    // True while a worker seals and publishes, so a button cannot be pressed
+    // twice. Sealing runs off the GUI thread, so this actually paints.
+    property bool sealing: kelpBundles.sealing
 
     // A passphrase link (design §12.3) is built before the buttons are pressed,
     // because pressing one seals and shares in the same gesture. Empty means an
@@ -66,9 +63,10 @@ Page {
     }
 
     /*
-     * Seals one thing and adds it to the bundle list. Returns false — with a note
-     * already shown — when it cannot be shared, in which case nothing was sealed
-     * and this page stays put.
+     * Starts sealing one thing. The work runs on a worker and the row is added by
+     * the root page when it finishes, so a large folder can be left while it runs.
+     * Returns false only when a seal is already in flight; failures arrive in
+     * sealFinished() with a note shown there.
      */
     function shareNow(path, name, kind, page) {
         if (sealing) {
@@ -84,50 +82,47 @@ Page {
                      + "), page=" + page + ", swarm=" + peerSwarm
                      + (passphrase.length > 0 ? ", passphrase-protected" : ""))
 
-        sealing = true
-        var sealed = kelpBundles.seal([ path ], name, page, passphrase)
-        sealing = false
-
-        if (!sealed.ok) {
-            // The passphrase is left in the field: the reason it failed may be
-            // that it was too short, and retyping it is not the fix.
-            kelpLog.error("AddPage: sealing \"" + name + "\" failed: " + sealed.error)
-            toast.show(qsTr("Could not share %1: %2").arg(name).arg(sealed.error))
+        if (!kelpBundles.sealAsync([ path ], name, kind, page, passphrase, peerSwarm)) {
+            kelpLog.warn("AddPage: a seal is already running")
             return false
         }
+        return true
+    }
+
+    // The worker's answer, for this page's own UI. The row itself is added by the
+    // root's acceptSealed(), which is still there if this page was left.
+    function sealFinished(info) {
+        if (!info || info.ok !== true) {
+            var why = info && info.error ? info.error : qsTr("unknown error")
+            var what = info && info.name ? info.name : qsTr("that")
+            // The passphrase is left in the field: the reason it failed may be
+            // that it was too short, and retyping it is not the fix.
+            kelpLog.error("AddPage: sealing \"" + what + "\" failed: " + why)
+            toast.show(qsTr("Could not share %1: %2").arg(what).arg(why))
+            return
+        }
+
         // The passphrase has done its one job — the wrapped blob is what the row
         // keeps — so it is dropped rather than left in memory.
         passphraseField.text = ""
 
-        kelpLog.info("AddPage: sealed \"" + name + "\" — " + sealed.objectCount
-                     + " object(s), " + sealed.fileCount + " file(s), "
-                     + sealed.totalBytes + " bytes, id=" + sealed.bundleId
-                     + ", page=" + (sealed.page === true))
+        kelpLog.info("AddPage: sealed \"" + info.name + "\" — " + info.objectCount
+                     + " object(s), " + info.fileCount + " file(s), "
+                     + info.totalBytes + " bytes, id=" + info.bundleId
+                     + ", page=" + (info.page === true))
         // Symlinks are skipped rather than followed, so a link-heavy folder can
         // come out smaller than it looked.
-        if (sealed.skippedLinks > 0)
-            kelpLog.warn("AddPage: skipped " + sealed.skippedLinks
+        if (info.skippedLinks > 0)
+            kelpLog.warn("AddPage: skipped " + info.skippedLinks
                          + " symbolic link(s) while sealing")
 
-        store.addBundle({
-            "name": name,
-            "kind": kind,
-            "files": sealed.fileCount,
-            "size": kelpFiles.formatSize(sealed.totalBytes),
-            "path": path,
-            "bytes": sealed.totalBytes,
-            "swarm": peerSwarm,
-            "page": sealed.page === true,
-            "lan": sealed.lan,
-            "link": sealed.link,
-            "bundleId": sealed.bundleId,
-            "secret": sealed.secret,
-            "passBlob": sealed.passBlob,
-            "objects": sealed.objectCount
-        })
-
         leaving = true
-        return true
+    }
+
+    Connections {
+        target: kelpBundles
+
+        onSealed: addPage.sealFinished(result)
     }
 
     // Share webpage: only a folder that really holds a page. The check is a look
@@ -259,6 +254,21 @@ Page {
                         })
                     }
                 }
+            }
+
+            BusyIndicator {
+                anchors.horizontalCenter: parent.horizontalCenter
+                running: addPage.sealing
+                visible: running
+                size: BusyIndicatorSize.Medium
+            }
+
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: addPage.sealing
+                text: qsTr("Sealing and sharing…")
+                color: Theme.highlightColor
+                font.pixelSize: Theme.fontSizeSmall
             }
 
             Label {

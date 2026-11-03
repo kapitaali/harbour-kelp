@@ -28,8 +28,7 @@ Page {
                 text: qsTr("Share…")
                 onClicked: {
                     kelpLog.info("BundlesPage: opening Share page")
-                    pageStack.push(Qt.resolvedUrl("AddPage.qml"),
-                                   { store: bundlesPage.store })
+                    pageStack.push(Qt.resolvedUrl("AddPage.qml"))
                 }
             }
             MenuItem {

@@ -16,6 +16,7 @@
 #include "kelpsettings.h"
 #include "kelpstore.h"
 #include "kelptunnel.h"
+#include "kelpwork.h"
 
 namespace {
 
@@ -530,7 +531,7 @@ QVariantMap KelpBundles::browserUrl(const QString &bundleId, const QString &secr
     return out;
 }
 
-QVariantMap KelpBundles::unlockLink(const QString &link, const QString &passphrase)
+static QVariantMap unlockLinkNow(const QString &link, const QString &passphrase)
 {
     QVariantMap info;
     info.insert(QStringLiteral("ok"), false);
@@ -573,6 +574,39 @@ QVariantMap KelpBundles::unlockLink(const QString &link, const QString &passphra
     info.insert(QStringLiteral("name"), parsed.name);
     info.insert(QStringLiteral("page"), parsed.page);
     return info;
+}
+
+QVariantMap KelpBundles::unlockLink(const QString &link, const QString &passphrase)
+{
+    return unlockLinkNow(link, passphrase);
+}
+
+bool KelpBundles::unlockLinkAsync(const QString &link, const QString &passphrase)
+{
+    if (m_unlocking) {
+        qWarning() << "KelpBundles: an unlock is already running";
+        return false;
+    }
+
+    m_unlocking = true;
+    emit unlockingChanged();
+
+    KelpWork<QVariantMap> *work = new KelpWork<QVariantMap>(
+        [link, passphrase]() { return unlockLinkNow(link, passphrase); }, this);
+    m_unlockThread = work;
+
+    connect(work, &QThread::finished, this, [this, work]() {
+        const QVariantMap info = work->result();
+        work->deleteLater();
+        if (m_unlockThread == work)
+            m_unlockThread = nullptr;
+        m_unlocking = false;
+        emit unlockingChanged();
+        emit unlocked(info);
+    });
+
+    work->start();
+    return true;
 }
 
 bool KelpBundles::collect(const QString &path, const QString &name, int depth,
@@ -621,26 +655,25 @@ bool KelpBundles::collect(const QString &path, const QString &name, int depth,
     return true;
 }
 
-QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, bool page,
-                              const QString &passphrase)
+KelpBundles::SealResult KelpBundles::sealContent(KelpObjectStore *store,
+                                                const QStringList &paths,
+                                                const QString &passphrase)
 {
-    QVariantMap result;
-    result.insert(QStringLiteral("ok"), false);
+    SealResult result;
 
-    if (!m_store) {
-        result.insert(QStringLiteral("error"), QStringLiteral("no object store"));
+    if (!store) {
+        result.error = QStringLiteral("no object store");
         return result;
     }
     if (paths.isEmpty()) {
-        result.insert(QStringLiteral("error"), QStringLiteral("nothing to share"));
+        result.error = QStringLiteral("nothing to share");
         return result;
     }
     // Checked before anything is sealed: refusing afterwards would leave a bundle
     // in the store that nothing is going to serve.
     if (!passphrase.isEmpty() && passphrase.length() < kMinPassphraseLength) {
-        result.insert(QStringLiteral("error"),
-                      QStringLiteral("a passphrase needs at least %1 characters")
-                          .arg(kMinPassphraseLength));
+        result.error = QStringLiteral("a passphrase needs at least %1 characters")
+                           .arg(kMinPassphraseLength);
         return result;
     }
 
@@ -659,7 +692,7 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
         if (!collect(path, QFileInfo(path).fileName(), 0, &child, &fileCount,
                      &skippedLinks, &error)) {
             qWarning() << "KelpBundles: cannot read" << path << ":" << error;
-            result.insert(QStringLiteral("error"), error);
+            result.error = error;
             return result;
         }
         root.children.append(child);
@@ -667,20 +700,20 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
 
     const QByteArray secret = Kelp::Crypto::randomBytes(Kelp::Crypto::KeySize);
     if (secret.size() != Kelp::Crypto::KeySize) {
-        result.insert(QStringLiteral("error"), QStringLiteral("no entropy available"));
+        result.error = QStringLiteral("no entropy available");
         return result;
     }
     const QByteArray key = Kelp::contentKey(secret);
     if (key.size() != Kelp::Crypto::KeySize) {
-        result.insert(QStringLiteral("error"), QStringLiteral("key derivation failed"));
+        result.error = QStringLiteral("key derivation failed");
         return result;
     }
 
     KelpFileSource source;
     Kelp::SealedBundle sealed;
-    if (!Kelp::seal(m_store, key, root, &source, &sealed, &error)) {
+    if (!Kelp::seal(store, key, root, &source, &sealed, &error)) {
         qWarning() << "KelpBundles: sealing failed:" << error;
-        result.insert(QStringLiteral("error"), error);
+        result.error = error;
         return result;
     }
 
@@ -689,21 +722,44 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
     // `#p=` rather than `#k=`. The passphrase itself goes no further than this
     // call: what the row keeps is the wrapped blob, which is enough to mint the
     // same link again and not enough to read anything without the passphrase.
-    QByteArray wrappedSecret;
     if (!passphrase.isEmpty()) {
         QString wrapError;
-        wrappedSecret = Kelp::Link::wrapSecret(secret, sealed.rootId, passphrase,
-                                               Kelp::Link::DefaultIterations, &wrapError);
-        if (wrappedSecret.isEmpty()) {
-            qWarning() << "KelpBundles: cannot protect" << name << ":" << wrapError;
-            result.insert(QStringLiteral("error"), wrapError);
+        result.wrappedSecret = Kelp::Link::wrapSecret(secret, sealed.rootId, passphrase,
+                                                      Kelp::Link::DefaultIterations,
+                                                      &wrapError);
+        if (result.wrappedSecret.isEmpty()) {
+            qWarning() << "KelpBundles: cannot protect the share:" << wrapError;
+            result.error = wrapError;
             return result;
         }
     }
 
+    result.ok = true;
+    result.rootId = sealed.rootId;
+    result.secret = secret;
+    result.objectCount = sealed.objectCount;
+    result.fileCount = sealed.fileCount;
+    result.skippedLinks = skippedLinks;
+    result.totalBytes = sealed.totalBytes;
+    result.elapsedMs = int(timer.elapsed());
+    return result;
+}
+
+QVariantMap KelpBundles::finishSeal(const SealResult &sealed, const QString &name,
+                                    bool page, const QString &kind, bool swarm,
+                                    const QString &path)
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("ok"), false);
+
+    if (!sealed.ok) {
+        result.insert(QStringLiteral("error"), sealed.error);
+        return result;
+    }
+
     const Kelp::Link::Bundle link =
-        publish(sealed.rootId, secret, name, sealed.objectCount, sealed.fileCount,
-                sealed.totalBytes, page, wrappedSecret);
+        publish(sealed.rootId, sealed.secret, name, sealed.objectCount, sealed.fileCount,
+                sealed.totalBytes, page, sealed.wrappedSecret);
 
     const QString linkText = Kelp::Link::encode(link);
 
@@ -712,8 +768,8 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
     line += label;
     line += QStringLiteral("\" -> %1 objects, %2 files, %3 bytes in %4 ms")
                 .arg(sealed.objectCount).arg(sealed.fileCount)
-                .arg(sealed.totalBytes).arg(timer.elapsed());
-    if (!wrappedSecret.isEmpty())
+                .arg(sealed.totalBytes).arg(sealed.elapsedMs);
+    if (!sealed.wrappedSecret.isEmpty())
         line += QStringLiteral(" \"(protected by a passphrase)\"");
     qInfo().noquote() << line;
 
@@ -726,20 +782,72 @@ QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, boo
                       ? m_relays.value(0) : QString());
     result.insert(QStringLiteral("bundleId"),
                   QString::fromLatin1(Kelp::Link::base32Encode(sealed.rootId)));
-    result.insert(QStringLiteral("secret"), Kelp::Link::base64UrlEncode(secret));
+    result.insert(QStringLiteral("secret"), Kelp::Link::base64UrlEncode(sealed.secret));
     result.insert(QStringLiteral("objectCount"), sealed.objectCount);
     result.insert(QStringLiteral("fileCount"), sealed.fileCount);
     result.insert(QStringLiteral("totalBytes"), sealed.totalBytes);
-    result.insert(QStringLiteral("skippedLinks"), skippedLinks);
+    result.insert(QStringLiteral("skippedLinks"), sealed.skippedLinks);
     result.insert(QStringLiteral("lan"), link.lan);
     result.insert(QStringLiteral("page"), page);
     // The wrapped secret, not the passphrase: it is what the row keeps, so a
     // restart can mint the same passphrase link again (republish). Empty for an
     // ordinary share.
     result.insert(QStringLiteral("passBlob"),
-                  wrappedSecret.isEmpty() ? QString()
-                                          : Kelp::Link::base64UrlEncode(wrappedSecret));
+                  sealed.wrappedSecret.isEmpty()
+                      ? QString()
+                      : Kelp::Link::base64UrlEncode(sealed.wrappedSecret));
+    // The row's own fields, carried through so the root page can add it even when
+    // the page that asked for the seal is gone by the time the work finishes.
+    result.insert(QStringLiteral("name"), name);
+    result.insert(QStringLiteral("kind"), kind);
+    result.insert(QStringLiteral("path"), path);
+    result.insert(QStringLiteral("swarm"), swarm);
     return result;
+}
+
+QVariantMap KelpBundles::seal(const QStringList &paths, const QString &name, bool page,
+                              const QString &passphrase)
+{
+    const SealResult sealed = sealContent(m_store, paths, passphrase);
+    return finishSeal(sealed, name, page, QString(), false, paths.value(0));
+}
+
+bool KelpBundles::sealAsync(const QStringList &paths, const QString &name,
+                            const QString &kind, bool page,
+                            const QString &passphrase, bool swarm)
+{
+    if (m_sealing) {
+        qWarning() << "KelpBundles: a seal is already running";
+        return false;
+    }
+
+    m_sealing = true;
+    emit sealingChanged();
+
+    KelpObjectStore *store = m_store;
+    const QStringList files = paths;
+    const QString path = paths.value(0);
+
+    KelpWork<SealResult> *work = new KelpWork<SealResult>(
+        [store, files, passphrase]() {
+            return KelpBundles::sealContent(store, files, passphrase);
+        },
+        this);
+    m_sealThread = work;
+
+    connect(work, &QThread::finished, this,
+            [this, work, name, kind, page, swarm, path]() {
+        const SealResult content = work->result();
+        work->deleteLater();
+        if (m_sealThread == work)
+            m_sealThread = nullptr;
+        m_sealing = false;
+        emit sealingChanged();
+        emit sealed(finishSeal(content, name, page, kind, swarm, path));
+    });
+
+    work->start();
+    return true;
 }
 
 Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArray &secret,

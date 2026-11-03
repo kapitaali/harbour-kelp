@@ -1058,6 +1058,58 @@ void testPassphraseLink()
     CHECK(client.error().contains(QStringLiteral("passphrase")));
 }
 
+void testAsyncPassphraseFetch()
+{
+    section("passphrase derivation runs on a worker, then the fetch proceeds");
+
+    MemoryStore sealed;
+    QString bundleId;
+    QByteArray rootId;
+    QByteArray secret;
+    QString error;
+    CHECK(sealFile(&sealed, QStringLiteral("client-async-passphrase"), &bundleId, &rootId,
+                   &secret, &error));
+    StubPublisher stub(&sealed);
+
+    const QString passphrase = QStringLiteral("correct horse battery staple");
+    const QByteArray blob = Link::wrapSecret(secret, rootId, passphrase, 1000, &error);
+    CHECK(!blob.isEmpty());
+
+    Link::Bundle share;
+    share.bundleId = rootId;
+    share.secret = secret;
+    share.lan = QStringLiteral("127.0.0.1:%1").arg(stub.port());
+    share.name = QStringLiteral("protected-async");
+    share.wrappedSecret = blob;
+    const QString link = Link::encode(share);
+
+    QTemporaryDir downloads;
+    CHECK(downloads.isValid());
+
+    MemoryStore appStore;
+    KelpClient client(&appStore);
+    client.setDirectory(downloads.path());
+
+    // The call returns while the derivation is still running, and the page gets
+    // a phase it can paint instead of a frozen window.
+    CHECK(client.fetchAsync(link, QStringLiteral("not the passphrase")));
+    CHECK_EQ(client.phase(), QStringLiteral("unlocking"));
+    CHECK(client.busy());
+    CHECK(client.isHandling(link));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("failed"));
+    CHECK(client.error().contains(QStringLiteral("does not open")));
+    CHECK_EQ(appStore.count(), 0);
+
+    // The right passphrase: the worker answers, and the ordinary save follows.
+    CHECK(client.fetchAsync(link, passphrase));
+    CHECK_EQ(client.phase(), QStringLiteral("unlocking"));
+    CHECK(settle(&client));
+    CHECK_EQ(client.phase(), QStringLiteral("done"));
+    CHECK_EQ(client.files(), 1);
+    CHECK_EQ(QDir(downloads.path()).entryList(QDir::Files).size(), 1);
+}
+
 void testRelayFallbackAfterDeadAddress()
 {
     section("a dead LAN address retries on the link's relay");
@@ -1107,6 +1159,7 @@ int main(int argc, char **argv)
     testViewRemintsAfterSweep();
     testHandlingIsTiedToItsLink();
     testPassphraseLink();
+    testAsyncPassphraseFetch();
     testRelayFallbackAfterDeadAddress();
 
     printf("\n%d checks, %d failures\n", g_checks, g_failures);

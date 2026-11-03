@@ -81,6 +81,7 @@ HEADERS += \
     src/kelpstore.h \
     src/kelptls.h \
     src/kelptunnel.h \
+    src/kelpwork.h \
     src/qrcodegen.hpp
 
 # sailfishapp.prf installs the whole qml/ tree; this list exists so the IDE

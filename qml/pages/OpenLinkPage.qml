@@ -65,6 +65,7 @@ Page {
     property string passphrase: ""
     property var unlocked: null
     property string unlockError: ""
+    property bool unlocking: kelpBundles.unlocking
 
     // The one object every binding below reads — the unlocked reading once there
     // is one, the plain one until then — so opening a link does not mean every
@@ -106,7 +107,9 @@ Page {
                                  ? qsTr("Another transfer is still running: “%1”")
                                    .arg(kelpClient.name)
                                  : qsTr("Another transfer is still running…"))
-                              : openPage.phase === "checking"
+                              : openPage.phase === "unlocking"
+                                ? qsTr("Unlocking the link…")
+                                : openPage.phase === "checking"
                                 ? qsTr("Asking the sender…")
                                 : openPage.phase === "saving"
                                   ? qsTr("Saving the files…")
@@ -157,10 +160,11 @@ Page {
                && kelpClient.isHandling(openPage.link)
     }
 
-    // Fetching needs a link that parses and an address to fetch from: a link
-    // carrying only a relay cannot be fetched by this version.
+    // Fetching needs a link that parses and somewhere to fetch from: the LAN
+    // address when it has one, otherwise the relay the link names.
     property bool canFetch: openPage.facts !== null && openPage.facts.ok
-                            && openPage.facts.lan.length > 0
+                            && (openPage.facts.lan.length > 0
+                                || openPage.facts.relays.length > 0)
                             && !openPage.locked && !busy
 
     // Where the files will be written. The chosen folder is remembered across
@@ -208,12 +212,20 @@ Page {
         }
 
         kelpLog.info("OpenLinkPage: unlocking a passphrase link")
-        var info = kelpBundles.unlockLink(openPage.link, openPage.passphrase)
-        if (info.ok !== true) {
+        openPage.unlockError = ""
+        if (!kelpBundles.unlockLinkAsync(openPage.link, openPage.passphrase))
+            kelpLog.warn("OpenLinkPage: an unlock is already running")
+    }
+
+    // The worker's answer. The derivation is 600 000 rounds, so it runs off the
+    // GUI thread and the page keeps painting while it does.
+    function unlockFinished(info) {
+        if (!info || info.ok !== true) {
             // The derivation's own verdict, which is the only thing that can tell
             // a wrong passphrase from a damaged link.
-            openPage.unlockError = info.error
-            kelpLog.info("OpenLinkPage: unlock failed: " + info.error)
+            openPage.unlockError = info && info.error ? info.error
+                                                      : qsTr("That passphrase did not work.")
+            kelpLog.info("OpenLinkPage: unlock failed: " + openPage.unlockError)
             return
         }
 
@@ -224,10 +236,16 @@ Page {
                      + (info.page === true ? ", a webpage" : ""))
     }
 
+    Connections {
+        target: kelpBundles
+
+        onUnlocked: openPage.unlockFinished(result)
+    }
+
     function startDownload() {
         kelpLog.info("OpenLinkPage: download pressed for \""
                      + redactLink(openPage.link) + "\"")
-        if (!kelpClient.fetch(openPage.link, openPage.passphrase)) {
+        if (!kelpClient.fetchAsync(openPage.link, openPage.passphrase)) {
             kelpLog.error("OpenLinkPage: fetch refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
         }
@@ -244,7 +262,7 @@ Page {
         }
         kelpLog.info("OpenLinkPage: open in browser pressed for \""
                      + redactLink(openPage.link) + "\"")
-        if (!kelpClient.fetchForViewing(openPage.link, openPage.passphrase)) {
+        if (!kelpClient.fetchForViewingAsync(openPage.link, openPage.passphrase)) {
             kelpLog.error("OpenLinkPage: view refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
             return
@@ -385,8 +403,8 @@ Page {
 
                 Button {
                     width: parent.width
-                    enabled: openPage.passphrase.length > 0
-                    text: qsTr("Unlock")
+                    enabled: openPage.passphrase.length > 0 && !openPage.unlocking
+                    text: openPage.unlocking ? qsTr("Unlocking…") : qsTr("Unlock")
                     onClicked: openPage.unlockNow()
                 }
 
@@ -452,7 +470,7 @@ Page {
                     visible: openPage.facts !== null && openPage.facts.relays.length > 0
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
-                    text: qsTr("The link also names a relay, which this version cannot use yet")
+                    text: qsTr("The link also names a relay, used only if the address above does not answer.")
                 }
 
                 Label {

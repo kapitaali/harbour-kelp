@@ -54,6 +54,32 @@ ApplicationWindow {
         pageStack.push(Qt.resolvedUrl("pages/OpenLinkPage.qml"), { link: link })
     }
 
+    // A seal finishes on a worker. The root owns the row, so a share is still
+    // added if the Share page was left while a large folder was being sealed.
+    function acceptSealed(info) {
+        if (!info || info.ok !== true) {
+            kelpLog.error("Kelp: sealing failed: "
+                          + (info && info.error ? info.error : "no result"))
+            return
+        }
+        addBundle({
+            "name": info.name,
+            "kind": info.kind,
+            "files": info.fileCount,
+            "size": kelpFiles.formatSize(info.totalBytes),
+            "path": info.path,
+            "bytes": info.totalBytes,
+            "swarm": info.swarm === true,
+            "page": info.page === true,
+            "lan": info.lan,
+            "link": info.link,
+            "bundleId": info.bundleId,
+            "secret": info.secret,
+            "passBlob": info.passBlob,
+            "objects": info.objectCount
+        })
+    }
+
     function addBundle(info) {
         kelpLog.info("addBundle: name=\"" + info.name + "\" kind=" + info.kind
                      + " files=" + info.files + " size=" + info.size
@@ -480,6 +506,12 @@ ApplicationWindow {
         if (state === Qt.ApplicationSuspended) return "suspended"
         if (state === Qt.ApplicationHidden) return "hidden"
         return String(state)
+    }
+
+    Connections {
+        target: kelpBundles
+
+        onSealed: kelp.acceptSealed(result)
     }
 
     Connections {

@@ -15,6 +15,7 @@ class KelpPreviewServer;
 class KelpServer;
 class KelpSettings;
 class KelpTunnel;
+class QThread;
 
 /*
  * The QML-facing side of the content layer.
@@ -36,6 +37,13 @@ class KelpBundles : public QObject
     // reads this from lanAddressChanged() to decide whether republishing can
     // mint a working link or whether the rows should say they are offline.
     Q_PROPERTY(QString lanAddress READ lanAddress NOTIFY lanAddressChanged)
+
+    // Sealing and passphrase unlock are CPU-bound (a folder can take minutes;
+    // the derivation is 600 000 PBKDF2 rounds). QML calls the *Async forms and
+    // binds a busy indicator to these, so the page keeps painting and can still
+    // be left. The synchronous forms stay for tests and non-UI callers.
+    Q_PROPERTY(bool sealing READ sealing NOTIFY sealingChanged)
+    Q_PROPERTY(bool unlocking READ unlocking NOTIFY unlockingChanged)
 
 public:
     explicit KelpBundles(KelpObjectStore *store, KelpServer *server = nullptr,
@@ -69,6 +77,17 @@ public:
     // wrapped blob (`passBlob`), which is enough to mint the same link again.
     Q_INVOKABLE QVariantMap seal(const QStringList &paths, const QString &name,
                                  bool page, const QString &passphrase = QString());
+
+    // The same seal, off the GUI thread. `kind` and `swarm` are the row's own
+    // fields and ride through so the root page can add the row even if this page
+    // was left while the work ran. Returns false only when a seal is already
+    // running; every other outcome — including a failure — arrives with sealed().
+    Q_INVOKABLE bool sealAsync(const QStringList &paths, const QString &name,
+                               const QString &kind, bool page,
+                               const QString &passphrase = QString(),
+                               bool swarm = false);
+
+    bool sealing() const { return m_sealing; }
 
     // Serves a bundle that was shared in an earlier run — the objects and the
     // key are unchanged, only the address is minted afresh, because the LAN port
@@ -131,6 +150,12 @@ public:
     // is not kept: a later open() is asked for it again.
     Q_INVOKABLE QVariantMap unlockLink(const QString &link, const QString &passphrase);
 
+    // The same derivation, off the GUI thread. Returns false only when an unlock
+    // is already running; the answer arrives with unlocked().
+    Q_INVOKABLE bool unlockLinkAsync(const QString &link, const QString &passphrase);
+
+    bool unlocking() const { return m_unlocking; }
+
     /*
      * The browser's door to one of *this device's* shares (design §5.2, C4b).
      *
@@ -190,6 +215,13 @@ public:
     Q_INVOKABLE int previewSessions() const;
 
 signals:
+    // A seal or passphrase unlock finished; the map has the same shape the
+    // synchronous call returns. Emitted on the GUI thread.
+    void sealingChanged();
+    void sealed(const QVariantMap &result);
+    void unlockingChanged();
+    void unlocked(const QVariantMap &result);
+
     // A preview opened, closed, or expired. The app holds the device awake while
     // one is being served, exactly as it does while a share is being served.
     void previewSessionsChanged();
@@ -200,9 +232,33 @@ signals:
     void lanAddressChanged();
 
 private:
-    bool collect(const QString &path, const QString &name, int depth,
-                 Kelp::SourceNode *node, int *fileCount, int *skippedLinks,
-                 QString *error);
+    // What sealing produces before anything is published. Kept apart from the
+    // publish step because publishing needs the GUI thread (server, tunnels,
+    // settings) while sealing is what runs slowly on a worker.
+    struct SealResult {
+        bool ok = false;
+        QString error;
+        QByteArray rootId;
+        QByteArray secret;
+        QByteArray wrappedSecret;
+        int objectCount = 0;
+        int fileCount = 0;
+        int skippedLinks = 0;
+        quint64 totalBytes = 0;
+        int elapsedMs = 0;
+    };
+
+    static SealResult sealContent(KelpObjectStore *store, const QStringList &paths,
+                                  const QString &passphrase);
+
+    // Publishes a SealResult and builds the map seal()/sealAsync() return. Runs on
+    // the GUI thread.
+    QVariantMap finishSeal(const SealResult &sealed, const QString &name, bool page,
+                           const QString &kind, bool swarm, const QString &path);
+
+    static bool collect(const QString &path, const QString &name, int depth,
+                        Kelp::SourceNode *node, int *fileCount, int *skippedLinks,
+                        QString *error);
 
     // Serves an already-sealed bundle and mints a link for it: the LAN address is
     // added as `l=` and any relays as `r=`. Shared by seal() and republish(), so
@@ -232,6 +288,14 @@ private:
     QStringList m_relays;
     // One outgoing tunnel per shared bundle, keyed by the base32 bundle id.
     QHash<QString, KelpTunnel *> m_tunnels;
+
+    // The worker threads, and the flags QML binds to. Only one of each can run:
+    // a second request is refused rather than queued, because the page already
+    // disables the button that would make it.
+    QThread *m_sealThread = nullptr;
+    QThread *m_unlockThread = nullptr;
+    bool m_sealing = false;
+    bool m_unlocking = false;
 };
 
 #endif // KELPBUNDLES_H
