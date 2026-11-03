@@ -8,10 +8,10 @@ recipient with the app, whose own app previews the page on `127.0.0.1` and hands
 browser. Here there is nothing on the recipient's device but a browser, so the *relay* is the one
 that hands out a URL, and the browser is the one that decrypts.
 
-> **App slice removed 2026-10-21.** The app's relay address field and *Copy browser link* are
-> gone; this app shares and fetches on the local network only and mints no gateway URL. The
-> gateway, loader and their tests remain, and the URL shape below is still what a sender that
-> has a relay would use. Slice 4 is history.
+> **App slice removed 2026-10-21, relay restored 2026-10-29.** The relay address field and
+> *Copy browser link* are still gone from the UI. A relay is now a build-time constant
+> (`src/kelprelay.h`) and every link carries it as `r=`, so a link this app mints does name a
+> relay the gateway can use; the app still offers no browser-link button. Slice 4 is history.
 
 ## Why this exists right now
 

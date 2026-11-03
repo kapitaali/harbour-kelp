@@ -21,9 +21,9 @@ a listener on this device's LAN address and produces a `kelp://` link carrying
 that address; pasting that link into *Open a link* on another device fetches the
 objects, checks each one against its address, decrypts the bundle and writes the
 files into *Downloads*. A webpage share also *says* it is a page, inside the link
-and under the key, so the link text still reveals nothing — that hint is what will
-let a recipient open the page in a browser and keep nothing (design §5.5); the
-receiving half of that is not built yet. The app serves on the local network and fetches LAN-first; when a recipient cannot reach the sender's LAN address (carrier NAT, mobile data) it falls back to a relay operated for the app. The relay is a build-time constant (`kelpDefaultRelays()`, overridable via `KELP_RELAY`), not a Settings field — see *Across networks* below. The `kelp-relay` program and its browser gateway remain separate programs in the tree, with their own tests. Still missing: peers helping each other serve (the swarm) and the receiving half of webpage shares. Also sketched there, and deliberately *not* planned before a release: anonymous ephemeral chat (Appendix B) — parked, not a milestone.
+and under the key, so the link text still reveals nothing — that hint is what lets
+a recipient open the page in a browser and keep nothing (design §5.5); that
+view-only receiving path is built. The app serves on the local network and fetches LAN-first; when a recipient cannot reach the sender's LAN address (carrier NAT, mobile data) it falls back to a relay operated for the app. The relay is a build-time constant (`kelpDefaultRelays()`, overridable via `KELP_RELAY`), not a Settings field — see *Across networks* below. The `kelp-relay` program and its browser gateway remain separate programs in the tree, with their own tests. Still missing: peers helping each other serve (the swarm); keeping a received bundle as a row, so it could be re-opened, re-served or re-downloaded later; and previewing a folder that was shared as a folder — only a share declared a **webpage** opens in a browser. Also sketched there, and deliberately *not* planned before a release: anonymous ephemeral chat (Appendix B) — parked, not a milestone.
 See [`META-INF/kelp-design.md`](META-INF/kelp-design.md) for the design,
 [`META-INF/kelp-swarm-wire-spec.md`](META-INF/kelp-swarm-wire-spec.md) for the
 swarm wire format, and [`META-INF/BUILD.md`](META-INF/BUILD.md) for how to build

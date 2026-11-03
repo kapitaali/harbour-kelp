@@ -80,7 +80,7 @@ Page {
                 font.pixelSize: Theme.fontSizeExtraSmall
                 text: (aboutPage.storeInfo && aboutPage.storeInfo.serving
                        && aboutPage.storeInfo.serving.length > 0)
-                      ? qsTr("Serving shared bundles on %1 (local network only).")
+                      ? qsTr("Serving shared bundles on %1, with relay fallback for other networks.")
                         .arg(aboutPage.storeInfo.serving)
                       : qsTr("Not serving anything: no bundle is shared, or there is no local address.")
             }

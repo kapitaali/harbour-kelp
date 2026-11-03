@@ -87,8 +87,8 @@ is involved. The peer-swarm switch is present but not active yet.
   verified, decrypted downloads.
 - Content-addressed, AES-256-GCM-sealed object store; keys stay in link fragments,
   and passphrase links wrap the key instead.
-- LAN-only serving with Wi-Fi-only and low-battery policy, background keepalive,
-  and a remembered share list with pause, resume and stop.
+- Local-network serving with relay fallback, Wi-Fi-only and low-battery policy,
+  background keepalive, and a remembered share list with pause, resume and stop.
 - Offline webpage preview for bundles published as a page.
 - Storage, logging and local-address settings; About page.
 - Sailjail permissions limited to `Internet` and `UserDirs`.
@@ -127,7 +127,8 @@ Notes for the upload:
 
 Short version:
 
-> Kelp shares files only on your local network. There is no account, no cloud
+> Kelp shares files directly between devices, with a relay fallback when a
+> recipient cannot reach the sender's network. There is no account, no cloud
 > service, no analytics and no third-party SDK. Shared content is stored encrypted
 > on the device, and the key is carried in the `kelp://` link. A relay is used
 > only as a fallback when a recipient cannot reach your device directly; the relay
@@ -137,9 +138,9 @@ Short version:
 > https://github.com/kapitaali/harbour-kelp/blob/master/PRIVACY.md
 
 Full policy: `PRIVACY.md` in the repo root. It covers the encrypted object store,
-settings and share list, the diagnostic log, downloads, LAN-only networking,
-passphrase links, clipboard use, QR codes, permissions, and what uninstalling
-leaves behind.
+settings and share list, the diagnostic log, downloads, LAN-first networking
+with the relay fallback, passphrase links, clipboard use, QR codes, permissions,
+and what uninstalling leaves behind.
 
 ## 6. Permissions and packaging
 
@@ -208,4 +209,5 @@ Logs: `/tmp/opencode/harbour-check-aarch64-2.log`,
 - Rebuild both architectures from a clean tree (`make distclean` equivalent
   between targets) and re-run the validator before every upload.
 - The i486 build is for the emulator only and must never be uploaded.
-- The GitHub push is pending rotation of the exposed PAT. Do not reuse that token.
+- The branch is published. Never reuse the PAT that was exposed; rotate it if it
+  has not been rotated already.

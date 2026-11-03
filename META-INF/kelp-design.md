@@ -458,11 +458,11 @@ reach (§3.41); it was removed on 2026-10-21 with the relay address field (see b
 added: a labelled section on the page is where the design put it, and the whole flow is one
 button.
 
-> **Removed from the app 2026-10-21.** The relay address field and *Copy browser
-> link* are gone. The app shares and fetches on the local network only, and the
-> browser section is webpage-only (*Open in browser*, the local preview). The
-> gateway and the URL shape below remain for a sender that has a relay; this app
-> mints none, so a folder has no browser door here.
+> **Removed from the app 2026-10-21; the relay came back 2026-10-29.** The relay
+> address field and *Copy browser link* are gone from the UI. A relay is configured
+> at build time (`src/kelprelay.h`) and rides in every link as `r=`, so the gateway
+> and the URL shape below work for links this app mints; the app still offers no
+> browser-link button, and a folder has no browser door here.
 
 **Second button: *Copy browser link* (built 2026-10-20; folders 2026-10-21).** The §5.2 gateway
 needs an address a sender would otherwise have to assemble by hand, so the browser section had
@@ -479,11 +479,12 @@ and never logged. `PROGRESS-<date>.md` §3.37 has the webpage device evidence an
 folder one; both are history now that the button is gone.
 
 **What is not built yet.** The per-bundle confirmation (§12.10) — deferred until the page being
-opened is someone else's, which lazy-open has now made the normal case. The *recipient* side needs
-no door of its own: §5.4 answered that question with "no button" (2026-10-18), so a received page
-is opened from the files it was saved as. Keeping a received bundle (§12.13) would still make one
-re-downloadable and seedable, which is a separate question from previewing it. Lazy-open itself
-is built: a view fetches the manifests, opens its session and lets the browser pull content.
+opened is someone else's, which lazy-open has now made the normal case. The *recipient* side has
+its door: a webpage link offers *Open in browser*, which fetches only the manifests into memory
+and serves the page on loopback (§5.5), so nothing is kept. Keeping a received bundle (§12.13)
+would still make one re-downloadable and seedable, and give it a row to re-open later, which is a
+separate question from previewing it. Lazy-open itself is built: a view fetches the manifests,
+opens its session and lets the browser pull content.
 
 **Two ways to open it, and the recommendation.**
 
@@ -594,7 +595,9 @@ and every URL in the bundle's space is named by its **chunks, in order**, which 
 concatenates exactly as the file list download does.
 
 *Built (2026-10-20, the app's half) — `PROGRESS-<date>.md` §3.37; folders 2026-10-21, §3.41.
-Removed from the app 2026-10-21 with the relay address field; the gateway remains.*
+Removed from the UI 2026-10-21 with the relay address field; the relay itself returned as a
+build-time fallback on 2026-10-29 (C3), so links this app mints do name a relay the gateway can
+use. The app still offers no browser-link button.*
 **Copy browser link** on a share's page — a webpage's, and a folder's too — minted
 `https://<relay>/b/<id>#q=…&k=<secret>` from the relay the share's *own* link named. It was never
 offered for a passphrase share — the app holds the plaintext secret, so `#k=` would undo the
@@ -969,8 +972,8 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     link with no address, and a cancelled-then-retried fetch (the objects already stored
     are kept, so the retry only asks for the rest). A later live 335.6 MiB folder proved
     the streaming path at scale (PROGRESS §3.46).
-    Still open: no relay (a link with no address says so and stops), and nothing in the
-    app can serve again what it downloaded.
+    Still open: nothing in the app can serve again what it downloaded (a received bundle
+    is not kept as a row, so it cannot be re-served, re-downloaded or re-opened later).
 - **C3** — Relay: outbound tunnel + object proxy + cache; cross-network fetch from a
   different network (this is the Kelp equivalent of the IPFS M0 NAT spike).
   - **C3.1 (done) — the tunnel transport.** `src/kelptls.{h,cpp}` is a `KelpTls` session
@@ -1015,12 +1018,20 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     missing-object 404 and a wrong-token 401 — all pass. (A `KelpTls` double-`closed()`
     crash this surfaced was fixed: `closed()` is now a one-shot, and the relay's teardown is
     idempotent.)
-  - **C3 (done) — cross-network fetch through a relay.** *Removed from the app 2026-10-21:
-    the relay address field is gone, and the app shares and fetches on the LAN only. The
-    library, relay program and gateway remain and are tested; no app path configures them.*
-    The app published on a relay and fetched from one. `KelpBundles::seal()` opens a
+  - **C3 (done) — cross-network fetch through a relay, restored to the app 2026-10-29.**
+    The relay is a fallback, not a mode or a setting: `src/kelprelay.h` names one relay as a
+    build-time constant (`KELP_RELAY` overrides it for a test or a second deployment), and
+    `src/harbour-kelp.cpp` hands it to `KelpBundles::setRelays()` at startup. Every link
+    published from this build carries `r=` beside the optional LAN address. On the receiving
+    side `KelpSource::create()` still prefers the address; when it fails **before** the sender
+    answers `info`, `KelpClient::retryOnRelay()` restarts the same fetch on the link's first
+    relay — a publisher on mobile data advertises an address no other network can route to,
+    so the address alone is not a path. Nothing has been stored at that point, so the retry
+    cannot duplicate or half-fill a bundle, and it happens once per fetch.
+    `KelpBundles::publish()` opens a
     `KelpTunnel` (src/kelptunnel.{h,cpp}) for the bundle when a caller sets relays
-    (`setRelays`; the app no longer exposes a setting), registers
+    (`setRelays`; there is no Settings field, because a mistyped address there would
+    silently break every share), registers
     `{bundle_id, relay_token, shape}` over TLS 1.3 + ALPN `"kelp/1"`, answers the relay's
     `WANT` from the store, keeps the tunnel alive with PING/PONG and reconnects with
     backoff; the relay's address rides in the link as `r=`. On the receiving side the fetch
@@ -1036,7 +1047,9 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     source. The relay's own harness (`relay/test/run-relay-test.sh`) covers `/info`, a real
     object fetch, a missing object (404) and a wrong token (401).
     Still open (deliberately): no caching/stewards (C6), no swarm (C7), no TLS on the LAN
-    path (only the tunnel), and the relay is a separate binary (`kelp-relay`) the user runs.
+    path (only the tunnel), and a link outlives the publishing phone only while its tunnel
+    is open. The relay is a separate program (`kelp-relay`): the app's default points at a
+    relay operated for it, and self-hosting one is the same binary.
 - **C4a** — Shared-page preview (§5.1): **built, off-device.** The `Web` convention
   (`page`/`resolve`/`chunkRange`/`mimeType`, manifests only), the loopback `KelpPreviewServer`
   (token path, path → objects, `Range`/`HEAD`, the CSP/`no-store`/`nosniff` headers, `404` vs

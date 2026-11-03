@@ -76,7 +76,7 @@ The suites print authoritative check counts; do not hardcode them in docs.
 
 ## 9. Current state
 
-- App shares bundles on the LAN only (no relay path in the app); `kelp-relay` and its browser gateway are separate programs with their own tests.
-- Webpage shares (preview in browser, nothing stored) are implemented; receiving half of webpage shares and swarm (peer helping) are not.
+- App shares bundles on the LAN and falls back to a relay operated for the app (build-time constant `kelpDefaultRelays()`, overridable via `KELP_RELAY`); `kelp-relay` and its browser gateway are separate programs with their own tests.
+- Webpage shares (preview in browser, nothing stored) are implemented, including view-only receiving of a received webpage link; keeping a received bundle as a row (re-open, re-serve, re-download) and swarm (peer helping) are not.
 - Passphrase links (`#p=`) are implemented.
 - Build id falls back to a UTC timestamp in the engine (no git there); identify builds by their log line.

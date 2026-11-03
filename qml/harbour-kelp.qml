@@ -30,10 +30,11 @@ ApplicationWindow {
     // means never over mobile data, and a low battery stops serving until it is
     // charging again.
 
-    // No relay is configured here. A relay is a separate server that the app
-    // neither hosts nor asks for; this app serves and fetches only over the local
-    // network. The relay protocol and its tests remain in the tree, but no app
-    // path publishes to or opens through one.
+    // A relay is a separate server the app does not host. One is baked in at
+    // build time (src/kelprelay.h) and every link carries it as r=; a recipient
+    // tries the sender's local address first and falls back to the relay only
+    // when that address does not answer. There is no Settings field for it: a
+    // mistyped address there would silently break every share.
 
     // The one way into the Open-a-link page: a link the user pasted, one given at
     // startup, or one another app just handed over (src/kelphandoff.cpp calls this

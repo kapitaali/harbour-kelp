@@ -1,9 +1,10 @@
 # A browser door for a folder — plan (design §5.2, §12.12)
 
-**Status: withdrawn 2026-10-21.** The relay address field was removed from the app, and
-with it *Copy browser link* and the folder door: the app shares and fetches on the local
-network only, so it cannot mint a browser address. This plan is history. The gateway and
-its ZIP view remain separate for a sender that has a relay.
+**Status: withdrawn 2026-10-21; relay restored 2026-10-29.** The relay address field and
+*Copy browser link* are still gone from the UI. A relay is now a build-time constant, so a
+link this app mints does name one the gateway can use, but the app still mints no browser
+address and offers no folder door. This plan is history. The gateway and its ZIP view remain
+separate programs.
 
 > The earlier status was *built 2026-10-21 — placement A, QML only*; evidence is in
 > `PROGRESS-20261016.md` §3.41. The rest of this document records that plan, not current

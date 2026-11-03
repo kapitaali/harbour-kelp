@@ -321,8 +321,8 @@ Page {
             TextSwitch {
                 text: qsTr("Let peers help serve what I share here")
                 description: kelpSettings.peerSwarm
-                             ? qsTr("Other downloaders trade pieces among themselves. Faster for popular shares, but those peers see your IP address.")
-                             : qsTr("Turn on “Allow peer swarm” in Settings to enable this.")
+                             ? qsTr("Not implemented yet — no share uses it. It would let other downloaders trade pieces among themselves, faster for popular shares, but those peers would see your IP address.")
+                             : qsTr("Turn on “Allow peer swarm” in Settings to enable this. No share uses it yet.")
                 checked: addPage.swarm
                 enabled: kelpSettings.peerSwarm
                 onCheckedChanged: {

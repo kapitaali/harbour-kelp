@@ -762,8 +762,8 @@ Kelp::Link::Bundle KelpBundles::publish(const QByteArray &rootId, const QByteArr
     // has no address. The whole block is skipped when the user has turned off
     // "Include my local address in the link": a link is handed to whoever the
     // recipient forwards it to, so nothing served here should be discoverable
-    // from it, and the link then relies on a relay; this app no longer
-    // configures one.
+    // from it. The link then relies on a relay (if one is configured) for
+    // off-network fetches.
     const bool exposeLan = !m_settings || m_settings->includeLanAddress();
     if (m_server && exposeLan) {
         // Register the share before opening the listener. If there is no address
