@@ -939,8 +939,11 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
 - **C1.5 (done)** — app wiring: the `kelp://` link codec, the on-disk object store, and
   *Start sharing* sealing for real. Each selected entry becomes one bundle; the row, the
   **Bundle** page and the link show what was sealed, and the read path has been exercised
-  on device against the real objects. Not done here: nothing serves an object to a
-  recipient yet, objects are never deleted, and sealing blocks the UI thread.
+  on device against the real objects. Sealing and passphrase derivation now run on a
+  worker thread (`KelpWork<Result>` in `src/kelpwork.h`) so the GUI thread is not
+  blocked; root `acceptSealed()` owns row insertion so a share survives leaving the
+  Share page mid-seal. Not done here: nothing serves an object to a
+  recipient yet, objects are never deleted, and relay is a fallback only.
 - **C2** — LAN-direct publish/fetch end-to-end on two devices on one Wi-Fi (proves the
   core UX with zero servers).
   - **C2a (done)** — the *publish* half: one listener for the app, bound to this device's

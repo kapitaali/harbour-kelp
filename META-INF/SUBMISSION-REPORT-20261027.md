@@ -25,8 +25,8 @@ Paste-ready description and changelog: `META-INF/STORE-LISTING.md` §3.
 
 | Arch | Path | Size | SHA-256 |
 |---|---|---|---|
-| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 331,204 B | `12af7ce2d5b803401c713ff562b805e5229e3a4e6233dbb59c81bb5978c71941` |
-| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 302,859 B | `9eb131b220a8c583b6e3d03e3b9e6360e118cf601975869db7b7772e40886ca3` |
+| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,211 B | `4d21e16e5508a35431a0b67d2942f6b7c22c2274d2a375b73d063f9f49ca443e` |
+| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,408 B | `64f165865eaa554a197a0624ce5da90a96d64d8c683060d698605299c1104baa` |
 
 Do **not** upload the i486 emulator build from `RPMS/SailfishOS-5.1.0.11-i486/`.
 
