@@ -1051,8 +1051,11 @@ storing secrets, the whole `Backend` interface, and the encryption-in-fragment l
     object fetch, a missing object (404) and a wrong token (401).
     Still open (deliberately): no caching/stewards (C6), no swarm (C7), no TLS on the LAN
     path (only the tunnel), and a link outlives the publishing phone only while its tunnel
-    is open. The relay is a separate program (`kelp-relay`): the app's default points at a
-    relay operated for it, and self-hosting one is the same binary.
+    is open. The relay is a separate program (`kelp-relay`): the app's default points at
+    `kelp.kapitaali.com:9443`, a relay operated for it, and self-hosting one is the same
+    binary. The name is what the public certificate covers, so the browser gateway opens
+    without a warning; the app's own tunnel pins ALPN `kelp/1` and does not depend on the
+    CA chain, but the gateway does.
 - **C4a** — Shared-page preview (§5.1): **built, off-device.** The `Web` convention
   (`page`/`resolve`/`chunkRange`/`mimeType`, manifests only), the loopback `KelpPreviewServer`
   (token path, path → objects, `Range`/`HEAD`, the CSP/`no-store`/`nosniff` headers, `404` vs
