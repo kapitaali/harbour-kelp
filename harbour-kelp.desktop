@@ -8,5 +8,5 @@ MimeType=x-scheme-handler/kelp;
 
 [X-Sailjail]
 Permissions=UserDirs;Internet
-OrganizationName=harbour.kelp
+OrganizationName=org.kapitaali
 ApplicationName=harbour-kelp

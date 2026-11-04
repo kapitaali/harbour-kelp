@@ -8,6 +8,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QTextStream>
 
 #include <cstdio>
@@ -104,14 +105,21 @@ QString KelpLog::dataDirectory()
 {
     QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (path.isEmpty())
-        path = QDir::homePath() + QStringLiteral("/.local/share/harbour.kelp/harbour-kelp");
+        path = QDir::homePath() + QStringLiteral("/.local/share/org.kapitaali/harbour-kelp");
 
-    // One-off move from the pre-Sailjail-aware location, so objects and links
-    // sealed by an earlier build keep working. Best-effort: inside the sandbox
-    // the old directory is not even visible, so this quietly does nothing there.
-    const QString legacy = QDir::homePath() + QStringLiteral("/.local/share/harbour-kelp");
-    if (path != legacy && !QDir(path).exists() && QDir(legacy).exists())
-        QDir().rename(legacy, path);
+    // One-off moves from earlier data directories, so objects and links sealed
+    // by an earlier build keep working. Best-effort: inside the sandbox the old
+    // directory is not even visible, so this quietly does nothing there.
+    const QStringList legacyDirs = {
+        QDir::homePath() + QStringLiteral("/.local/share/harbour.kelp/harbour-kelp"),
+        QDir::homePath() + QStringLiteral("/.local/share/harbour-kelp"),
+    };
+    for (const QString &legacy : legacyDirs) {
+        if (path == legacy || QDir(path).exists() || !QDir(legacy).exists())
+            continue;
+        if (QDir().rename(legacy, path))
+            break;
+    }
 
     return path;
 }

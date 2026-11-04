@@ -1300,7 +1300,7 @@ int main(int argc, char **argv)
     // A throwaway data directory, so the real preferences and object store are
     // never touched.
     QStandardPaths::setTestModeEnabled(true);
-    QCoreApplication::setOrganizationName(QStringLiteral("harbour.kelp"));
+    QCoreApplication::setOrganizationName(QStringLiteral("org.kapitaali"));
     QCoreApplication::setApplicationName(QStringLiteral("harbour-kelp-bundles-test"));
 
     testPublish();

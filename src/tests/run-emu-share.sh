@@ -62,7 +62,7 @@ set -eu
 
 SSH_PORT="${KELP_SSH_PORT:-2223}"
 SSH_KEY="${KELP_SSH_KEY:-$HOME/SailfishOS/vmshare/ssh/private_keys/sdk}"
-DATA_DIR="${KELP_EMU_DATAHOME:-/home/defaultuser/.local/share/harbour.kelp/harbour-kelp}"
+DATA_DIR="${KELP_EMU_DATAHOME:-/home/defaultuser/.local/share/org.kapitaali/harbour-kelp}"
 
 HOST=""
 REDACT=0

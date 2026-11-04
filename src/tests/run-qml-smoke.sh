@@ -35,7 +35,7 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SSH_PORT="${KELP_SSH_PORT:-2223}"
 SSH_KEY="${KELP_SSH_KEY:-$HOME/SailfishOS/vmshare/ssh/private_keys/sdk}"
 QML_DIR=/usr/share/harbour-kelp/qml
-DATA_DIR="${KELP_EMU_DATAHOME:-/home/defaultuser/.local/share/harbour.kelp/harbour-kelp}"
+DATA_DIR="${KELP_EMU_DATAHOME:-/home/defaultuser/.local/share/org.kapitaali/harbour-kelp}"
 SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
      -p $SSH_PORT -i $SSH_KEY defaultuser@127.0.0.1"
 

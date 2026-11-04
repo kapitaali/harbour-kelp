@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
     // The organization/application names decide where QStandardPaths puts our
     // data, and Sailjail provisions exactly that directory and hides the rest of
     // ~/.local/share. They must be set before the first path is asked for.
-    QCoreApplication::setOrganizationName(QStringLiteral("harbour.kelp"));
+    QCoreApplication::setOrganizationName(QStringLiteral("org.kapitaali"));
     QCoreApplication::setApplicationName(QStringLiteral("harbour-kelp"));
 
     // Install first: this way any QML load error that follows is captured in

@@ -251,7 +251,7 @@ int main(int argc, char **argv)
     // Redirect the app data directory before anything asks for it, and use a
     // name of our own so a real socket and a real share list are never touched.
     QStandardPaths::setTestModeEnabled(true);
-    QCoreApplication::setOrganizationName(QStringLiteral("harbour.kelp"));
+    QCoreApplication::setOrganizationName(QStringLiteral("org.kapitaali"));
     QCoreApplication::setApplicationName(QStringLiteral("harbour-kelp-test"));
 
     testAcceptable();
