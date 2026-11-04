@@ -389,10 +389,16 @@ key with the bundle id as associated data, so the link carries `#p=` and the
 wrapped blob (`passBlob`) is what the row keeps instead of the passphrase. The folder check that
 decides whether a folder *can* be declared a page is
 `KelpFiles::pageEntry`, which applies the same `Kelp::Web::chooseEntry` rule the
-preview does, so the two cannot disagree. Sealing is synchronous on the UI thread,
-so a large folder freezes the window while it works — and so does a passphrase
-derivation, which is deliberately slow; a worker thread is a known
-TODO. Objects live in `<app data>/objects/<first id byte>/<id>`, next to the log.
+preview does, so the two cannot disagree. The QML page calls `sealAsync()`, which
+does the sealing on a worker thread (`KelpWork<Result>`, `src/kelpwork.h`) and
+reports back through `sealed()`: a large folder or a deliberately slow passphrase
+derivation no longer freezes the window, and the page can be left while the work
+finishes. Row insertion belongs to the root page's `acceptSealed()`, so a share
+whose page was left mid-seal is still added. The synchronous `seal()` and
+`unlockLink()` remain for tests and non-UI callers. `KelpClient` has the same
+pair for a passphrase fetch (`fetchAsync()` / `fetchForViewingAsync()`), which
+derive the key on a worker before any network round trip. Objects live in
+`<app data>/objects/<first id byte>/<id>`, next to the log.
 Re-sharing the same folder writes new objects because every seal uses fresh
 nonces.
 
@@ -446,7 +452,7 @@ schemas, the `kelp://` link layout and the pinned vectors are in
 Every Qt/QML message and every explicit `kelpLog.*` call lands in one file:
 
 ```
-~/.local/share/harbour.kelp/harbour-kelp/kelp.log
+~/.local/share/org.kapitaali/harbour-kelp/kelp.log
 ```
 
 That is `<OrganizationName>/<ApplicationName>` from the desktop file, i.e. exactly
@@ -462,7 +468,7 @@ re-enabled before investigating a problem. The path is shown on the **About**
 page and **Settings** has a *Clear log* action. Over ssh:
 
 ```sh
-ssh defaultuser@<host> 'tail -f ~/.local/share/harbour.kelp/harbour-kelp/kelp.log'
+ssh defaultuser@<host> 'tail -f ~/.local/share/org.kapitaali/harbour-kelp/kelp.log'
 ```
 
 From QML, use the `kelpLog` context property for structured milestones:
@@ -499,7 +505,7 @@ the link changes; the socket still binds the real interface.
 Both write the link to the log; read it back with:
 
 ```sh
-grep -o 'kelp://[^"]*' ~/.local/share/harbour.kelp/harbour-kelp/kelp.log | tail -1
+grep -o 'kelp://[^"]*' ~/.local/share/org.kapitaali/harbour-kelp/kelp.log | tail -1
 ```
 
 **Did anyone fetch it?** The serving side keeps its own account of a transfer and

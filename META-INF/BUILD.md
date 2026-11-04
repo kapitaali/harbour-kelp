@@ -278,7 +278,7 @@ ssh -p 2223 -i $KEY defaultuser@127.0.0.1 \
 Phone (Jolla C2, aarch64) — the same install on the device: copy
 `RPMS/SailfishOS-5.1.0.11-aarch64/harbour-kelp-0.1.0-1.aarch64.rpm` over (USB or `scp`), then
 `devel-su pkcon install-local -y ~/harbour-kelp-0.1.0-1.aarch64.rpm`, with **developer mode** on.
-The log is `~/.local/share/harbour.kelp/harbour-kelp/kelp.log`, the same path as in the guest.
+The log is `~/.local/share/org.kapitaali/harbour-kelp/kelp.log`, the same path as in the guest.
 `PROGRESS-<date>.md` §4.7 is the recipe for trying the preview there.
 
 Then launch it with the guest's Wayland/DBus environment (an app launched
@@ -291,7 +291,7 @@ ssh -p 2223 -i $KEY defaultuser@127.0.0.1 \
      DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/100000/dbus/user_bus_socket \
      WAYLAND_DISPLAY=../../display/wayland-0 QT_QPA_PLATFORM=wayland \
      setsid /usr/bin/harbour-kelp >/dev/null 2>&1 </dev/null &'
-grep -aE 'build mode|WARN |ERROR' <log>   # ~/.local/share/harbour.kelp/harbour-kelp/kelp.log
+grep -aE 'build mode|WARN |ERROR' <log>   # ~/.local/share/org.kapitaali/harbour-kelp/kelp.log
 ```
 
 A local build made outside the spec (a test binary, a `qmake && make` in the
