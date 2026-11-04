@@ -1,6 +1,6 @@
 # Kelp 0.1.0 — Harbour / Jolla Store submission
 
-Prepared 2026-10-27. Package `harbour-kelp`, release `0.1.0-1`, target
+Prepared 2026-11-04. Package `harbour-kelp`, release `0.1.0-1`, target
 Sailfish OS 5.1.0.11.
 
 ## 1. Identity (dashboard fields)
@@ -28,8 +28,8 @@ Upload **both** architecture builds:
 
 | Architecture | File | Size | SHA-256 |
 |---|---|---|---|
-| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,211 B | `4d21e16e5508a35431a0b67d2942f6b7c22c2274d2a375b73d063f9f49ca443e` |
-| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,408 B | `64f165865eaa554a197a0624ce5da90a96d64d8c683060d698605299c1104baa` |
+| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,676 B | `f9fdbf00e239e7633f31a61d24933b5a3908b374e4d19593501283c9aee53459` |
+| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,674 B | `cd385d35063ec07972c95615979fcc91f8a9ef4b322d26b0b4bd25efe06aeaed` |
 
 The i486 emulator RPM (`RPMS/SailfishOS-5.1.0.11-i486/`) is for local testing
 only and is **not** uploaded. No GPG signature is needed; Harbour accepts an
@@ -186,8 +186,8 @@ Run 2026-10-27 with Sailfish SDK 3.13.5, target SailfishOS-5.1.0.11:
 - No `Nemo.FileManager`, no `%post`/`%postun`, no `/bin/sh` dependency, no
   unstripped-binary warning.
 
-Logs: `/tmp/opencode/harbour-check-aarch64-2.log`,
-`/tmp/opencode/harbour-check-armv7hl3.log`.
+Logs: `/tmp/opencode/harbour-check-aarch64-20261104.log`,
+`/tmp/opencode/harbour-check-armv7hl-20261104.log`.
 
 ## 8. Submission steps
 

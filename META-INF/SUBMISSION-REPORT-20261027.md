@@ -4,7 +4,7 @@
 validated and copied out. The only remaining steps are the authenticated GitHub
 push (after PAT rotation) and the Harbour dashboard upload itself.
 
-**Prepared:** 2026-10-28. Target: Sailfish OS 5.1.0.11, SDK 3.13.5.
+**Prepared:** 2026-11-04. Target: Sailfish OS 5.1.0.11, SDK 3.13.5.
 
 ## 1. Identity
 
@@ -25,8 +25,8 @@ Paste-ready description and changelog: `META-INF/STORE-LISTING.md` §3.
 
 | Arch | Path | Size | SHA-256 |
 |---|---|---|---|
-| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,211 B | `4d21e16e5508a35431a0b67d2942f6b7c22c2274d2a375b73d063f9f49ca443e` |
-| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,408 B | `64f165865eaa554a197a0624ce5da90a96d64d8c683060d698605299c1104baa` |
+| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,676 B | `f9fdbf00e239e7633f31a61d24933b5a3908b374e4d19593501283c9aee53459` |
+| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,674 B | `cd385d35063ec07972c95615979fcc91f8a9ef4b322d26b0b4bd25efe06aeaed` |
 
 Do **not** upload the i486 emulator build from `RPMS/SailfishOS-5.1.0.11-i486/`.
 
@@ -38,8 +38,8 @@ sfdk check -l static -s harbour, armv7hl  : Validation succeeded, 18/18 PASSED
 QML smoke                                 : 9/9 pages Component.Ready
 ```
 
-Logs: `/tmp/opencode/harbour-check-aarch64-2.log`,
-`/tmp/opencode/harbour-check-armv7hl3.log`.
+Logs: `/tmp/opencode/harbour-check-aarch64-20261104.log`,
+`/tmp/opencode/harbour-check-armv7hl-20261104.log`.
 
 Also verified: clean install registers `x-scheme-handler/kelp`; warm and cold
 `kelp://` handoff; folder picker lists home directories; post-reboot launch
