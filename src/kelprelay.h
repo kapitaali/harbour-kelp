@@ -19,10 +19,12 @@
  * which is how a test — or a second deployment — points at a different relay;
  * a release never needs it.
  *
- * The address is reserved, so it survives a restart of the VM; it is a literal
- * rather than a name so a recipient needs no working DNS to share. Publishing
- * through a relay that cannot be reached is not fatal: the link is still minted,
- * without `r=`, and works on the LAN.
+ * The address is a name rather than the reserved literal: the browser gateway
+ * is reached over HTTPS, and a certificate can only match a name. Recipients
+ * fetching from the app also resolve it, which every internet path can do; the
+ * LAN address in the same link needs no DNS. Publishing through a relay that
+ * cannot be reached is not fatal: the link is still minted, without `r=`, and
+ * works on the LAN.
  */
 inline QStringList kelpDefaultRelays()
 {
@@ -30,7 +32,7 @@ inline QStringList kelpDefaultRelays()
     if (!override.isEmpty())
         return QStringList() << override;
 
-    return QStringList() << QStringLiteral("82.70.43.26:9443");
+    return QStringList() << QStringLiteral("kelp.kapitaali.com:9443");
 }
 
 #endif // KELPRELAY_H

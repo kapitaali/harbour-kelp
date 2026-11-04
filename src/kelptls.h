@@ -52,7 +52,9 @@ public:
     ~KelpTls();
 
     // Server side: the certificate and key to present (PEM). Must be set before
-    // start() in Server mode. The certificate is normally self-signed.
+    // start() in Server mode. The certificate PEM may carry the intermediates
+    // after the leaf; they are sent with it. A local server normally uses one
+    // self-signed certificate, a relay with a public CA a full chain.
     bool setCertificate(const QByteArray &certificatePem, const QByteArray &keyPem,
                         QString *error);
 

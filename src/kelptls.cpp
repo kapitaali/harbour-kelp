@@ -178,18 +178,37 @@ bool KelpTls::start(Mode mode, QTcpSocket *socket, QString *error)
         }
         BIO *certBio = BIO_new_mem_buf(m_certificatePem.constData(), m_certificatePem.size());
         X509 *certificate = certBio ? PEM_read_bio_X509(certBio, nullptr, nullptr, nullptr) : nullptr;
-        BIO_free(certBio);
         BIO *keyBio = BIO_new_mem_buf(m_keyPem.constData(), m_keyPem.size());
         EVP_PKEY *key = keyBio ? PEM_read_bio_PrivateKey(keyBio, nullptr, nullptr, nullptr) : nullptr;
         BIO_free(keyBio);
-        const bool loaded = certificate && key
-            && SSL_CTX_use_certificate(m_ctx, certificate) == 1
-            && SSL_CTX_use_PrivateKey(m_ctx, key) == 1;
+
+        // The PEM may hold the intermediates after the leaf, which a public CA
+        // chain needs: a client that does not already know the issuer cannot
+        // build the path from the leaf alone. Each extra certificate is handed
+        // to the context, which takes ownership on success.
+        bool loaded = certificate != nullptr
+            && SSL_CTX_use_certificate(m_ctx, certificate) == 1;
+        if (loaded) {
+            X509 *chain = nullptr;
+            while ((chain = PEM_read_bio_X509(certBio, nullptr, nullptr, nullptr))) {
+                if (SSL_CTX_add_extra_chain_cert(m_ctx, chain) != 1) {
+                    X509_free(chain);
+                    loaded = false;
+                    break;
+                }
+            }
+            // Reading past the last certificate sets a PEM error; it is the
+            // expected end of the file, not a TLS failure.
+            ERR_clear_error();
+        }
         if (certificate)
             X509_free(certificate);
+        if (certBio)
+            BIO_free(certBio);
+        const bool keyLoaded = key && SSL_CTX_use_PrivateKey(m_ctx, key) == 1;
         if (key)
             EVP_PKEY_free(key);
-        if (!loaded) {
+        if (!loaded || !keyLoaded) {
             *error = opensslError(QStringLiteral("could not load the server certificate"));
             return false;
         }

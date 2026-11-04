@@ -25,8 +25,8 @@ Paste-ready description and changelog: `META-INF/STORE-LISTING.md` §3.
 
 | Arch | Path | Size | SHA-256 |
 |---|---|---|---|
-| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,676 B | `f9fdbf00e239e7633f31a61d24933b5a3908b374e4d19593501283c9aee53459` |
-| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,674 B | `cd385d35063ec07972c95615979fcc91f8a9ef4b322d26b0b4bd25efe06aeaed` |
+| aarch64 | `/home/theb/Downloads/harbour-kelp-0.1.0-1.aarch64.rpm` | 335,737 B | `4ebe21b03e2760d552960c671b625d8d244e78f42d1930d92b5f915aed255bf2` |
+| armv7hl | `/home/theb/Downloads/harbour-kelp-0.1.0-1.armv7hl.rpm` | 307,638 B | `c75c2e3ebd599091f27fb81ec94313d565a0a8a2d7849e2855782e89fc127ca5` |
 
 Do **not** upload the i486 emulator build from `RPMS/SailfishOS-5.1.0.11-i486/`.
 
@@ -45,6 +45,11 @@ Also verified: clean install registers `x-scheme-handler/kelp`; warm and cold
 `kelp://` handoff; folder picker lists home directories; post-reboot launch
 restores and serves saved shares; a real link was downloaded into the emulator's
 Downloads (1 PDF, 2,463,198 bytes, 12 objects).
+
+Live relay: `kelp.kapitaali.com:9443` presents the Let's Encrypt chain
+(`Verify return code: 0`), and negotiates both ALPN protocols (`http/1.1` for
+the browser gateway, `kelp/1` for the app tunnel). The app's default relay is
+now the name, not the reserved address, so the gateway's certificate matches.
 
 ## 4. Store graphics
 
