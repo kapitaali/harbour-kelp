@@ -253,12 +253,6 @@ Page {
     function startDownload() {
         kelpLog.info("OpenLinkPage: download pressed for \""
                      + redactLink(openPage.link) + "\"")
-        // Remember this bundle as accepted (§12.10) unless the user asked to
-        // be asked every time.
-        if (!kelpSettings.alwaysConfirmReceive && openPage.facts
-                && openPage.facts.bundleId.length > 0) {
-            kelpSettings.acceptBundle(openPage.facts.bundleId)
-        }
         if (!kelpClient.fetchAsync(openPage.link, openPage.passphrase)) {
             kelpLog.error("OpenLinkPage: fetch refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
@@ -710,8 +704,15 @@ Page {
                               ? qsTr("Open in browser")
                               : openPage.failedHere ? qsTr("Try again")
                                                     : qsTr("Download")
-                        onClicked: openPage.viewOnly ? openPage.startOpen()
-                                                     : openPage.startDownload()
+                        onClicked: {
+                            if (openPage.viewOnly) {
+                                openPage.startOpen()
+                            } else if (openPage.needsConfirm) {
+                                confirmReceive.open()
+                            } else {
+                                openPage.startDownload()
+                            }
+                        }
                     }
 
                     Button {
@@ -736,6 +737,50 @@ Page {
                 font.pixelSize: Theme.fontSizeExtraSmall
                 text: qsTr("What arrived before that is in %1").arg(kelpClient.destination)
             }
+        }
+    }
+
+    // Per-bundle confirmation (§12.10): when a bundle has not been accepted
+    // before (or "always confirm" is on), ask before downloading.
+    Dialog {
+        id: confirmReceive
+
+        acceptDestinationAction: PageStackAction.Pop
+
+        Column {
+            width: parent.width
+            spacing: Theme.paddingMedium
+
+            DialogHeader {
+                title: qsTr("Receive this bundle?")
+                acceptText: qsTr("Download")
+                cancelText: qsTr("Cancel")
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                text: openPage.facts && openPage.facts.name.length > 0
+                      ? openPage.facts.name
+                      : qsTr("Unnamed bundle")
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: qsTr("A link is a capability: anyone who holds it can read the bundle. Downloading fetches and saves every file.")
+            }
+        }
+
+        onAccepted: {
+            if (openPage.facts && openPage.facts.bundleId.length > 0) {
+                kelpSettings.acceptBundle(openPage.facts.bundleId)
+            }
+            openPage.startDownload()
         }
     }
 
