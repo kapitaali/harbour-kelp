@@ -104,6 +104,49 @@ Page {
 
             PageHeader { title: qsTr("Settings") }
 
+            // Storage cleanup — moved to the top so it is visible and easy to
+            // reach, especially with received bundles accumulating objects.
+            SectionHeader { text: qsTr("Storage") }
+
+            TextSwitch {
+                text: qsTr("Auto-clean unused objects")
+                description: qsTr("When a share is stopped, delete the objects it alone used automatically. The manual button below still works either way.")
+                checked: kelpSettings.autoPruneUnusedObjects
+                onCheckedChanged: {
+                    if (checked !== kelpSettings.autoPruneUnusedObjects)
+                        kelpSettings.autoPruneUnusedObjects = checked
+                }
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: settingsPage.usageText()
+            }
+
+            Button {
+                width: parent.width
+                text: qsTr("Remove unused objects")
+                // Not while a fetch is running: its objects are not in use yet, and
+                // deleting them mid-transfer would break the download.
+                enabled: settingsPage.usage && settingsPage.usage.ok
+                         && settingsPage.usage.unusedObjects > 0 && !kelpClient.busy
+                onClicked: confirmPrune.open()
+            }
+
+            Label {
+                visible: kelpClient.busy
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                wrapMode: Text.Wrap
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: qsTr("A download is running, so nothing can be removed just now.")
+            }
+
             SectionHeader { text: qsTr("Sharing") }
 
             TextSwitch {
@@ -205,46 +248,6 @@ Page {
                 }
             }
 
-            SectionHeader { text: qsTr("Storage") }
-
-            TextSwitch {
-                text: qsTr("Auto-clean unused objects")
-                description: qsTr("When a share is stopped, delete the objects it alone used automatically. The manual button below still works either way.")
-                checked: kelpSettings.autoPruneUnusedObjects
-                onCheckedChanged: {
-                    if (checked !== kelpSettings.autoPruneUnusedObjects)
-                        kelpSettings.autoPruneUnusedObjects = checked
-                }
-            }
-
-            Label {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                wrapMode: Text.Wrap
-                color: Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                text: settingsPage.usageText()
-            }
-
-            Button {
-                width: parent.width
-                text: qsTr("Remove unused objects")
-                // Not while a fetch is running: its objects are not in use yet, and
-                // deleting them mid-transfer would break the download.
-                enabled: settingsPage.usage && settingsPage.usage.ok
-                         && settingsPage.usage.unusedObjects > 0 && !kelpClient.busy
-                onClicked: confirmPrune.open()
-            }
-
-            Label {
-                visible: kelpClient.busy
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * Theme.horizontalPageMargin
-                wrapMode: Text.Wrap
-                color: Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                text: qsTr("A download is running, so nothing can be removed just now.")
-            }
 
             SectionHeader { text: qsTr("Diagnostics") }
 
