@@ -105,12 +105,32 @@ if [ -z "$HOST" ]; then
             break
         fi
     done
-    HOST="${WIFI:-$DEFAULT}"
+    # VM/bridge networks (172.16-31.x.x) are a third candidate tier: a recipient
+    # on a VM or container network (e.g. the Sailfish SDK's br-sfdk-* bridge)
+    # can reach this host on 172.28.x.x even when Wi-Fi and the default route
+    # point elsewhere. These are filtered out of OTHERS below, so they must be
+    # considered here explicitly.
+    VM=""
+    for addr in $(ip -4 -o addr show up 2>/dev/null \
+                  | awk '$2 !~ /^(docker|vbox|virbr|lo)/ {
+                        a = $4; sub(/\/.*/, "", a);
+                        if (a ~ /^172\.(1[6-9]|2[0-9]|3[01])\./) print a }'); do
+        if [ -z "$VM" ]; then
+            VM="$addr"
+        fi
+    done
+
+    HOST="${WIFI:-${DEFAULT:-$VM}}"
+    [ -n "$HOST" ] || HOST="$VM"
     [ -n "$HOST" ] || { echo "cannot work out this host's address; pass --host" >&2; exit 1; }
 
     if [ -n "$WIFI" ] && [ "$WIFI" != "$DEFAULT" ]; then
         echo "note: advertising $WIFI, the Wi-Fi LAN — a phone is usually there;" >&2
         echo "      the default route is $DEFAULT." >&2
+    fi
+    if [ -n "$VM" ] && [ "$VM" != "$HOST" ]; then
+        echo "note: a VM/bridge address $VM is also available;" >&2
+        echo "      pass --host $VM if the recipient is on that network." >&2
     fi
 
     # Whatever was picked is still only a guess about where the recipient is.
@@ -119,7 +139,7 @@ if [ -z "$HOST" ]; then
     # leave the link looking broken. Bridges and the docker/vbox nets are not
     # candidates for a recipient.
     OTHERS="$(ip -4 -o addr show up 2>/dev/null \
-              | awk -v h="$HOST" '$2 !~ /^(docker|br-|vbox|virbr|lo)/ {
+              | awk -v h="$HOST" '$2 !~ /^(docker|vbox|virbr|lo)/ {
                     a = $4; sub(/\/.*/, "", a); if (a != h) print a }' \
               | tr '\n' ' ')"
     if [ -n "$OTHERS" ]; then
