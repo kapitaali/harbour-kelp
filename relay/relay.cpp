@@ -1,6 +1,7 @@
 #include "relay.h"
 
 #include <QDateTime>
+#include <climits>
 #include <QDebug>
 #include <QFile>
 #include <QHostAddress>
@@ -308,6 +309,15 @@ void Relay::handleRequest(Connection *connection, const QByteArray &request)
                     QByteArrayLiteral("no such object\n"));
             return;
         }
+        if (m_cache.contains(objectId)) {
+            // Cache hit: serve from cache without bothering the origin.
+            m_cache[objectId].lastUsed = QDateTime::currentMSecsSinceEpoch();
+            QByteArray body = m_cache.value(objectId).bytes;
+            respond(connection, 200, "OK", "application/octet-stream", body);
+            connection->busy = false;
+            return;
+        }
+
         if (!bundle.tunnel) {
             respond(connection, 404, "Not Found", "text/plain; charset=utf-8",
                     QByteArrayLiteral("the origin is not connected\n"));
@@ -496,6 +506,33 @@ void Relay::answerPending(const QByteArray &objectId, const QByteArray &bytes, b
 
     pending.recipient->busy = false;
     if (found) {
+        // Cache the object for future requests (WS-C1).
+        if (!m_cache.contains(objectId)) {
+            // Evict if over limit.
+            while (m_cacheBytes + (quint64)bytes.size() > kCacheLimitBytes
+                   && !m_cache.isEmpty()) {
+                // Find LRU entry.
+                QByteArray oldest;
+                qint64 oldestTime = LLONG_MAX;
+                for (auto it = m_cache.begin(); it != m_cache.end(); ++it) {
+                    if (it.value().lastUsed < oldestTime) {
+                        oldestTime = it.value().lastUsed;
+                        oldest = it.key();
+                    }
+                }
+                if (oldest.isEmpty())
+                    break;
+                m_cacheBytes -= m_cache.value(oldest).bytes.size();
+                m_cache.remove(oldest);
+            }
+            CacheEntry entry;
+            entry.bytes = bytes;
+            entry.lastUsed = QDateTime::currentMSecsSinceEpoch();
+            m_cache.insert(objectId, entry);
+            m_cacheBytes += bytes.size();
+        } else {
+            m_cache[objectId].lastUsed = QDateTime::currentMSecsSinceEpoch();
+        }
         respond(pending.recipient, 200, "OK", "application/octet-stream", bytes);
     } else {
         respond(pending.recipient, 404, "Not Found", "text/plain; charset=utf-8",

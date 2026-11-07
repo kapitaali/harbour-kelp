@@ -128,6 +128,17 @@ private:
     QHash<QByteArray, Bundle> m_bundles;              // bundle_id -> bundle
     QHash<QByteArray, Pending> m_pending;             // object_id -> waiting recipient
     QHash<KelpTls *, QList<QByteArray> > m_tunnels;   // tunnel -> bundle ids it serves
+
+    // Object cache (WS-C1): the relay keeps recently fetched ciphertext so a
+    // link outlives the publisher's tunnel. Keyed by object id; the bytes are
+    // the same ciphertext envelope the publisher sent. LRU eviction by total size.
+    struct CacheEntry {
+        QByteArray bytes;
+        qint64 lastUsed;
+    };
+    QHash<QByteArray, CacheEntry> m_cache;
+    quint64 m_cacheBytes = 0;
+    static const quint64 kCacheLimitBytes = 64 * 1024 * 1024; // 64 MiB
 };
 
 #endif // KELP_RELAY_H
