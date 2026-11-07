@@ -12,7 +12,6 @@ const char kWifiOnlyKey[] = "share/wifi_only";
 const char kPeerSwarmKey[] = "share/peer_swarm";
 const char kAutoPruneUnusedObjectsKey[] = "storage/auto_prune_unused";
 const char kAlwaysConfirmReceiveKey[] = "receive/always_confirm";
-const char kKeepReceivedBundlesKey[] = "receive/keep_received";
 const char kAcceptedBundlesKey[] = "receive/accepted_bundles";
 const char kIncludeLinksInLogKey[] = "log/include_links";
 const char kDownloadDirectoryKey[] = "download/directory";
@@ -192,21 +191,4 @@ void KelpSettings::forgetAcceptedBundles()
     m_settings.remove(QString::fromLatin1(kAcceptedBundlesKey));
     m_settings.sync();
     emit acceptedBundlesChanged();
-}
-bool KelpSettings::keepReceivedBundles() const
-{
-    // Off by default: keeping every received bundle's objects would fill the
-    // store, and the existing behaviour (write files, then prune) is what most
-    // recipients want. On is for a device that re-serves or re-opens later.
-    return m_settings.value(QString::fromLatin1(kKeepReceivedBundlesKey), false).toBool();
-}
-
-void KelpSettings::setKeepReceivedBundles(bool on)
-{
-    if (on == keepReceivedBundles())
-        return;
-
-    m_settings.setValue(QString::fromLatin1(kKeepReceivedBundlesKey), on);
-    m_settings.sync();
-    emit keepReceivedBundlesChanged();
 }

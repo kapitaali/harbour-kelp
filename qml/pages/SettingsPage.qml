@@ -228,16 +228,6 @@ Page {
                 }
             }
 
-            TextSwitch {
-                text: qsTr("Keep received bundles")
-                description: qsTr("Keep a received bundle's objects in the store so it can be re-opened, re-served or re-downloaded later. Off by default: objects are removed once the files are written.")
-                checked: kelpSettings.keepReceivedBundles
-                onCheckedChanged: {
-                    if (checked !== kelpSettings.keepReceivedBundles)
-                        kelpSettings.keepReceivedBundles = checked
-                }
-            }
-
             Button {
                 width: parent.width
                 text: qsTr("Forget accepted bundles")

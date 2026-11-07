@@ -23,14 +23,14 @@ No code changes ship in 0.1.0; everything below is 0.2.0+ work.
 | G6 | Per-bundle confirmation prompt (§12.10) | S | P2 |
 | G7 | Receive-side preview of page in folder share (§5.4 / C4a.1) | M | P2 |
 | G8 | Embedded Sailfish.WebView (§12.9) | M | P3 |
-| G9 | Serve-again-what-you-downloaded (re-publish received bundle) | M | P2 |
+| G9 | (DROPPED) Serve-again — contradicts ephemeral model | — | — |
 | G10 | Ephemeral rooms / anonymous chat (Appendix B) | XL | P4 (parked) |
 
 ### 1.2 Partially built (code exists, gaps remain)
 
 | # | Gap | What exists | What's missing | Effort | Priority |
 |---|-----|-------------|----------------|--------|----------|
-| G11 | C4a preview | kelppreviewserver, preview tests | per-bundle confirm, on-device browser pass, WebView, keep received bundle as row | M | P2 |
+| G11 | C4a preview | kelppreviewserver, preview tests | per-bundle confirm, on-device browser pass, WebView | M | P2 |
 | G12 | C4b gateway | relay gateway, loader, SW | `#p=` passphrase case, app Copy browser link (removed 2026-10-21) | S | P2 |
 | G13 | C2a LAN publish | LAN serving, address rebind | TLS on LAN, auto-start, old-link repair after network move | M | P3 |
 | G14 | C2b LAN fetch | LAN fetch, retry on relay | re-serve downloaded bundles | M | P2 |
@@ -59,7 +59,7 @@ No code changes ship in 0.1.0; everything below is 0.2.0+ work.
 G16 (auto-delete) ──┐
 G6 (per-bundle confirm) ──┤
 G11 (C4a preview) ──┤
-G7 (folder preview) ──┤──► G14 (re-serve downloaded) ──► G9 (serve-again UI)
+G7 (folder preview) ──┤
 G12 (gateway #p=) ──┤
 G3 (relay caching) ──┤──► G2 (stewards/channels)
 G4 (streaming) ──────┤
@@ -83,7 +83,7 @@ G13 (TLS on LAN) ── independent
 ### Phase B — Medium features (M effort, some dependencies)
 
 5. **G7**: Receive-side preview of page in folder share (§5.4)
-6. **G11**: Complete C4a preview (on-device browser pass, keep received bundle as row)
+6. **G11**: Complete C4a preview (on-device browser pass)
 7. **G14**: Re-serve downloaded bundles (foundation for G9)
 8. **G9**: Serve-again-what-you-downloaded (UI)
 9. **G13**: TLS on LAN path (optional, may break compatibility)
@@ -192,25 +192,18 @@ requiring manual invocation.
 
 **Items:**
 - On-device browser pass (verify with real browser on phone)
-- Keep received bundle as a row (§12.13) — re-open, re-serve, re-download
 - Per-bundle confirmation (covered by WS-A2)
+
+**Removed from scope (owner decision 2026-11-07):** "Keep received bundle as a row" and
+"re-serve/re-download" are dropped. Snap-like ephemeral model: shared things vanish.
 
 **Files:** `src/kelpclient.cpp`, `qml/pages/OpenLinkPage.qml`, `qml/harbour-kelp.qml`
 
 **Risk:** Medium. Keeping received bundles as rows changes data model.
 
-### WS-B3: Re-serve downloaded bundles (G14, G9)
+### WS-B3: (DROPPED — owner decision 2026-11-07)
 
-**Goal:** Allow re-publishing a received bundle.
-
-**Approach:**
-- Add "Share again" button on received bundle rows
-- Re-seal the bundle with a new secret (or reuse original if still available)
-- Requires G11's "keep as row" to be done first
-
-**Dependencies:** G11 (WS-B2)
-
-**Risk:** Medium-High. Security implications of re-sharing.
+Re-sharing contradicts the snap-like ephemeral model. Removed from plan.
 
 ### WS-B4: TLS on LAN path (G13)
 
