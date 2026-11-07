@@ -71,11 +71,101 @@
             fields[part.slice(0, cut)] = part.slice(cut + 1);
     });
 
+    // A passphrase link wraps the secret under a passphrase (§12.3). The
+    // gateway can unwrap it in the browser: PBKDF2-HMAC-SHA256 derives a key
+    // from the passphrase, and AES-256-GCM decrypts the wrapped secret with
+    // the bundle id as authenticated data. The user types the passphrase here;
+    // nothing leaves the browser.
     if (fields.p) {
-        // A passphrase link wraps the secret and needs the app to unwrap it
-        // (plan D4). The wrapped blob is self-describing, so this can change
-        // later without breaking links already handed out.
-        showError('This link is protected by a passphrase. Open it with the Kelp app.');
+        // Decode the wrapped blob (81 bytes).
+        var wrappedBytes;
+        try {
+            wrappedBytes = G.base64UrlDecode(fields.p);
+        } catch (e) {
+            showError('This link is damaged: the wrapped secret cannot be read.');
+            return;
+        }
+        if (wrappedBytes.length !== 81) {
+            showError('This link is damaged: the wrapped secret has the wrong size.');
+            return;
+        }
+        if (wrappedBytes[0] !== 1) {
+            showError('This link uses a passphrase format this gateway does not support.');
+            return;
+        }
+        var iterations = (wrappedBytes[1] << 24) | (wrappedBytes[2] << 16)
+                       | (wrappedBytes[3] << 8) | wrappedBytes[4];
+        if (iterations < 1 || iterations > 10000000) {
+            showError('This link asks for an unreasonable number of key-derivation rounds.');
+            return;
+        }
+        var salt = wrappedBytes.slice(5, 21);
+        var nonce = wrappedBytes.slice(21, 33);
+        var ciphertext = wrappedBytes.slice(33); // 48 bytes: 32 secret + 16 tag
+
+        // Build a passphrase input in the page.
+        var input = document.createElement('input');
+        input.type = 'password';
+        input.placeholder = 'Passphrase';
+        input.style.cssText = 'width:100%;padding:.5rem;margin:.5rem 0;font:inherit;';
+        var button = document.createElement('button');
+        button.textContent = 'Unlock';
+        button.style.cssText = 'margin:.5rem 0;';
+        var container = document.createElement('div');
+        container.appendChild(input);
+        container.appendChild(document.createElement('br'));
+        container.appendChild(button);
+        statusEl.parentNode.insertBefore(container, statusEl.nextSibling);
+        setStatus('This link is protected by a passphrase. Type it here.', '');
+
+        button.addEventListener('click', function () {
+            var passphrase = input.value;
+            if (!passphrase) {
+                showError('Type the passphrase that came with the link.');
+                return;
+            }
+            setStatus('Unlocking…', 'busy');
+            button.disabled = true;
+
+            // Derive the key with PBKDF2-HMAC-SHA256.
+            var enc = new TextEncoder();
+            var passphraseBytes = enc.encode(passphrase);
+            window.crypto.subtle.importKey(
+                'raw', passphraseBytes, 'PBKDF2', false, ['deriveKey']
+            ).then(function (keyMaterial) {
+                return window.crypto.subtle.deriveKey(
+                    { name: 'PBKDF2', salt: salt, iterations: iterations, hash: 'SHA-256' },
+                    keyMaterial,
+                    { name: 'AES-GCM', length: 256 },
+                    false,
+                    ['decrypt']
+                );
+            }).then(function (aesKey) {
+                // Decrypt the wrapped secret. AAD = bundle id.
+                return window.crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: nonce, additionalData: bundleId },
+                    aesKey,
+                    ciphertext
+                );
+            }).then(function (plainBuf) {
+                var secretBytes = new Uint8Array(plainBuf);
+                if (secretBytes.length !== 32) {
+                    throw new Error('bad secret length');
+                }
+                // Base64url-encode the unwrapped secret and replace the
+                // passphrase fragment with a key fragment, then reload so the
+                // whole bootstrap runs again with the unwrapped key. The
+                // passphrase never reaches the URL history beyond this point.
+                var b64 = G.base64UrlEncode(Array.from(secretBytes));
+                location.hash = '#k=' + b64;
+                location.reload();
+            }).catch(function (e) {
+                showError('That passphrase did not work. Check it and try again.');
+                button.disabled = false;
+            });
+        });
+
+        // Stop here until the user unlocks.
         return;
     }
     if (!fields.k) {
