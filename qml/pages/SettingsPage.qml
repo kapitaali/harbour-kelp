@@ -173,6 +173,28 @@ Page {
                 text: qsTr("This is a permission, not a per-bundle setting: enable it here, then choose per share. Bundles stay encrypted either way — peers only ever exchange ciphertext they cannot read.")
             }
 
+            SectionHeader { text: qsTr("Receiving") }
+
+            TextSwitch {
+                text: qsTr("Always confirm before receiving")
+                description: qsTr("Ask before downloading a bundle, even ones accepted before. Off means a bundle accepted once is remembered.")
+                checked: kelpSettings.alwaysConfirmReceive
+                onCheckedChanged: {
+                    if (checked !== kelpSettings.alwaysConfirmReceive)
+                        kelpSettings.alwaysConfirmReceive = checked
+                }
+            }
+
+            Button {
+                width: parent.width
+                text: qsTr("Forget accepted bundles")
+                enabled: kelpSettings.acceptedBundles.length > 0
+                onClicked: {
+                    kelpSettings.forgetAcceptedBundles()
+                    kelpLog.info("Settings: forgot accepted bundles")
+                }
+            }
+
             SectionHeader { text: qsTr("Storage") }
 
             TextSwitch {

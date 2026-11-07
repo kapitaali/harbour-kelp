@@ -11,6 +11,8 @@ const char kShareInBackgroundKey[] = "share/in_background";
 const char kWifiOnlyKey[] = "share/wifi_only";
 const char kPeerSwarmKey[] = "share/peer_swarm";
 const char kAutoPruneUnusedObjectsKey[] = "storage/auto_prune_unused";
+const char kAlwaysConfirmReceiveKey[] = "receive/always_confirm";
+const char kAcceptedBundlesKey[] = "receive/accepted_bundles";
 const char kIncludeLinksInLogKey[] = "log/include_links";
 const char kDownloadDirectoryKey[] = "download/directory";
 
@@ -149,4 +151,44 @@ void KelpSettings::setAutoPruneUnusedObjects(bool on)
     m_settings.setValue(QString::fromLatin1(kAutoPruneUnusedObjectsKey), on);
     m_settings.sync();
     emit autoPruneUnusedObjectsChanged();
+}
+bool KelpSettings::alwaysConfirmReceive() const
+{
+    // Off by default: a bundle accepted once is remembered, so repeating the
+    // same link does not re-ask. On means every incoming link asks again.
+    return m_settings.value(QString::fromLatin1(kAlwaysConfirmReceiveKey), false).toBool();
+}
+
+void KelpSettings::setAlwaysConfirmReceive(bool on)
+{
+    if (on == alwaysConfirmReceive())
+        return;
+
+    m_settings.setValue(QString::fromLatin1(kAlwaysConfirmReceiveKey), on);
+    m_settings.sync();
+    emit alwaysConfirmReceiveChanged();
+}
+QStringList KelpSettings::acceptedBundles() const
+{
+    return m_settings.value(QString::fromLatin1(kAcceptedBundlesKey)).toStringList();
+}
+
+void KelpSettings::acceptBundle(const QString &bundleId)
+{
+    if (bundleId.isEmpty())
+        return;
+    QStringList list = acceptedBundles();
+    if (list.contains(bundleId))
+        return;
+    list.append(bundleId);
+    m_settings.setValue(QString::fromLatin1(kAcceptedBundlesKey), list);
+    m_settings.sync();
+    emit acceptedBundlesChanged();
+}
+
+void KelpSettings::forgetAcceptedBundles()
+{
+    m_settings.remove(QString::fromLatin1(kAcceptedBundlesKey));
+    m_settings.sync();
+    emit acceptedBundlesChanged();
 }

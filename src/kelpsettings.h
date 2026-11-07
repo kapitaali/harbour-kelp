@@ -19,6 +19,7 @@
 #include <QObject>
 #include <QSettings>
 #include <QString>
+#include <QStringList>
 
 class KelpSettings : public QObject
 {
@@ -71,6 +72,12 @@ class KelpSettings : public QObject
     Q_PROPERTY(bool autoPruneUnusedObjects READ autoPruneUnusedObjects
                    WRITE setAutoPruneUnusedObjects NOTIFY autoPruneUnusedObjectsChanged)
 
+    // Settings → always confirm before receiving. Off by default: a bundle that
+    // has been accepted once is remembered and not re-asked. On means every
+    // incoming link asks again, even bundles accepted before.
+    Q_PROPERTY(bool alwaysConfirmReceive READ alwaysConfirmReceive
+                   WRITE setAlwaysConfirmReceive NOTIFY alwaysConfirmReceiveChanged)
+
 public:
     explicit KelpSettings(QObject *parent = nullptr);
 
@@ -99,6 +106,15 @@ public:
     bool autoPruneUnusedObjects() const;
     void setAutoPruneUnusedObjects(bool on);
 
+    bool alwaysConfirmReceive() const;
+    void setAlwaysConfirmReceive(bool on);
+
+    // Remembered accepted bundle ids (§12.10). Empty means "ask every time"
+    // unless alwaysConfirmReceive is off and the bundle has been accepted before.
+    QStringList acceptedBundles() const;
+    void acceptBundle(const QString &bundleId);
+    void forgetAcceptedBundles();
+
 signals:
     void includeLanAddressChanged();
     void includeLinksInLogChanged();
@@ -107,6 +123,8 @@ signals:
     void wifiOnlyChanged();
     void peerSwarmChanged();
     void autoPruneUnusedObjectsChanged();
+    void alwaysConfirmReceiveChanged();
+    void acceptedBundlesChanged();
 
 private:
     QSettings m_settings;

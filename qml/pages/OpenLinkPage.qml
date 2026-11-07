@@ -245,6 +245,12 @@ Page {
     function startDownload() {
         kelpLog.info("OpenLinkPage: download pressed for \""
                      + redactLink(openPage.link) + "\"")
+        // Remember this bundle as accepted (§12.10) unless the user asked to
+        // be asked every time.
+        if (!kelpSettings.alwaysConfirmReceive && openPage.facts
+                && openPage.facts.bundleId.length > 0) {
+            kelpSettings.acceptBundle(openPage.facts.bundleId)
+        }
         if (!kelpClient.fetchAsync(openPage.link, openPage.passphrase)) {
             kelpLog.error("OpenLinkPage: fetch refused: " + kelpClient.error)
             toast.show(qsTr("Could not start: %1").arg(kelpClient.error))
