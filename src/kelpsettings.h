@@ -78,6 +78,13 @@ class KelpSettings : public QObject
     Q_PROPERTY(bool alwaysConfirmReceive READ alwaysConfirmReceive
                    WRITE setAlwaysConfirmReceive NOTIFY alwaysConfirmReceiveChanged)
 
+    // Settings → Keep received bundles. Off by default: a received bundle's
+    // objects are deleted after the files are written, as before. On means
+    // the objects stay in the store so the bundle can be re-opened, re-served
+    // or re-downloaded later (design §12.13).
+    Q_PROPERTY(bool keepReceivedBundles READ keepReceivedBundles
+                   WRITE setKeepReceivedBundles NOTIFY keepReceivedBundlesChanged)
+
 public:
     explicit KelpSettings(QObject *parent = nullptr);
 
@@ -109,6 +116,9 @@ public:
     bool alwaysConfirmReceive() const;
     void setAlwaysConfirmReceive(bool on);
 
+    bool keepReceivedBundles() const;
+    void setKeepReceivedBundles(bool on);
+
     // Remembered accepted bundle ids (§12.10). Empty means "ask every time"
     // unless alwaysConfirmReceive is off and the bundle has been accepted before.
     QStringList acceptedBundles() const;
@@ -124,6 +134,7 @@ signals:
     void peerSwarmChanged();
     void autoPruneUnusedObjectsChanged();
     void alwaysConfirmReceiveChanged();
+    void keepReceivedBundlesChanged();
     void acceptedBundlesChanged();
 
 private:
