@@ -1296,7 +1296,11 @@ void KelpClient::streamFinish()
     m_phase = Done;
 
     // Clean up manifests from store (snap model).
-    // For now, leave them; they'll be pruned by auto-prune or manual cleanup.
+    // Delete all objects that were fetched during the manifest pass.
+    // For the on-disk store, we can't easily enumerate, so leave them for
+    // auto-prune. For memory stores (views), this is a no-op since views
+    // don't stream.
+    m_streamFiles.clear();
 
     qInfo() << "KelpClient: streamed" << m_files << "files," << m_bytes << "bytes to"
             << m_destination;

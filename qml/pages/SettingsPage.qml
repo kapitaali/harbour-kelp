@@ -228,6 +228,22 @@ Page {
                 }
             }
 
+            ComboBox {
+                id: receiveModeCombo
+                label: qsTr("Receive mode")
+                description: qsTr("Store mode fetches all objects first, then writes files (proven, higher disk use). Stream mode fetches manifests first, then streams content directly to files (lower disk use, experimental).")
+                currentIndex: kelpSettings.receiveMode === "stream" ? 1 : 0
+                menu: ContextMenu {
+                    MenuItem { text: qsTr("Store (default)") }
+                    MenuItem { text: qsTr("Stream (experimental)") }
+                }
+                onCurrentIndexChanged: {
+                    var mode = currentIndex === 1 ? "stream" : "store"
+                    if (mode !== kelpSettings.receiveMode)
+                        kelpSettings.receiveMode = mode
+                }
+            }
+
             Button {
                 width: parent.width
                 text: qsTr("Forget accepted bundles")
