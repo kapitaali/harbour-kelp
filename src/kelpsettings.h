@@ -72,9 +72,14 @@ class KelpSettings : public QObject
     Q_PROPERTY(bool autoPruneUnusedObjects READ autoPruneUnusedObjects
                    WRITE setAutoPruneUnusedObjects NOTIFY autoPruneUnusedObjectsChanged)
 
+    // Settings → receive mode. "store" (default) fetches all objects into the
+    // store first, then writes files. "stream" fetches manifests first, then
+    // streams content chunks directly to files. Streaming uses less disk space
+    // but is more complex and less tested.
+    Q_PROPERTY(QString receiveMode READ receiveMode
+                   WRITE setReceiveMode NOTIFY receiveModeChanged)
+
     // Settings → always confirm before receiving. Off by default: a bundle that
-    // has been accepted once is remembered and not re-asked. On means every
-    // incoming link asks again, even bundles accepted before.
     Q_PROPERTY(bool alwaysConfirmReceive READ alwaysConfirmReceive
                    WRITE setAlwaysConfirmReceive NOTIFY alwaysConfirmReceiveChanged)
 
@@ -109,6 +114,9 @@ public:
     bool alwaysConfirmReceive() const;
     void setAlwaysConfirmReceive(bool on);
 
+    QString receiveMode() const;
+    void setReceiveMode(const QString &mode);
+
     // Remembered accepted bundle ids (§12.10). Empty means "ask every time"
     // unless alwaysConfirmReceive is off and the bundle has been accepted before.
     QStringList acceptedBundles() const;
@@ -124,6 +132,7 @@ signals:
     void peerSwarmChanged();
     void autoPruneUnusedObjectsChanged();
     void alwaysConfirmReceiveChanged();
+    void receiveModeChanged();
     void acceptedBundlesChanged();
 
 private:

@@ -12,6 +12,7 @@ const char kWifiOnlyKey[] = "share/wifi_only";
 const char kPeerSwarmKey[] = "share/peer_swarm";
 const char kAutoPruneUnusedObjectsKey[] = "storage/auto_prune_unused";
 const char kAlwaysConfirmReceiveKey[] = "receive/always_confirm";
+const char kReceiveModeKey[] = "receive/mode";
 const char kAcceptedBundlesKey[] = "receive/accepted_bundles";
 const char kIncludeLinksInLogKey[] = "log/include_links";
 const char kDownloadDirectoryKey[] = "download/directory";
@@ -167,6 +168,27 @@ void KelpSettings::setAlwaysConfirmReceive(bool on)
     m_settings.setValue(QString::fromLatin1(kAlwaysConfirmReceiveKey), on);
     m_settings.sync();
     emit alwaysConfirmReceiveChanged();
+}
+
+QString KelpSettings::receiveMode() const
+{
+    // "store" (default) or "stream". Unknown values fall back to "store".
+    const QString mode = m_settings.value(QString::fromLatin1(kReceiveModeKey),
+                                          QStringLiteral("store")).toString();
+    return (mode == QStringLiteral("stream")) ? mode : QStringLiteral("store");
+}
+
+void KelpSettings::setReceiveMode(const QString &mode)
+{
+    const QString normalized = (mode == QStringLiteral("stream"))
+                                   ? QStringLiteral("stream")
+                                   : QStringLiteral("store");
+    if (normalized == receiveMode())
+        return;
+
+    m_settings.setValue(QString::fromLatin1(kReceiveModeKey), normalized);
+    m_settings.sync();
+    emit receiveModeChanged();
 }
 QStringList KelpSettings::acceptedBundles() const
 {

@@ -1,4 +1,5 @@
 #include "kelpclient.h"
+#include "kelpsettings.h"
 
 #include <QDebug>
 #include <QDir>
@@ -394,7 +395,8 @@ KelpClient::KelpClient(Kelp::ObjectStore *store, QObject *parent)
       m_storedThisRound(0),
       m_rounds(0),
       m_files(0),
-      m_bytes(0)
+      m_bytes(0),
+      m_manifestsDone(false)
 {
     m_deadline->setSingleShot(true);
     m_deadline->setInterval(kSilenceMs);
@@ -486,6 +488,7 @@ void KelpClient::reset()
     m_rounds = 0;
     m_files = 0;
     m_bytes = 0;
+    m_manifestsDone = false;
     m_phase = Idle;
     // A view's own bookkeeping goes with it, and its memory is released here if
     // nothing else holds it: any preview session that was serving it holds a
@@ -794,9 +797,17 @@ void KelpClient::walk()
     // A view fetches the shape first: the root and every manifest name the page
     // and its paths, and the browser then asks the session for the data chunks it
     // actually needs (design §5.1). An ordinary fetch still walks everything.
+    //
+    // In stream mode (WS-C2), an ordinary fetch also fetches manifests first,
+    // so the file tree is known before any content is requested. After manifests
+    // arrive, subsequent walks fetch content objects.
+    const bool streaming = (m_settings && m_settings->receiveMode() == QStringLiteral("stream"))
+                           && !m_viewing;
+    const bool manifestPass = m_viewing || (streaming && !m_manifestsDone);
+
     QVector<QByteArray> missing;
     QString error;
-    const bool walked = m_viewing
+    const bool walked = manifestPass
         ? Kelp::missingManifests(activeStore(), m_key, m_bundleId, &missing, &error)
         : Kelp::missingObjects(activeStore(), m_key, m_bundleId, &missing, &error);
     if (!walked) {
@@ -807,7 +818,15 @@ void KelpClient::walk()
     if (missing.isEmpty()) {
         if (m_viewing)
             finishViewing();
-        else {
+        else if (streaming && !m_manifestsDone) {
+            // Manifest pass complete; switch to content pass.
+            m_manifestsDone = true;
+            m_rounds = 0;   // reset round counter for content phase
+            m_storedThisRound = 0;
+            qInfo() << "KelpClient: manifests fetched; now fetching content";
+            walk();
+            return;
+        } else {
             qInfo() << "KelpClient: all" << m_fetched << "objects are here after"
                     << m_rounds << "rounds";
             writeFiles();

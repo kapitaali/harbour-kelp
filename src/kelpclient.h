@@ -236,6 +236,7 @@ private:
     int m_rounds;
     int m_files;
     quint64 m_bytes;
+    bool m_manifestsDone;   // true after manifest pass completes (stream mode)
 };
 
 #endif // KELPCLIENT_H
