@@ -331,6 +331,8 @@ Re-sharing contradicts the snap-like ephemeral model. Removed from plan.
 | A1 | Auto-prune unused objects on unshare + setting | 95a288f | kelpbundles 278/0 |
 | A2 | Per-bundle receive acceptance tracking + confirm prompt | 0b7c567, 9d761ba | kelpsettings 39/0 |
 | A3 | Gateway `#p=` passphrase unwrap (PBKDF2 + AES-GCM) | 4ed9f41 | node --check pass |
+| G6 | Per-bundle confirmation dialog before download | 6d83ce5 | build pass |
+| C1 | Relay-side object cache (LRU, 64 MiB) | 6dfaaa3 | relay ALL PASS |
 
 ### Corrected items (already done, not gaps)
 
@@ -342,7 +344,14 @@ Re-sharing contradicts the snap-like ephemeral model. Removed from plan.
 
 ### Remaining
 
-- Phase B: WS-B2 (C4a completion), WS-B3 (re-serve), WS-B4 (TLS on LAN)
-- Phase C: WS-C1 (relay caching), WS-C2 (streaming), WS-C3 (swarm), WS-C4 (stewards)
-- Phase D: parked items
+- Phase B: WS-B1 (receive-side preview, dropped by user earlier but may revisit)
+- Phase C: WS-C2 (streaming), WS-C3 (swarm), WS-C4 (stewards)
+- Phase D: parked items (auto-start, WebView, ephemeral rooms)
 - Phase E: branch reconciliation (publish/no-rewrite is stale — master wins)
+
+### Design decisions (2026-11-07)
+
+- **Snap-like ephemeral model:** shared things vanish. No re-share, no keep-received.
+  WS-B2 (keep received bundle) and WS-B3 (re-serve) are dropped.
+- **Storage cleanup is prominent:** moved to top of Settings page.
+- **WS-B4 (TLS on LAN):** skipped for now.
