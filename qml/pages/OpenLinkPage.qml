@@ -167,6 +167,14 @@ Page {
                                 || openPage.facts.relays.length > 0)
                             && !openPage.locked && !busy
 
+    // Whether this bundle needs a confirmation before fetching (§12.10):
+    // not accepted before, or the user asked to always confirm.
+    property bool needsConfirm: openPage.facts !== null && openPage.facts.ok
+                                && !openPage.locked
+                                && (kelpSettings.alwaysConfirmReceive
+                                    || !kelpSettings.acceptedBundles
+                                        .indexOf(openPage.facts.bundleId) >= 0)
+
     // Where the files will be written. The chosen folder is remembered across
     // sessions; empty means the platform's Downloads folder, the default.
     property string downloadDirectory: kelpSettings.downloadDirectory
@@ -487,6 +495,16 @@ Page {
                     font.pixelSize: Theme.fontSizeExtraSmall
                     text: qsTr("This is a web page, shared to be looked at: it opens in your browser and nothing is saved on this device.")
                 }
+            }
+
+            Label {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                visible: openPage.needsConfirm && !openPage.busy && !openPage.doneHere
+                wrapMode: Text.Wrap
+                color: Theme.secondaryHighlightColor
+                font.pixelSize: Theme.fontSizeSmall
+                text: qsTr("You have not received this bundle before. Pressing Download accepts it.")
             }
 
             SectionHeader {
