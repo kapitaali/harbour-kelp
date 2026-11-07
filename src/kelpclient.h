@@ -2,11 +2,13 @@
 #define KELPCLIENT_H
 
 #include <QByteArray>
+#include <QFile>
 #include <QQueue>
 #include <QSet>
 #include <QSharedPointer>
 #include <QString>
 #include <QVariantMap>
+#include <QVector>
 
 #include <QObject>
 
@@ -197,6 +199,14 @@ private:
     bool retryOnRelay();
     void dropSource();
 
+    // Streaming helpers (WS-C2 Phase 2)
+    void startStreamWrite();
+    void streamNextFile();
+    void streamNextChunk();
+    void streamOnObject(const QByteArray &id, const QByteArray &bytes);
+    void streamFinishFile();
+    void streamFinish();
+
     Kelp::ObjectStore *m_store;
     KelpSource *m_source;
     KelpPreviewServer *m_preview;
@@ -237,6 +247,19 @@ private:
     int m_files;
     quint64 m_bytes;
     bool m_manifestsDone;   // true after manifest pass completes (stream mode)
+    // Streaming state (WS-C2 Phase 2). Used only in stream mode during content phase.
+    struct StreamFile {
+        QString path;              // final destination path
+        QString tempPath;          // temp file path (path + ".part")
+        QVector<QByteArray> chunks; // chunk IDs in order
+        quint64 size;              // expected total size
+        quint64 written;           // bytes written so far
+        int chunkIndex;            // next chunk to fetch
+    };
+    QVector<StreamFile> m_streamFiles;
+    int m_streamFileIndex;
+    QFile *m_streamTempFile;
+    bool m_streaming;            // true during stream write phase
 };
 
 #endif // KELPCLIENT_H

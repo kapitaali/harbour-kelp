@@ -1,6 +1,8 @@
 #include "kelpclient.h"
 #include "kelpsettings.h"
+#include "kelpstore.h"
 
+#include <functional>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -396,7 +398,10 @@ KelpClient::KelpClient(Kelp::ObjectStore *store, QObject *parent)
       m_rounds(0),
       m_files(0),
       m_bytes(0),
-      m_manifestsDone(false)
+      m_manifestsDone(false),
+      m_streamFileIndex(0),
+      m_streamTempFile(nullptr),
+      m_streaming(false)
 {
     m_deadline->setSingleShot(true);
     m_deadline->setInterval(kSilenceMs);
@@ -489,6 +494,14 @@ void KelpClient::reset()
     m_files = 0;
     m_bytes = 0;
     m_manifestsDone = false;
+    m_streamFiles.clear();
+    m_streamFileIndex = 0;
+    if (m_streamTempFile) {
+        m_streamTempFile->close();
+        delete m_streamTempFile;
+        m_streamTempFile = nullptr;
+    }
+    m_streaming = false;
     m_phase = Idle;
     // A view's own bookkeeping goes with it, and its memory is released here if
     // nothing else holds it: any preview session that was serving it holds a
@@ -819,12 +832,15 @@ void KelpClient::walk()
         if (m_viewing)
             finishViewing();
         else if (streaming && !m_manifestsDone) {
-            // Manifest pass complete; switch to content pass.
+            // Manifest pass complete; switch to stream write.
             m_manifestsDone = true;
-            m_rounds = 0;   // reset round counter for content phase
+            m_rounds = 0;
             m_storedThisRound = 0;
-            qInfo() << "KelpClient: manifests fetched; now fetching content";
-            walk();
+            qInfo() << "KelpClient: manifests fetched; starting stream write";
+            startStreamWrite();
+            return;
+        } else if (streaming && m_streaming) {
+            // Already streaming; this shouldn't happen in normal flow.
             return;
         } else {
             qInfo() << "KelpClient: all" << m_fetched << "objects are here after"
@@ -861,6 +877,11 @@ void KelpClient::pump()
 
 void KelpClient::onObject(const QByteArray &id, const QByteArray &bytes)
 {
+    if (m_streaming) {
+        streamOnObject(id, bytes);
+        return;
+    }
+
     if (m_phase != Fetching)
         return;
     m_inflight.remove(id);
@@ -894,6 +915,392 @@ void KelpClient::timedOut()
 {
     if (busy())
         failed(QStringLiteral("the sender stopped answering"));
+}
+
+void KelpClient::startStreamWrite()
+{
+    m_streaming = true;
+    m_streamFiles.clear();
+    m_streamFileIndex = 0;
+    m_files = 0;
+    m_bytes = 0;
+
+    // Collect files and their chunk IDs from manifests.
+    // We reuse the same manifest-walking logic as TreeWriter, but collect
+    // instead of write.
+    QString base = m_directory;
+    if (base.isEmpty()) {
+        base = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        if (base.isEmpty())
+            base = QDir::homePath() + QStringLiteral("/Downloads");
+    }
+
+    // Read root manifest to determine if single file or directory.
+    QByteArray rootManifest;
+    QString error;
+    // We need to read from the store. Use the same readObject pattern.
+    // Since we're in KelpClient, we can access m_store and m_key directly.
+    // But readObject is a TreeWriter method. Let's inline it.
+    auto readObject = [this](const QByteArray &id, QByteArray *plaintext, QString *err) -> bool {
+        QByteArray object;
+        if (!m_store->get(id, &object)) {
+            *err = QStringLiteral("object %1 is missing or corrupt")
+                       .arg(QString::fromLatin1(id.toHex()));
+            return false;
+        }
+        if (!Kelp::Object::open(m_key, object, plaintext, err)) {
+            if (err->isEmpty())
+                *err = QStringLiteral("an object failed to decrypt");
+            return false;
+        }
+        return true;
+    };
+
+    // For simplicity, handle the common case: walk the tree and collect files.
+    // This is a simplified version that handles single-file and directory cases.
+    // Full implementation would mirror TreeWriter's writeRoot logic.
+
+    // Read root directory.
+    QByteArray rootManifestBytes;
+    if (!readObject(m_bundleId, &rootManifestBytes, &error)) {
+        failed(error);
+        return;
+    }
+    Kelp::Manifest::Directory rootDir;
+    if (!Kelp::Manifest::decodeDirectory(rootManifestBytes, &rootDir, &error)) {
+        failed(error);
+        return;
+    }
+
+    // Collect entries from root.
+    QVector<Kelp::Manifest::Entry> roots;
+    if (!rootDir.segment) {
+        roots = rootDir.entries;
+    } else {
+        // Segmented: read all children.
+        for (int i = 0; i < rootDir.children.size(); ++i) {
+            QByteArray leafManifest;
+            if (!readObject(rootDir.children.at(i), &leafManifest, &error)) {
+                failed(error);
+                return;
+            }
+            Kelp::Manifest::Directory leaf;
+            if (!Kelp::Manifest::decodeDirectory(leafManifest, &leaf, &error)) {
+                failed(error);
+                return;
+            }
+            if (leaf.segment) {
+                failed(QStringLiteral("segment index points at another segment index"));
+                return;
+            }
+            roots.append(leaf.entries);
+        }
+    }
+
+    // Collect files recursively.
+    // Helper: collect files from a directory manifest.
+    std::function<void(const QVector<Kelp::Manifest::Entry> &, const QString &, int)> collectFiles;
+    collectFiles = [&](const QVector<Kelp::Manifest::Entry> &entries, const QString &dir, int depth) {
+        if (depth > kMaxTreeDepth) {
+            failed(QStringLiteral("bundle tree is nested too deeply"));
+            return;
+        }
+        for (int i = 0; i < entries.size(); ++i) {
+            const Kelp::Manifest::Entry &entry = entries.at(i);
+            if (!Kelp::Manifest::isValidName(entry.name) || entry.name.size() > 255) {
+                failed(QStringLiteral("the sender used a name that cannot be saved"));
+                return;
+            }
+            const QString path = dir + QLatin1Char('/') + entry.name;
+            if (entry.isDir) {
+                QVector<Kelp::Manifest::Entry> children;
+                // Read directory manifest.
+                QByteArray dirManifest;
+                QString dirError;
+                if (!readObject(entry.hash, &dirManifest, &dirError)) {
+                    failed(dirError);
+                    return;
+                }
+                Kelp::Manifest::Directory dirObj;
+                if (!Kelp::Manifest::decodeDirectory(dirManifest, &dirObj, &dirError)) {
+                    failed(dirError);
+                    return;
+                }
+                if (!dirObj.segment) {
+                    children = dirObj.entries;
+                } else {
+                    for (int j = 0; j < dirObj.children.size(); ++j) {
+                        QByteArray leafManifest;
+                        if (!readObject(dirObj.children.at(j), &leafManifest, &dirError)) {
+                            failed(dirError);
+                            return;
+                        }
+                        Kelp::Manifest::Directory leaf;
+                        if (!Kelp::Manifest::decodeDirectory(leafManifest, &leaf, &dirError)) {
+                            failed(dirError);
+                            return;
+                        }
+                        if (leaf.segment) {
+                            failed(QStringLiteral("segment index points at another segment index"));
+                            return;
+                        }
+                        children.append(leaf.entries);
+                    }
+                }
+                // Recurse.
+                if (!QDir().mkpath(path)) {
+                    failed(QStringLiteral("could not make the folder %1").arg(entry.name));
+                    return;
+                }
+                collectFiles(children, path, depth + 1);
+            } else {
+                // File: read file manifest to get chunks.
+                QByteArray fileManifest;
+                QString fileError;
+                if (!readObject(entry.hash, &fileManifest, &fileError)) {
+                    failed(fileError);
+                    return;
+                }
+                Kelp::Manifest::File file;
+                if (!Kelp::Manifest::decodeFile(fileManifest, &file, &fileError)) {
+                    failed(fileError);
+                    return;
+                }
+                if (file.size != entry.size) {
+                    failed(QStringLiteral("\"%1\" does not match the size in its parent").arg(entry.name));
+                    return;
+                }
+
+                StreamFile sf;
+                sf.path = path;
+                sf.tempPath = path + QStringLiteral(".part");
+                sf.chunks = file.chunks;
+                sf.size = file.size;
+                sf.written = 0;
+                sf.chunkIndex = 0;
+                m_streamFiles.append(sf);
+            }
+        }
+    };
+
+    // Create base directory if needed.
+    if (roots.size() != 1 || roots.at(0).isDir) {
+        // Directory bundle: create root folder.
+        const QString label = m_name.isEmpty() ? m_bundleIdText.left(8) : m_name;
+        QString dirPath = base + QLatin1Char('/') + label;
+        int n = 2;
+        while (QFileInfo::exists(dirPath) && n < 1000) {
+            dirPath = base + QLatin1Char('/') + label + QStringLiteral(" (") + QString::number(n) + QStringLiteral(")");
+            ++n;
+        }
+        if (QFileInfo::exists(dirPath)) {
+            failed(QStringLiteral("there are already too many copies of this in %1")
+                       .arg(QDir(base).dirName()));
+            return;
+        }
+        if (!QDir().mkpath(dirPath)) {
+            failed(QStringLiteral("could not make a folder to save into"));
+            return;
+        }
+        m_destination = dirPath;
+        collectFiles(roots, dirPath, 0);
+    } else {
+        // Single file.
+        const Kelp::Manifest::Entry &entry = roots.at(0);
+        if (!Kelp::Manifest::isValidName(entry.name) || entry.name.size() > 255) {
+            failed(QStringLiteral("the sender used a name that cannot be saved"));
+            return;
+        }
+        QString path = base + QLatin1Char('/') + entry.name;
+        int n = 2;
+        while (QFileInfo::exists(path) && n < 1000) {
+            QFileInfo fi(path);
+            path = base + QLatin1Char('/') + fi.baseName() + QStringLiteral(" (") + QString::number(n) + QStringLiteral(")") + fi.suffix().prepend('.');
+            ++n;
+        }
+        if (QFileInfo::exists(path)) {
+            failed(QStringLiteral("there are already too many copies of this in %1")
+                       .arg(QDir(base).dirName()));
+            return;
+        }
+
+        QByteArray fileManifest;
+        QString fileError;
+        if (!readObject(entry.hash, &fileManifest, &fileError)) {
+            failed(fileError);
+            return;
+        }
+        Kelp::Manifest::File file;
+        if (!Kelp::Manifest::decodeFile(fileManifest, &file, &fileError)) {
+            failed(fileError);
+            return;
+        }
+        if (file.size != entry.size) {
+            failed(QStringLiteral("\"%1\" does not match the size in its parent").arg(entry.name));
+            return;
+        }
+
+        StreamFile sf;
+        sf.path = path;
+        sf.tempPath = path + QStringLiteral(".part");
+        sf.chunks = file.chunks;
+        sf.size = file.size;
+        sf.written = 0;
+        sf.chunkIndex = 0;
+        m_streamFiles.append(sf);
+        m_destination = path;
+    }
+
+    if (m_streamFiles.isEmpty()) {
+        failed(QStringLiteral("no files to write"));
+        return;
+    }
+
+    m_phase = Saving;
+    emit changed();
+    streamNextFile();
+}
+
+void KelpClient::streamNextFile()
+{
+    if (m_streamFileIndex >= m_streamFiles.size()) {
+        streamFinish();
+        return;
+    }
+
+    StreamFile &sf = m_streamFiles[m_streamFileIndex];
+    sf.chunkIndex = 0;
+    sf.written = 0;
+
+    m_streamTempFile = new QFile(sf.tempPath);
+    if (!m_streamTempFile->open(QIODevice::WriteOnly)) {
+        delete m_streamTempFile;
+        m_streamTempFile = nullptr;
+        failed(QStringLiteral("could not write %1").arg(sf.path));
+        return;
+    }
+
+    qInfo() << "KelpClient: streaming file" << (m_streamFileIndex + 1) << "of"
+            << m_streamFiles.size() << ":" << sf.path;
+    streamNextChunk();
+}
+
+void KelpClient::streamNextChunk()
+{
+    if (m_streamFileIndex >= m_streamFiles.size()) {
+        streamFinish();
+        return;
+    }
+
+    StreamFile &sf = m_streamFiles[m_streamFileIndex];
+    if (sf.chunkIndex >= sf.chunks.size()) {
+        // All chunks written; finish this file.
+        streamFinishFile();
+        return;
+    }
+
+    const QByteArray chunkId = sf.chunks.at(sf.chunkIndex);
+    m_inflight.insert(chunkId);
+    m_source->requestObject(chunkId);
+    m_deadline->start();
+}
+
+void KelpClient::streamOnObject(const QByteArray &id, const QByteArray &bytes)
+{
+    if (m_streamFileIndex >= m_streamFiles.size())
+        return;
+
+    StreamFile &sf = m_streamFiles[m_streamFileIndex];
+    if (sf.chunkIndex >= sf.chunks.size())
+        return;
+
+    const QByteArray expectedId = sf.chunks.at(sf.chunkIndex);
+    if (id != expectedId) {
+        // Out of order; ignore (will be requested again).
+        return;
+    }
+
+    m_inflight.remove(id);
+
+    // Verify chunk without storing (streaming: no store for content).
+    if (Kelp::Object::id(bytes) != id) {
+        failed(QStringLiteral("something arrived that was not the object asked for"));
+        return;
+    }
+
+    // Decrypt.
+    QByteArray plaintext;
+    QString error;
+    if (!Kelp::Object::open(m_key, bytes, &plaintext, &error)) {
+        failed(error.isEmpty() ? QStringLiteral("an object failed to decrypt") : error);
+        return;
+    }
+
+    // Write to temp file.
+    if (m_streamTempFile && m_streamTempFile->isOpen()) {
+        if (m_streamTempFile->write(plaintext) != plaintext.size()) {
+            failed(QStringLiteral("could not write to %1").arg(sf.path));
+            return;
+        }
+        sf.written += plaintext.size();
+    }
+
+    ++sf.chunkIndex;
+    ++m_fetched;
+    m_deadline->start();
+    emit changed();
+
+    // Request next chunk.
+    streamNextChunk();
+}
+
+void KelpClient::streamFinishFile()
+{
+    if (m_streamFileIndex >= m_streamFiles.size())
+        return;
+
+    StreamFile &sf = m_streamFiles[m_streamFileIndex];
+
+    if (m_streamTempFile) {
+        m_streamTempFile->close();
+        delete m_streamTempFile;
+        m_streamTempFile = nullptr;
+    }
+
+    // Verify size.
+    if (sf.written != sf.size) {
+        QFile::remove(sf.tempPath);
+        failed(QStringLiteral("\"%1\" does not match the size in its parent").arg(QFileInfo(sf.path).fileName()));
+        return;
+    }
+
+    // Rename temp → final.
+    if (!QFile::rename(sf.tempPath, sf.path)) {
+        QFile::remove(sf.tempPath);
+        failed(QStringLiteral("could not save %1").arg(sf.path));
+        return;
+    }
+
+    ++m_files;
+    m_bytes += sf.written;
+    qInfo() << "KelpClient: streamed" << sf.path << "(" << sf.written << "bytes)";
+
+    ++m_streamFileIndex;
+    emit changed();
+    streamNextFile();
+}
+
+void KelpClient::streamFinish()
+{
+    m_streaming = false;
+    m_phase = Done;
+
+    // Clean up manifests from store (snap model).
+    // For now, leave them; they'll be pruned by auto-prune or manual cleanup.
+
+    qInfo() << "KelpClient: streamed" << m_files << "files," << m_bytes << "bytes to"
+            << m_destination;
+    emit changed();
 }
 
 void KelpClient::writeFiles()
