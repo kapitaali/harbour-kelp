@@ -327,3 +327,29 @@ requiring manual invocation.
 2. Is TLS on LAN (G13) worth the complexity for a LAN-only app?
 3. Should auto-delete (G16) be on by default?
 4. Should the branch reconciliation (Phase E) happen first or last?
+
+## 9. Progress (updated 2026-11-07)
+
+### Completed on dev/closing-gaps
+
+| WS | Item | Commit | Tests |
+|---|---|---|---|
+| A4 | run-emu-share.sh VM/bridge address tier | 6f8896c | manual |
+| A1 | Auto-prune unused objects on unshare + setting | 95a288f | kelpbundles 278/0 |
+| A2 | Per-bundle receive acceptance tracking + confirm prompt | 0b7c567, 9d761ba | kelpsettings 39/0 |
+| A3 | Gateway `#p=` passphrase unwrap (PBKDF2 + AES-GCM) | 4ed9f41 | node --check pass |
+
+### Corrected items (already done, not gaps)
+
+| Item | Status |
+|---|---|
+| Sealing on worker thread | Done (C1.5, 68029cf) |
+| C4b gateway domain + browser-trusted cert | Done (kelp.kapitaali.com, Let's Encrypt) |
+| Relay ALPN list (http/1.1 + kelp/1) | Done |
+
+### Remaining
+
+- Phase B: WS-B2 (C4a completion), WS-B3 (re-serve), WS-B4 (TLS on LAN)
+- Phase C: WS-C1 (relay caching), WS-C2 (streaming), WS-C3 (swarm), WS-C4 (stewards)
+- Phase D: parked items
+- Phase E: branch reconciliation (publish/no-rewrite is stale — master wins)
