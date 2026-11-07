@@ -157,6 +157,16 @@ Page {
                             kelpBundles.unshare(bundleId)
                             bundlesPage.store.bundlesModel.remove(doomed)
                             bundlesPage.store.saveShares()
+                            // Auto-clean: if the setting is on, delete the objects
+                            // this share alone used, now that no row references them.
+                            if (kelpSettings && kelpSettings.autoPruneUnusedObjects) {
+                                var rows = bundlesPage.store.shareRows()
+                                var pruned = kelpBundles.pruneStore(rows)
+                                if (pruned.ok && pruned.removed > 0) {
+                                    kelpLog.info("Auto-pruned " + pruned.removed
+                                                 + " unused object(s), " + pruned.freedBytes + " bytes")
+                                }
+                            }
                         })
                     }
                 }

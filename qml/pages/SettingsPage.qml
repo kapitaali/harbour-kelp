@@ -175,6 +175,16 @@ Page {
 
             SectionHeader { text: qsTr("Storage") }
 
+            TextSwitch {
+                text: qsTr("Auto-clean unused objects")
+                description: qsTr("When a share is stopped, delete the objects it alone used automatically. The manual button below still works either way.")
+                checked: kelpSettings.autoPruneUnusedObjects
+                onCheckedChanged: {
+                    if (checked !== kelpSettings.autoPruneUnusedObjects)
+                        kelpSettings.autoPruneUnusedObjects = checked
+                }
+            }
+
             Label {
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * Theme.horizontalPageMargin

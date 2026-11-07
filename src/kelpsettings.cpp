@@ -10,6 +10,7 @@ const char kIncludeLanAddressKey[] = "share/include_local_address";
 const char kShareInBackgroundKey[] = "share/in_background";
 const char kWifiOnlyKey[] = "share/wifi_only";
 const char kPeerSwarmKey[] = "share/peer_swarm";
+const char kAutoPruneUnusedObjectsKey[] = "storage/auto_prune_unused";
 const char kIncludeLinksInLogKey[] = "log/include_links";
 const char kDownloadDirectoryKey[] = "download/directory";
 
@@ -131,4 +132,21 @@ void KelpSettings::setPeerSwarm(bool on)
     m_settings.setValue(QString::fromLatin1(kPeerSwarmKey), on);
     m_settings.sync();
     emit peerSwarmChanged();
+}
+bool KelpSettings::autoPruneUnusedObjects() const
+{
+    // On by default: stopping a share and leaving its objects on disk is the
+    // surprise this switch exists to prevent, and the storage page still offers
+    // a manual clean-up for anyone who wants control.
+    return m_settings.value(QString::fromLatin1(kAutoPruneUnusedObjectsKey), true).toBool();
+}
+
+void KelpSettings::setAutoPruneUnusedObjects(bool on)
+{
+    if (on == autoPruneUnusedObjects())
+        return;
+
+    m_settings.setValue(QString::fromLatin1(kAutoPruneUnusedObjectsKey), on);
+    m_settings.sync();
+    emit autoPruneUnusedObjectsChanged();
 }

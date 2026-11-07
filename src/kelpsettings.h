@@ -65,6 +65,12 @@ class KelpSettings : public QObject
     Q_PROPERTY(bool peerSwarm READ peerSwarm
                    WRITE setPeerSwarm NOTIFY peerSwarmChanged)
 
+    // Settings → Auto-clean unused objects. On by default. When a share is
+    // stopped, the objects it alone used are deleted automatically instead
+    // of waiting for a manual clean-up in Settings → Storage.
+    Q_PROPERTY(bool autoPruneUnusedObjects READ autoPruneUnusedObjects
+                   WRITE setAutoPruneUnusedObjects NOTIFY autoPruneUnusedObjectsChanged)
+
 public:
     explicit KelpSettings(QObject *parent = nullptr);
 
@@ -90,6 +96,9 @@ public:
     bool peerSwarm() const;
     void setPeerSwarm(bool on);
 
+    bool autoPruneUnusedObjects() const;
+    void setAutoPruneUnusedObjects(bool on);
+
 signals:
     void includeLanAddressChanged();
     void includeLinksInLogChanged();
@@ -97,6 +106,7 @@ signals:
     void shareInBackgroundChanged();
     void wifiOnlyChanged();
     void peerSwarmChanged();
+    void autoPruneUnusedObjectsChanged();
 
 private:
     QSettings m_settings;
