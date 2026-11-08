@@ -22,7 +22,7 @@ No code changes ship in 0.1.0; everything below is 0.2.0+ work.
 | G5 | Auto-start / background service (Harbour constraint) | M | P4 (may be impossible) |
 | G6 | Per-bundle confirmation prompt (§12.10) | S | P2 |
 | G7 | Receive-side preview of page in folder share (§5.4 / C4a.1) | M | P2 |
-| G8 | Embedded Sailfish.WebView (§12.9) | M | P3 |
+| G8 | Embedded Sailfish.WebView (§12.9) | — | Rejected: keep Route B (system browser), no heavy deps |
 | G9 | (DROPPED) Serve-again — contradicts ephemeral model | — | — |
 | G10 | Ephemeral rooms / anonymous chat (Appendix B) | XL | P4 (parked) |
 
@@ -346,7 +346,7 @@ Re-sharing contradicts the snap-like ephemeral model. Removed from plan.
 
 - Phase B: WS-B1 (receive-side preview, dropped by user earlier but may revisit)
 - Phase C: WS-C2 (streaming, design in META-INF/WS-C2-streaming-design.md), WS-C3 (swarm), WS-C4 (stewards)
-- Phase D: parked items (auto-start, WebView, ephemeral rooms)
+- Phase D: parked items (auto-start, ephemeral rooms). WebView (G8) rejected: keep Route B.
 - Phase E: branch reconciliation (publish/no-rewrite is stale — master wins)
 
 ### Design decisions (2026-11-07)
