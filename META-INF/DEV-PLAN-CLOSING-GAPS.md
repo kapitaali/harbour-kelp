@@ -19,7 +19,7 @@ No code changes ship in 0.1.0; everything below is 0.2.0+ work.
 | G2 | Stewards / channels / C6 (relay-side caching, channel pointers) | XL | P3 |
 | G3 | Relay-side caching (relay holds objects, not just tunnels) | L | P2 |
 | G4 | Full-bundle streaming (stream objects, don't hold all on disk) | L | P2 |
-| G5 | Auto-start / background service (Harbour constraint) | M | P4 (may be impossible) |
+| G5 | Auto-start / background service | — | Rejected: user must open the app to serve |
 | G6 | Per-bundle confirmation prompt (§12.10) | S | P2 |
 | G7 | Receive-side preview of page in folder share (§5.4 / C4a.1) | M | P2 |
 | G8 | Embedded Sailfish.WebView (§12.9) | — | Rejected: keep Route B (system browser), no heavy deps |
@@ -346,7 +346,7 @@ Re-sharing contradicts the snap-like ephemeral model. Removed from plan.
 
 - Phase B: WS-B1 (receive-side preview, dropped by user earlier but may revisit)
 - Phase C: WS-C2 (streaming, design in META-INF/WS-C2-streaming-design.md), WS-C3 (swarm), WS-C4 (stewards)
-- Phase D: parked items (auto-start, ephemeral rooms). WebView (G8) rejected: keep Route B.
+- Phase D: parked items (ephemeral rooms). Auto-start (G5) and WebView (G8) rejected.
 - Phase E: branch reconciliation (publish/no-rewrite is stale — master wins)
 
 ### Design decisions (2026-11-07)
