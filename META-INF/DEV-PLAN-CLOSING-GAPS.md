@@ -345,7 +345,7 @@ Re-sharing contradicts the snap-like ephemeral model. Removed from plan.
 ### Remaining
 
 - Phase B: WS-B1 (receive-side preview, dropped by user earlier but may revisit)
-- Phase C: WS-C2 (streaming, design in META-INF/WS-C2-streaming-design.md), WS-C3 (swarm), WS-C4 (stewards)
+- Phase C: WS-C2 (streaming, landed). WS-C4 (stewards/channels) → 0.2.0. WS-C3 (swarm) → 0.3.0.
 - Phase D: parked items (ephemeral rooms). Auto-start (G5) and WebView (G8) rejected.
 - Phase E: branch reconciliation (publish/no-rewrite is stale — master wins)
 
