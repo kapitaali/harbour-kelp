@@ -1,4 +1,7 @@
-# Development plan — closing the gaps (post-0.1.0)
+# Development plan — 0.1.0 submitted, planning 0.2.0+
+
+> 0.1.0 submitted to Jolla Harbour on 2026-11-08. All WS-C2 streaming work landed.
+> Remaining items target 0.2.0 (stewards/channels) and 0.3.0 (peer swarm).
 
 Branch: `dev/closing-gaps` (created from master 08bb318, 2026-11-07).
 
