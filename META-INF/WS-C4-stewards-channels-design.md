@@ -5,6 +5,7 @@
 Scheduled for 0.2.0. Phase 2 (channel keys, signed pointers and links) is
 implemented on `dev/0.2.0`; stewards and channel resolution/polling are still
 design-only. IPFS bridge explicitly excluded (optional, large dependency).
+Progress: `META-INF/PROGRESS-20261112.md`.
 
 ## 1. Problem
 
