@@ -25,6 +25,7 @@
 
 #include "kelpbundles.h"
 #include "kelpbuild.h"
+#include "kelpchannels.h"
 #include "kelpclient.h"
 #include "kelpdevicestate.h"
 #include "kelpfiles.h"
@@ -124,6 +125,11 @@ int main(int argc, char *argv[])
         qInfo() << "Kelp: object store at" << objectStore.rootPath()
                 << "with" << objectStore.objectCount() << "objects";
 
+    // Channels this device publishes (WS-C4 §4). The signing keys and read
+    // secrets live in owner-only files and are never handed to QML; the UI asks
+    // for a link when the user wants to hand one out.
+    KelpChannels kelpChannels(&objectStore);
+
     // The listener starts lazily, on the first bundle that is actually shared.
     KelpServer objectServer(&objectStore);
 
@@ -145,6 +151,9 @@ int main(int argc, char *argv[])
     // LAN stays in the link too, and recipients prefer it; the relay is the path
     // that works from anywhere. Not a setting — see src/kelprelay.h.
     kelpBundles.setRelays(kelpDefaultRelays());
+    // A channel link names the same relays: that is how a recipient that is not
+    // on this network finds the current pointer.
+    kelpChannels.setRelays(kelpDefaultRelays());
 
     // The receiving end shares the same object store: an object received for one
     // bundle is verified content like any other, and nothing here can be confused
@@ -187,6 +196,7 @@ int main(int argc, char *argv[])
     context->setContextProperty("kelpSettings", &kelpSettings);
     context->setContextProperty("kelpPolicy", &kelpPolicy);
     context->setContextProperty("kelpShares", &kelpShares);
+    context->setContextProperty("kelpChannels", &kelpChannels);
     context->setContextProperty("kelpBundles", &kelpBundles);
     context->setContextProperty("kelpClient", &kelpClient);
     context->setContextProperty("appVersion", QStringLiteral(APP_VERSION));

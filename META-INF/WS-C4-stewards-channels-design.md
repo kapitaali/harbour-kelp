@@ -1,8 +1,10 @@
-# WS-C4: Stewards and channels — Design (parked)
+# WS-C4: Stewards and channels — Design
 
 ## Status
 
-Parked. Not to be implemented before release. Design only. IPFS bridge explicitly excluded (optional, large dependency).
+Scheduled for 0.2.0. Phase 2 (channel keys, signed pointers and links) is
+implemented on `dev/0.2.0`; stewards and channel resolution/polling are still
+design-only. IPFS bridge explicitly excluded (optional, large dependency).
 
 ## 1. Problem
 
@@ -84,11 +86,21 @@ A small signed CBOR map, stored as a Kelp object:
   "bundle": <bundle_id>,          # current bundle (32 bytes)
   "seq": 5,                       # monotonic counter
   "ts": 1699999999,              # Unix timestamp
-  "sig": <signature>              # Ed25519 signature over canonical CBOR of above
+  "pub": <public_key>,            # Ed25519 public key (32 bytes)
+  "sig": <signature>              # Ed25519 signature over canonical CBOR of above minus sig
 }
 ```
 
-Signed with the channel's private key. Verified by recipients using the channel's public key (derived from channel_id).
+Signed with the channel's private key. The public key travels in the pointer
+because `channel_id = SHA-256(public_key)` is a one-way hash and cannot give it
+back. A recipient checks `SHA-256(pub) == channel_id` before trusting the
+pointer, then verifies `sig` over the canonical CBOR body. The read secret is
+not the signing key: a recipient can read and verify a channel but cannot
+publish an update.
+
+On the wire the pointer is a Kelp object sealed under
+`HKDF(read_secret, info="kelp/v1/channel")`. A relay stores ciphertext and a
+content id; it learns neither the channel name nor the bundle it points at.
 
 ### 4.3 Channel lifecycle
 
@@ -107,7 +119,10 @@ Signed with the channel's private key. Verified by recipients using the channel'
 ### 4.5 Channel storage
 
 - Channel pointers are stored in the object store (same as bundles). Identified by their object ID (SHA-256 of pointer bytes).
-- Channel metadata (name, keypair, seq, last bundle) stored in KelpSettings (new: `channels` list).
+- Channel metadata (name, ids, sequence, timestamp) and the read secret live in
+  `channels.json`; the Ed25519 private keys live in `channel-keys.json`. Both are
+  owner-only (0600) in the app data directory, never in `settings.conf`, and
+  neither secret is returned to QML.
 - Channel pointer history: keep last N pointers (for rollback). Default N=5.
 
 ### 4.6 Channel QML
@@ -128,9 +143,9 @@ Extend relay to track stewards per bundle. Add steward registration/deregistrati
 
 ### Phase 2: Channel keypair + pointer (M, 2-3 days)
 
-Generate Ed25519 keypair. Create channel pointer object. Sign/verify. Store in object store. Add channel metadata to KelpSettings.
+Generate Ed25519 keypair. Create channel pointer object. Sign/verify. Store in object store. Channel metadata, read secret and signing keys in owner-only app files.
 
-**Files:** src/kelpchannels.h/.cpp (new), src/kelpsettings.h/.cpp
+**Files:** src/kelpchannels.h/.cpp (new), libkelp/kelp_channel.h/.cpp
 
 ### Phase 3: Channel resolution + polling (M, 2-3 days)
 
