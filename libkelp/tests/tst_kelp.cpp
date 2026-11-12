@@ -19,6 +19,7 @@
 
 #include "kelp_bundle.h"
 #include "kelp_cbor.h"
+#include "kelp_channel.h"
 #include "kelp_crypto.h"
 #include "kelp_link.h"
 #include "kelp_manifest.h"
@@ -538,6 +539,180 @@ void testCryptoVectors()
     CHECK_EQ(swarmToken(secret),
              hex("a4e1804d247b842766c24dc8bafe17239edacaf8532e9cc3e1fb8c32b96aaf19"));
     CHECK(contentKey(secret) != swarmToken(secret));
+}
+
+void testEd25519()
+{
+    section("ed25519");
+
+    // RFC 8032 §7.1, TEST 1: the empty message. This pins our use of OpenSSL's
+    // one-shot Ed25519 API, not just two self-consistent calls.
+    const QByteArray privateKey = hex("9d61b19deffd5a60ba844af492ec2cc4"
+                                      "4449c5697b326919703bac031cae7f60");
+    const QByteArray publicKey = hex("d75a980182b10ab7d54bfed3c964073a"
+                                     "0ee172f3daa62325af021a68f707511a");
+    const QByteArray signature = hex("e5564300c360ac729086e2cc806e828a"
+                                     "84877f1eb8e5d974d873e06522490155"
+                                     "5fb8821590a33bacc61e39701cf9b46b"
+                                     "d25bf5f0595bbe24655141438e7a100b");
+
+    QByteArray derived;
+    CHECK(Crypto::ed25519PublicKey(privateKey, &derived));
+    CHECK_EQ(derived, publicKey);
+
+    QByteArray signedMessage;
+    CHECK(Crypto::ed25519Sign(privateKey, QByteArray(), &signedMessage));
+    CHECK_EQ(signedMessage, signature);
+
+    CHECK(Crypto::ed25519Verify(publicKey, QByteArray(), signature));
+    CHECK(!Crypto::ed25519Verify(publicKey, QByteArray("x"), signature));
+    CHECK(!Crypto::ed25519Verify(publicKey, QByteArray(), signature.left(63)));
+
+    QByteArray freshPublic;
+    QByteArray freshPrivate;
+    CHECK(Crypto::ed25519Generate(&freshPublic, &freshPrivate));
+    CHECK_EQ(freshPublic.size(), int(Crypto::Ed25519PublicKeySize));
+    CHECK_EQ(freshPrivate.size(), int(Crypto::Ed25519PrivateKeySize));
+    CHECK(freshPublic != publicKey);
+}
+
+void testChannel()
+{
+    section("channel");
+
+    Channel::KeyPair keys;
+    Channel::KeyPair otherKeys;
+    QString error;
+    CHECK(Channel::generateKeyPair(&keys, &error));
+    CHECK(Channel::generateKeyPair(&otherKeys, &error));
+    CHECK_EQ(keys.publicKey.size(), int(Channel::PublicKeySize));
+    CHECK_EQ(keys.privateKey.size(), int(Channel::PrivateKeySize));
+    CHECK_EQ(Channel::id(keys.publicKey), Crypto::sha256(keys.publicKey));
+    CHECK(Channel::id(QByteArray(31, 'x')).isEmpty());
+
+    Channel::Pointer pointer;
+    pointer.name = QStringLiteral("shared folder");
+    pointer.bundleId = testHash("bundle");
+    pointer.sequence = 1;
+    pointer.timestamp = 1700000000;
+    CHECK(Channel::sign(&pointer, keys.privateKey, &error));
+    CHECK_EQ(pointer.publicKey, keys.publicKey);
+    CHECK_EQ(pointer.signature.size(), int(Channel::SignatureSize));
+    CHECK(Channel::verify(pointer, Channel::id(keys.publicKey), &error));
+
+    const QByteArray body = Channel::encodeBody(pointer);
+    const QByteArray signedPointer = Channel::encode(pointer);
+    CHECK(!body.isEmpty());
+    CHECK(!signedPointer.isEmpty());
+
+    Channel::Pointer decoded;
+    CHECK(Channel::decode(signedPointer, &decoded, &error));
+    CHECK_EQ(decoded.name, pointer.name);
+    CHECK_EQ(decoded.bundleId, pointer.bundleId);
+    CHECK_EQ(decoded.sequence, pointer.sequence);
+    CHECK_EQ(decoded.timestamp, pointer.timestamp);
+    CHECK_EQ(decoded.publicKey, pointer.publicKey);
+    CHECK_EQ(decoded.signature, pointer.signature);
+    CHECK_EQ(Channel::encodeBody(decoded), body);
+    CHECK(Channel::verifyBytes(signedPointer, Channel::id(keys.publicKey), &decoded, &error));
+
+    // Every field is covered by the signature.
+    Channel::Pointer tampered = pointer;
+    tampered.name = QStringLiteral("renamed");
+    CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
+    tampered = pointer;
+    tampered.bundleId = testHash("another bundle");
+    CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
+    tampered = pointer;
+    tampered.sequence = 2;
+    CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
+    tampered = pointer;
+    tampered.timestamp = 1700000001;
+    CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
+    tampered = pointer;
+    tampered.publicKey = otherKeys.publicKey;
+    CHECK(!Channel::verify(tampered, Channel::id(otherKeys.publicKey), &error));
+    tampered = pointer;
+    tampered.signature[0] = char(tampered.signature.at(0) ^ 0x01);
+    CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
+
+    // A pointer signed by one channel is not a pointer for another.
+    CHECK(!Channel::verify(pointer, Channel::id(otherKeys.publicKey), &error));
+    CHECK(!Channel::verifyBytes(signedPointer, Channel::id(otherKeys.publicKey), &decoded, &error));
+
+    // Structural refusals.
+    CHECK(Channel::encodeBody(Channel::Pointer()).isEmpty());   // no bundle/key/seq
+    Channel::Pointer zeroSeq = pointer;
+    zeroSeq.sequence = 0;
+    CHECK(Channel::encodeBody(zeroSeq).isEmpty());
+    CHECK(!Channel::sign(&zeroSeq, keys.privateKey, &error));
+    CHECK(!Channel::sign(&pointer, QByteArray(31, 'x'), &error));
+
+    // Unknown keys are refused: the signature covers the whole map, so the
+    // decoder cannot ignore a field it does not understand.
+    QVector<CborPair> extra;
+    extra.append(pair("v", Cbor::encodeUnsigned(1)));
+    extra.append(pair("name", Cbor::encodeText(pointer.name)));
+    extra.append(pair("bundle", Cbor::encodeBytes(pointer.bundleId)));
+    extra.append(pair("seq", Cbor::encodeUnsigned(pointer.sequence)));
+    extra.append(pair("ts", Cbor::encodeInt(pointer.timestamp)));
+    extra.append(pair("pub", Cbor::encodeBytes(pointer.publicKey)));
+    extra.append(pair("sig", Cbor::encodeBytes(pointer.signature)));
+    extra.append(pair("x", Cbor::encodeUnsigned(1)));
+    CHECK(!Channel::decode(Cbor::encodeMap(extra), &decoded, &error));
+
+    // The sealed pointer is a normal Kelp object: decryptable only with the read
+    // secret and verifiable only against the channel id.
+    const QByteArray readSecret = Crypto::randomBytes(Channel::ReadSecretSize);
+    CHECK_EQ(Channel::key(readSecret).size(), int(Crypto::KeySize));
+    CHECK(Channel::key(QByteArray(31, 'x')).isEmpty());
+
+    bool sealed = false;
+    const QByteArray objectBytes = Channel::seal(pointer, readSecret, &sealed);
+    CHECK(sealed);
+    CHECK(!objectBytes.isEmpty());
+
+    Channel::Pointer opened;
+    CHECK(Channel::open(objectBytes, readSecret, Channel::id(keys.publicKey), &opened, &error));
+    CHECK_EQ(opened.bundleId, pointer.bundleId);
+    CHECK_EQ(opened.sequence, pointer.sequence);
+    CHECK_EQ(opened.signature, pointer.signature);
+
+    // A second seal of the same pointer is a different object (fresh nonce) that
+    // opens to the same pointer.
+    bool sealedAgain = false;
+    const QByteArray secondObject = Channel::seal(pointer, readSecret, &sealedAgain);
+    CHECK(sealedAgain);
+    CHECK(secondObject != objectBytes);
+    CHECK(Channel::open(secondObject, readSecret, Channel::id(keys.publicKey), &opened, &error));
+    CHECK_EQ(opened.bundleId, pointer.bundleId);
+
+    CHECK(!Channel::open(objectBytes, Crypto::randomBytes(Channel::ReadSecretSize),
+                         Channel::id(keys.publicKey), &opened, &error));
+    CHECK(!Channel::open(objectBytes, readSecret, Channel::id(otherKeys.publicKey),
+                         &opened, &error));
+    QByteArray corrupted = objectBytes;
+    corrupted[0] = char(corrupted.at(0) ^ 0x01);
+    CHECK(!Channel::open(corrupted, readSecret, Channel::id(keys.publicKey), &opened, &error));
+    CHECK(!Channel::open(QByteArray(), readSecret, Channel::id(keys.publicKey), &opened, &error));
+    CHECK(Channel::seal(Channel::Pointer(), readSecret, &sealed).isEmpty());
+    CHECK(!sealed);
+
+    // Rollback rule: a strictly higher sequence wins; equal sequence needs a
+    // later timestamp; equal is not newer.
+    Channel::Pointer newer = pointer;
+    newer.sequence = 2;
+    newer.timestamp = pointer.timestamp - 100;
+    CHECK(Channel::isNewer(newer, pointer));
+    newer.timestamp = pointer.timestamp + 1;
+    CHECK(Channel::isNewer(newer, pointer));
+    newer.sequence = 1;
+    newer.timestamp = pointer.timestamp + 1;
+    CHECK(Channel::isNewer(newer, pointer));
+    newer.timestamp = pointer.timestamp;
+    CHECK(!Channel::isNewer(newer, pointer));
+    newer.timestamp = pointer.timestamp - 1;
+    CHECK(!Channel::isNewer(newer, pointer));
 }
 
 void testObjectEnvelope()
@@ -1825,6 +2000,8 @@ int main()
     testCborDecoding();
     testManifestRules();
     testCryptoVectors();
+    testEd25519();
+    testChannel();
     testObjectEnvelope();
     testStoreContract();
     testLink();

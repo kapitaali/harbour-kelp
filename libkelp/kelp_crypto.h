@@ -41,6 +41,23 @@ bool pbkdf2Sha256(const QByteArray &passphrase, const QByteArray &salt,
 // token itself on the wire.
 bool hmacSha256(const QByteArray &key, const QByteArray &data, QByteArray *out);
 
+// Ed25519 (RFC 8032). The private key is the 32-byte seed; the public key is
+// derived from it. Only channels use it (WS-C4 §4): a bundle link is a
+// capability, while a channel pointer is a signed statement that must verify
+// with a public key the recipient got from the link.
+enum {
+    Ed25519PublicKeySize = 32,
+    Ed25519PrivateKeySize = 32,
+    Ed25519SignatureSize = 64
+};
+
+bool ed25519Generate(QByteArray *publicKey, QByteArray *privateKey);
+bool ed25519PublicKey(const QByteArray &privateKey, QByteArray *publicKey);
+bool ed25519Sign(const QByteArray &privateKey, const QByteArray &message,
+                 QByteArray *signature);
+bool ed25519Verify(const QByteArray &publicKey, const QByteArray &message,
+                   const QByteArray &signature);
+
 // AES-256-GCM. `out` is the ciphertext with the 16-byte tag appended.
 // Decryption fails (returns false) if the tag does not verify, which is the
 // only signal a caller needs.

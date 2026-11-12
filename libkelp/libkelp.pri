@@ -13,6 +13,7 @@ INCLUDEPATH += $$PWD
 HEADERS += \
     $$PWD/kelp_bundle.h \
     $$PWD/kelp_cbor.h \
+    $$PWD/kelp_channel.h \
     $$PWD/kelp_crypto.h \
     $$PWD/kelp_link.h \
     $$PWD/kelp_manifest.h \
@@ -25,6 +26,7 @@ HEADERS += \
 SOURCES += \
     $$PWD/kelp_bundle.cpp \
     $$PWD/kelp_cbor.cpp \
+    $$PWD/kelp_channel.cpp \
     $$PWD/kelp_crypto.cpp \
     $$PWD/kelp_link.cpp \
     $$PWD/kelp_manifest.cpp \

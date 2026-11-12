@@ -119,6 +119,138 @@ bool hmacSha256(const QByteArray &key, const QByteArray &data, QByteArray *out)
     return true;
 }
 
+bool ed25519Generate(QByteArray *publicKey, QByteArray *privateKey)
+{
+    if (!publicKey || !privateKey)
+        return false;
+
+    EVP_PKEY_CTX *context = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, 0);
+    if (!context)
+        return false;
+    EVP_PKEY *key = 0;
+    const bool generated = EVP_PKEY_keygen_init(context) == 1
+        && EVP_PKEY_keygen(context, &key) == 1;
+    EVP_PKEY_CTX_free(context);
+    if (!generated) {
+        EVP_PKEY_free(key);
+        return false;
+    }
+
+    QByteArray pub(Ed25519PublicKeySize, '\0');
+    QByteArray priv(Ed25519PrivateKeySize, '\0');
+    size_t pubLength = size_t(pub.size());
+    size_t privLength = size_t(priv.size());
+    const bool ok =
+        EVP_PKEY_get_raw_public_key(key, reinterpret_cast<unsigned char *>(pub.data()),
+                                    &pubLength) == 1
+        && EVP_PKEY_get_raw_private_key(key, reinterpret_cast<unsigned char *>(priv.data()),
+                                        &privLength) == 1
+        && pubLength == size_t(Ed25519PublicKeySize)
+        && privLength == size_t(Ed25519PrivateKeySize);
+    EVP_PKEY_free(key);
+    if (!ok)
+        return false;
+
+    *publicKey = pub;
+    *privateKey = priv;
+    return true;
+}
+
+bool ed25519PublicKey(const QByteArray &privateKey, QByteArray *publicKey)
+{
+    if (!publicKey || privateKey.size() != Ed25519PrivateKeySize)
+        return false;
+
+    EVP_PKEY *key = EVP_PKEY_new_raw_private_key(
+        EVP_PKEY_ED25519, 0,
+        reinterpret_cast<const unsigned char *>(privateKey.constData()),
+        size_t(privateKey.size()));
+    if (!key)
+        return false;
+
+    QByteArray pub(Ed25519PublicKeySize, '\0');
+    size_t length = size_t(pub.size());
+    const bool ok =
+        EVP_PKEY_get_raw_public_key(key, reinterpret_cast<unsigned char *>(pub.data()),
+                                    &length) == 1
+        && length == size_t(Ed25519PublicKeySize);
+    EVP_PKEY_free(key);
+    if (!ok)
+        return false;
+
+    *publicKey = pub;
+    return true;
+}
+
+bool ed25519Sign(const QByteArray &privateKey, const QByteArray &message,
+                 QByteArray *signature)
+{
+    if (!signature || privateKey.size() != Ed25519PrivateKeySize)
+        return false;
+
+    EVP_PKEY *key = EVP_PKEY_new_raw_private_key(
+        EVP_PKEY_ED25519, 0,
+        reinterpret_cast<const unsigned char *>(privateKey.constData()),
+        size_t(privateKey.size()));
+    if (!key)
+        return false;
+
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    if (!context) {
+        EVP_PKEY_free(key);
+        return false;
+    }
+
+    QByteArray result(Ed25519SignatureSize, '\0');
+    size_t length = size_t(result.size());
+    // Ed25519 is one-shot: DigestSignInit without a digest, then DigestSign.
+    const bool ok = EVP_DigestSignInit(context, 0, 0, 0, key) == 1
+        && EVP_DigestSign(context, reinterpret_cast<unsigned char *>(result.data()), &length,
+                          reinterpret_cast<const unsigned char *>(message.constData()),
+                          size_t(message.size())) == 1
+        && length == size_t(Ed25519SignatureSize);
+
+    EVP_MD_CTX_free(context);
+    EVP_PKEY_free(key);
+    if (!ok)
+        return false;
+
+    *signature = result;
+    return true;
+}
+
+bool ed25519Verify(const QByteArray &publicKey, const QByteArray &message,
+                   const QByteArray &signature)
+{
+    if (publicKey.size() != Ed25519PublicKeySize
+        || signature.size() != Ed25519SignatureSize)
+        return false;
+
+    EVP_PKEY *key = EVP_PKEY_new_raw_public_key(
+        EVP_PKEY_ED25519, 0,
+        reinterpret_cast<const unsigned char *>(publicKey.constData()),
+        size_t(publicKey.size()));
+    if (!key)
+        return false;
+
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    if (!context) {
+        EVP_PKEY_free(key);
+        return false;
+    }
+
+    const bool ok = EVP_DigestVerifyInit(context, 0, 0, 0, key) == 1
+        && EVP_DigestVerify(context,
+                            reinterpret_cast<const unsigned char *>(signature.constData()),
+                            size_t(signature.size()),
+                            reinterpret_cast<const unsigned char *>(message.constData()),
+                            size_t(message.size())) == 1;
+
+    EVP_MD_CTX_free(context);
+    EVP_PKEY_free(key);
+    return ok;
+}
+
 bool aes256GcmEncrypt(const QByteArray &key, const QByteArray &nonce,
                       const QByteArray &plaintext, const QByteArray &aad,
                       QByteArray *out)

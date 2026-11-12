@@ -1,0 +1,368 @@
+#include "kelp_channel.h"
+
+#include <limits>
+
+#include <QPair>
+#include <QVector>
+
+#include "kelp_cbor.h"
+#include "kelp_crypto.h"
+#include "kelp_object.h"
+
+namespace Kelp {
+namespace Channel {
+
+namespace {
+
+typedef QPair<QByteArray, QByteArray> CborPair;
+
+CborPair textPair(const char *key, const QString &value)
+{
+    return qMakePair(Cbor::encodeText(QString::fromLatin1(key)), Cbor::encodeText(value));
+}
+
+CborPair uintPair(const char *key, quint64 value)
+{
+    return qMakePair(Cbor::encodeText(QString::fromLatin1(key)), Cbor::encodeUnsigned(value));
+}
+
+CborPair intPair(const char *key, qint64 value)
+{
+    return qMakePair(Cbor::encodeText(QString::fromLatin1(key)), Cbor::encodeInt(value));
+}
+
+CborPair bytesPair(const char *key, const QByteArray &value)
+{
+    return qMakePair(Cbor::encodeText(QString::fromLatin1(key)), Cbor::encodeBytes(value));
+}
+
+bool integerMember(const Cbor::Value &map, const char *key, quint64 *out,
+                   QString *error)
+{
+    const Cbor::Value *value = map.member(key);
+    if (!value || value->type != Cbor::Value::Unsigned) {
+        *error = QStringLiteral("channel pointer has no unsigned \"%1\"")
+                     .arg(QString::fromLatin1(key));
+        return false;
+    }
+    *out = value->unsignedValue;
+    return true;
+}
+
+bool bytesMember(const Cbor::Value &map, const char *key, int expectedSize,
+                 QByteArray *out, QString *error)
+{
+    const Cbor::Value *value = map.member(key);
+    if (!value || value->type != Cbor::Value::Bytes
+        || value->bytes.size() != expectedSize) {
+        *error = QStringLiteral("channel pointer has no %1-byte \"%2\"")
+                     .arg(expectedSize)
+                     .arg(QString::fromLatin1(key));
+        return false;
+    }
+    *out = value->bytes;
+    return true;
+}
+
+// The pointer must be exactly the canonical map for version 1. Unknown keys are
+// refused, not ignored: the signature covers the whole body, so accepting a key
+// this build does not understand would mean either re-encoding different bytes
+// (and failing every valid signature) or trusting unverified fields.
+bool checkKeys(const Cbor::Value &map, bool signedPointer, QString *error)
+{
+    static const char *const bodyKeys[] = { "v", "name", "bundle", "seq", "ts", "pub" };
+    const int bodyKeyCount = int(sizeof(bodyKeys) / sizeof(bodyKeys[0]));
+
+    for (int i = 0; i < map.map.size(); ++i) {
+        const Cbor::Value &key = map.map.at(i).first;
+        if (key.type != Cbor::Value::Text) {
+            *error = QStringLiteral("channel pointer has a non-text key");
+            return false;
+        }
+        bool known = false;
+        for (int j = 0; j < bodyKeyCount && !known; ++j)
+            known = key.text == QString::fromLatin1(bodyKeys[j]);
+        if (!known)
+            known = signedPointer && key.text == QStringLiteral("sig");
+        if (!known) {
+            *error = QStringLiteral("channel pointer has an unknown key \"%1\"").arg(key.text);
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool generateKeyPair(KeyPair *keys, QString *error)
+{
+    if (!keys) {
+        if (error)
+            *error = QStringLiteral("no key pair to fill");
+        return false;
+    }
+    if (!Crypto::ed25519Generate(&keys->publicKey, &keys->privateKey)) {
+        if (error)
+            *error = QStringLiteral("could not generate an Ed25519 key pair");
+        return false;
+    }
+    return true;
+}
+
+QByteArray id(const QByteArray &publicKey)
+{
+    if (publicKey.size() != PublicKeySize)
+        return QByteArray();
+    return Crypto::sha256(publicKey);
+}
+
+QByteArray encodeBody(const Pointer &pointer)
+{
+    if (pointer.bundleId.size() != Crypto::Sha256Size
+        || pointer.publicKey.size() != PublicKeySize
+        || pointer.version != Version
+        || pointer.sequence < 1
+        || pointer.timestamp < 0)
+        return QByteArray();
+
+    QVector<CborPair> entries;
+    entries.append(uintPair("v", pointer.version));
+    entries.append(textPair("name", pointer.name));
+    entries.append(bytesPair("bundle", pointer.bundleId));
+    entries.append(uintPair("seq", pointer.sequence));
+    entries.append(intPair("ts", pointer.timestamp));
+    entries.append(bytesPair("pub", pointer.publicKey));
+    return Cbor::encodeMap(entries);
+}
+
+QByteArray encode(const Pointer &pointer)
+{
+    if (pointer.signature.size() != SignatureSize)
+        return QByteArray();
+    const QByteArray body = encodeBody(pointer);
+    if (body.isEmpty())
+        return QByteArray();
+
+    // build the same map plus the signature, then encode it canonically; the
+    // body bytes are not embedded, because canonical maps are not concatenative.
+    QVector<CborPair> entries;
+    entries.append(uintPair("v", pointer.version));
+    entries.append(textPair("name", pointer.name));
+    entries.append(bytesPair("bundle", pointer.bundleId));
+    entries.append(uintPair("seq", pointer.sequence));
+    entries.append(intPair("ts", pointer.timestamp));
+    entries.append(bytesPair("pub", pointer.publicKey));
+    entries.append(bytesPair("sig", pointer.signature));
+    return Cbor::encodeMap(entries);
+}
+
+bool decode(const QByteArray &bytes, Pointer *pointer, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (!pointer) {
+        *error = QStringLiteral("no pointer to fill");
+        return false;
+    }
+
+    Cbor::Value map;
+    if (!Cbor::decode(bytes, &map, error))
+        return false;
+    if (!map.isMap()) {
+        *error = QStringLiteral("channel pointer is not a CBOR map");
+        return false;
+    }
+    if (!checkKeys(map, true, error))
+        return false;
+
+    Pointer parsed;
+    if (!integerMember(map, "v", &parsed.version, error))
+        return false;
+    if (parsed.version != Version) {
+        *error = QStringLiteral("unsupported channel pointer version %1")
+                     .arg(parsed.version);
+        return false;
+    }
+
+    const Cbor::Value *name = map.member("name");
+    if (!name || name->type != Cbor::Value::Text) {
+        *error = QStringLiteral("channel pointer has no \"name\"");
+        return false;
+    }
+    parsed.name = name->text;
+
+    if (!bytesMember(map, "bundle", Crypto::Sha256Size, &parsed.bundleId, error))
+        return false;
+    if (!integerMember(map, "seq", &parsed.sequence, error))
+        return false;
+    if (parsed.sequence < 1) {
+        *error = QStringLiteral("channel pointer has a zero sequence");
+        return false;
+    }
+
+    const Cbor::Value *timestamp = map.member("ts");
+    if (!timestamp || timestamp->type != Cbor::Value::Unsigned) {
+        *error = QStringLiteral("channel pointer has no unsigned \"ts\"");
+        return false;
+    }
+    if (timestamp->unsignedValue > quint64(std::numeric_limits<qint64>::max())) {
+        *error = QStringLiteral("channel pointer timestamp is out of range");
+        return false;
+    }
+    parsed.timestamp = qint64(timestamp->unsignedValue);
+
+    if (!bytesMember(map, "pub", PublicKeySize, &parsed.publicKey, error))
+        return false;
+    if (!bytesMember(map, "sig", SignatureSize, &parsed.signature, error))
+        return false;
+
+    *pointer = parsed;
+    return true;
+}
+
+bool sign(Pointer *pointer, const QByteArray &privateKey, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (!pointer) {
+        *error = QStringLiteral("no pointer to sign");
+        return false;
+    }
+    if (privateKey.size() != PrivateKeySize) {
+        *error = QStringLiteral("channel private key is not %1 bytes").arg(PrivateKeySize);
+        return false;
+    }
+
+    QByteArray publicKey;
+    if (!Crypto::ed25519PublicKey(privateKey, &publicKey)) {
+        *error = QStringLiteral("could not derive the channel public key");
+        return false;
+    }
+    pointer->publicKey = publicKey;
+
+    const QByteArray body = encodeBody(*pointer);
+    if (body.isEmpty()) {
+        *error = QStringLiteral("channel pointer is not valid before signing");
+        return false;
+    }
+    if (!Crypto::ed25519Sign(privateKey, body, &pointer->signature)) {
+        *error = QStringLiteral("could not sign the channel pointer");
+        return false;
+    }
+    return true;
+}
+
+bool verify(const Pointer &pointer, const QByteArray &expectedId, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (pointer.publicKey.size() != PublicKeySize
+        || pointer.signature.size() != SignatureSize) {
+        *error = QStringLiteral("channel pointer is missing its key or signature");
+        return false;
+    }
+    if (!expectedId.isEmpty()) {
+        if (expectedId.size() != IdSize) {
+            *error = QStringLiteral("channel id is not %1 bytes").arg(IdSize);
+            return false;
+        }
+        if (id(pointer.publicKey) != expectedId) {
+            *error = QStringLiteral("channel pointer is signed by a different channel");
+            return false;
+        }
+    }
+
+    const QByteArray body = encodeBody(pointer);
+    if (body.isEmpty()) {
+        *error = QStringLiteral("channel pointer is not structurally valid");
+        return false;
+    }
+    if (!Crypto::ed25519Verify(pointer.publicKey, body, pointer.signature)) {
+        *error = QStringLiteral("channel pointer signature does not verify");
+        return false;
+    }
+    return true;
+}
+
+bool verifyBytes(const QByteArray &bytes, const QByteArray &expectedId,
+                 Pointer *pointer, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+
+    Pointer parsed;
+    if (!decode(bytes, &parsed, error))
+        return false;
+    if (!verify(parsed, expectedId, error))
+        return false;
+    if (pointer)
+        *pointer = parsed;
+    return true;
+}
+
+bool isNewer(const Pointer &candidate, const Pointer &current)
+{
+    if (candidate.sequence != current.sequence)
+        return candidate.sequence > current.sequence;
+    return candidate.timestamp > current.timestamp;
+}
+
+QByteArray key(const QByteArray &readSecret)
+{
+    if (readSecret.size() != ReadSecretSize)
+        return QByteArray();
+    QByteArray out;
+    if (!Crypto::hkdfSha256(readSecret, QByteArray(Crypto::Sha256Size, '\0'),
+                            QByteArrayLiteral("kelp/v1/channel"), Crypto::KeySize, &out))
+        return QByteArray();
+    return out;
+}
+
+QByteArray seal(const Pointer &pointer, const QByteArray &readSecret, bool *ok)
+{
+    if (ok)
+        *ok = false;
+    if (pointer.signature.size() != SignatureSize)
+        return QByteArray();
+
+    const QByteArray channelKey = key(readSecret);
+    const QByteArray body = encode(pointer);
+    if (channelKey.isEmpty() || body.isEmpty())
+        return QByteArray();
+
+    bool sealed = false;
+    const QByteArray objectBytes = Object::sealRandom(channelKey, body, &sealed);
+    if (!sealed)
+        return QByteArray();
+    if (ok)
+        *ok = true;
+    return objectBytes;
+}
+
+bool open(const QByteArray &objectBytes, const QByteArray &readSecret,
+          const QByteArray &expectedId, Pointer *pointer, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+
+    const QByteArray channelKey = key(readSecret);
+    if (channelKey.isEmpty()) {
+        *error = QStringLiteral("channel read secret is not %1 bytes").arg(ReadSecretSize);
+        return false;
+    }
+
+    QByteArray plaintext;
+    if (!Object::open(channelKey, objectBytes, &plaintext, error))
+        return false;
+    if (!verifyBytes(plaintext, expectedId, pointer, error))
+        return false;
+    return true;
+}
+
+} // namespace Channel
+} // namespace Kelp
