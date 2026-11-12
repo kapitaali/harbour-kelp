@@ -713,6 +713,61 @@ void testChannel()
     CHECK(!Channel::isNewer(newer, pointer));
     newer.timestamp = pointer.timestamp - 1;
     CHECK(!Channel::isNewer(newer, pointer));
+
+    section("channel link");
+
+    Channel::Link outgoing;
+    outgoing.id = Channel::id(keys.publicKey);
+    outgoing.readSecret = readSecret;
+    outgoing.relays << QStringLiteral("kelp.example:9443")
+                    << QStringLiteral("https://relay.example:9443");
+    const QString linkText = Channel::encodeLink(outgoing);
+    CHECK(linkText.startsWith(QStringLiteral("kelpchannel://")));
+    // The id is visible; the secret is the fragment and only the fragment.
+    CHECK(linkText.contains(QString::fromLatin1(Link::base32Encode(outgoing.id))));
+    CHECK(linkText.contains(QStringLiteral("#k=")));
+    CHECK(!linkText.contains(Link::base64UrlEncode(outgoing.id)));
+    CHECK_EQ(linkText.indexOf(QStringLiteral("#k=")),
+             linkText.lastIndexOf(QStringLiteral("#k=")));
+
+    Channel::Link incoming;
+    CHECK(Channel::decodeLink(linkText, &incoming, &error));
+    CHECK_EQ(incoming.id, outgoing.id);
+    CHECK_EQ(incoming.readSecret, outgoing.readSecret);
+    CHECK_EQ(incoming.relays.size(), 2);
+    CHECK_EQ(incoming.relays.at(0), QStringLiteral("kelp.example:9443"));
+    CHECK_EQ(incoming.relays.at(1), QStringLiteral("https://relay.example:9443"));
+
+    // Trimming is fine; a bundle link is not a channel link.
+    CHECK(Channel::decodeLink(QStringLiteral("  ") + linkText + QStringLiteral("\n"),
+                              &incoming, &error));
+    CHECK(!Channel::decodeLink(QString(), &incoming, &error));
+    CHECK(!Channel::decodeLink(QStringLiteral("kelp://abc#k=x"), &incoming, &error));
+    CHECK(!Channel::decodeLink(QStringLiteral("kelpchannel://not-base32?#k=x"),
+                               &incoming, &error));
+
+    // The id and the secret are both exactly 32 bytes.
+    Channel::Link broken = outgoing;
+    broken.id = outgoing.id.left(31);
+    CHECK(Channel::encodeLink(broken).isEmpty());
+    broken = outgoing;
+    broken.readSecret = outgoing.readSecret.left(31);
+    CHECK(Channel::encodeLink(broken).isEmpty());
+    CHECK(!Channel::decodeLink(linkText.left(linkText.size() - 4), &incoming, &error));
+    CHECK(!Channel::decodeLink(QStringLiteral("kelpchannel://")
+                                   + QString::fromLatin1(Link::base32Encode(outgoing.id)),
+                               &incoming, &error));
+    // A second key fragment is refused rather than picking one.
+    CHECK(!Channel::decodeLink(linkText + QStringLiteral("&k=")
+                                   + Link::base64UrlEncode(readSecret),
+                               &incoming, &error));
+    // Unknown query and fragment parameters are ignored, so a newer link still
+    // parses; only a second `k=` is ambiguous enough to refuse.
+    const int hash = linkText.indexOf(QLatin1Char('#'));
+    CHECK(Channel::decodeLink(linkText.left(hash) + QStringLiteral("&x=1")
+                                  + linkText.mid(hash),
+                              &incoming, &error));
+    CHECK(Channel::decodeLink(linkText + QStringLiteral("&x=1"), &incoming, &error));
 }
 
 void testObjectEnvelope()

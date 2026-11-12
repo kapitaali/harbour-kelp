@@ -7,7 +7,10 @@
 
 #include "kelp_cbor.h"
 #include "kelp_crypto.h"
+#include "kelp_link.h"
 #include "kelp_object.h"
+
+#include <QUrl>
 
 namespace Kelp {
 namespace Channel {
@@ -361,6 +364,107 @@ bool open(const QByteArray &objectBytes, const QByteArray &readSecret,
         return false;
     if (!verifyBytes(plaintext, expectedId, pointer, error))
         return false;
+    return true;
+}
+
+QString encodeLink(const Link &link)
+{
+    if (link.id.size() != IdSize || link.readSecret.size() != ReadSecretSize)
+        return QString();
+
+    QString text = QStringLiteral("kelpchannel://");
+    text += QString::fromLatin1(Kelp::Link::base32Encode(link.id));
+
+    QStringList query;
+    for (int i = 0; i < link.relays.size(); ++i) {
+        query.append(QStringLiteral("r=")
+                     + QString::fromLatin1(QUrl::toPercentEncoding(link.relays.at(i))));
+    }
+    if (!query.isEmpty())
+        text += QLatin1Char('?') + query.join(QLatin1Char('&'));
+
+    text += QStringLiteral("#k=") + Kelp::Link::base64UrlEncode(link.readSecret);
+    return text;
+}
+
+bool decodeLink(const QString &text, Link *link, QString *error)
+{
+    QString scratch;
+    if (!error)
+        error = &scratch;
+    if (!link) {
+        *error = QStringLiteral("no destination for the channel link");
+        return false;
+    }
+
+    const QString scheme = QStringLiteral("kelpchannel://");
+    QString rest = text.trimmed();
+    if (!rest.startsWith(scheme, Qt::CaseInsensitive)) {
+        *error = QStringLiteral("link does not start with kelpchannel://");
+        return false;
+    }
+    rest = rest.mid(scheme.size());
+
+    QString fragment;
+    const int hash = rest.indexOf(QLatin1Char('#'));
+    if (hash >= 0) {
+        fragment = rest.mid(hash + 1);
+        rest = rest.left(hash);
+    }
+
+    QString query;
+    const int question = rest.indexOf(QLatin1Char('?'));
+    if (question >= 0) {
+        query = rest.mid(question + 1);
+        rest = rest.left(question);
+    }
+
+    Link parsed;
+    if (!Kelp::Link::base32Decode(rest, &parsed.id, error))
+        return false;
+    if (parsed.id.size() != IdSize) {
+        *error = QStringLiteral("channel id is not %1 bytes").arg(IdSize);
+        return false;
+    }
+
+    bool haveSecret = false;
+    const QStringList fragmentParts = fragment.split(QLatin1Char('&'), QString::SkipEmptyParts);
+    for (int i = 0; i < fragmentParts.size(); ++i) {
+        const QString &part = fragmentParts.at(i);
+        const int equals = part.indexOf(QLatin1Char('='));
+        if (equals <= 0)
+            continue;
+        if (part.left(equals) != QLatin1String("k"))
+            continue;
+        if (haveSecret) {
+            *error = QStringLiteral("channel link has more than one key fragment");
+            return false;
+        }
+        if (!Kelp::Link::base64UrlDecode(part.mid(equals + 1), &parsed.readSecret, error))
+            return false;
+        haveSecret = true;
+    }
+    if (!haveSecret) {
+        *error = QStringLiteral("channel link has no key fragment");
+        return false;
+    }
+    if (parsed.readSecret.size() != ReadSecretSize) {
+        *error = QStringLiteral("channel read secret is not %1 bytes").arg(ReadSecretSize);
+        return false;
+    }
+
+    const QStringList queryParts = query.split(QLatin1Char('&'), QString::SkipEmptyParts);
+    for (int i = 0; i < queryParts.size(); ++i) {
+        const QString &part = queryParts.at(i);
+        const int equals = part.indexOf(QLatin1Char('='));
+        if (equals <= 0)
+            continue;
+        if (part.left(equals) == QLatin1String("r")) {
+            parsed.relays.append(QUrl::fromPercentEncoding(part.mid(equals + 1).toUtf8()));
+        }
+    }
+
+    *link = parsed;
     return true;
 }
 

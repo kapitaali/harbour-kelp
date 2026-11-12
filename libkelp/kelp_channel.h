@@ -3,6 +3,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 
 namespace Kelp {
 namespace Channel {
@@ -111,6 +112,30 @@ bool open(const QByteArray &objectBytes, const QByteArray &readSecret,
 // The channel key derivation, exposed for tests and for a relay that must not
 // have it. Empty when the secret is the wrong size.
 QByteArray key(const QByteArray &readSecret);
+
+/*
+ * The channel link (WS-C4 §4.1):
+ *
+ *   kelpchannel://<channel_id_b32>?r=<relay>[&r=…]#k=<read_secret>
+ *
+ * Like a bundle link, the fragment is a capability and never leaves the
+ * recipient's device with the request; `r=` names relays that may hold the
+ * pointer. The read secret decrypts pointers but cannot sign them, so passing
+ * the link on gives read access, not publishing rights.
+ */
+struct Link {
+    QByteArray id;            // 32 bytes, SHA-256(public key)
+    QByteArray readSecret;    // 32 bytes
+    QStringList relays;       // tried in order
+
+    Link() {}
+};
+
+QString encodeLink(const Link &link);
+
+// Strict about the scheme, the id and a single 32-byte `#k=`; unknown query
+// parameters are ignored so a later addition does not make a link unreadable.
+bool decodeLink(const QString &text, Link *link, QString *error);
 
 } // namespace Channel
 } // namespace Kelp
