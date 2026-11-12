@@ -137,6 +137,47 @@ QString encodeLink(const Link &link);
 // parameters are ignored so a later addition does not make a link unreadable.
 bool decodeLink(const QString &text, Link *link, QString *error);
 
+/*
+ * Relay registration (WS-C4 §4.4).
+ *
+ * A relay stores the sealed pointer but cannot read it, so it cannot check the
+ * pointer's inner signature. This outer statement is what it can check: the
+ * channel key signs the exact pointer bytes and a monotonic sequence.
+ *
+ *   update = { v, channel, seq, ts, pub, pointer, sig }
+ *
+ * `channel` must be SHA-256(pub), `pointer` is the sealed Kelp object to serve,
+ * and `sig` is Ed25519 over the same map without `sig`. A relay keeps the
+ * highest sequence it has seen per channel; a replay of an older or equal
+ * update is ignored, so only the holder of the private key can move a channel
+ * forward. The relay still learns no name, no bundle id and no key material
+ * beyond the public key that is already implicit in the channel id.
+ */
+struct Update {
+    QByteArray channelId;    // 32 bytes
+    QByteArray pointer;      // the sealed pointer object, exactly as served
+    quint64 sequence;
+    qint64 timestamp;
+    QByteArray publicKey;    // 32 bytes
+    QByteArray signature;    // 64 bytes
+
+    Update() : sequence(0), timestamp(0) {}
+};
+
+QByteArray encodeUpdateBody(const Update &update);
+QByteArray encodeUpdate(const Update &update);
+
+// Structural decode: strict canonical CBOR, exactly the seven known keys,
+// version 1, 32-byte channel and public key, non-empty pointer, 64-byte
+// signature. Does not verify the signature.
+bool decodeUpdate(const QByteArray &bytes, Update *update, QString *error);
+
+// Derives the public key and channel id from `privateKey`, then signs the body.
+bool signUpdate(Update *update, const QByteArray &privateKey, QString *error);
+
+// Verifies the channel-id binding and the signature.
+bool verifyUpdate(const Update &update, QString *error);
+
 } // namespace Channel
 } // namespace Kelp
 

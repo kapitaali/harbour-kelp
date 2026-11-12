@@ -49,7 +49,11 @@ enum Type {
     // Tunnel setup, not a §9 swarm message: the publisher tells the relay which
     // bundle it will serve and the relay-scoped credential it may gate on. See
     // the relay handshake in kelp-swarm-wire-spec.md §17.
-    Register = 0x30
+    Register = 0x30,
+    // Relay registration of a channel's current pointer (WS-C4 §4.4). The
+    // payload is Kelp::Channel::encodeUpdate(): the sealed pointer bytes plus a
+    // signature the relay can check without reading the pointer.
+    ChannelPointer = 0x31
 };
 
 // Error codes (spec §14), so the app and the relay name the same things.

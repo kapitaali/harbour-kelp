@@ -768,6 +768,82 @@ void testChannel()
                                   + linkText.mid(hash),
                               &incoming, &error));
     CHECK(Channel::decodeLink(linkText + QStringLiteral("&x=1"), &incoming, &error));
+
+    section("channel update");
+
+    // The relay cannot read the sealed pointer, so this outer statement is what
+    // it can verify: the same key signs the exact pointer bytes and a sequence.
+    Channel::Update update;
+    update.pointer = objectBytes;
+    update.sequence = 2;
+    update.timestamp = 1700000001;
+    CHECK(Channel::signUpdate(&update, keys.privateKey, &error));
+    CHECK_EQ(update.channelId, Channel::id(keys.publicKey));
+    CHECK_EQ(update.publicKey, keys.publicKey);
+    CHECK_EQ(update.signature.size(), int(Channel::SignatureSize));
+    CHECK(Channel::verifyUpdate(update, &error));
+
+    const QByteArray updateBytes = Channel::encodeUpdate(update);
+    CHECK(!updateBytes.isEmpty());
+    CHECK(!Channel::encodeUpdateBody(update).isEmpty());
+
+    Channel::Update decodedUpdate;
+    CHECK(Channel::decodeUpdate(updateBytes, &decodedUpdate, &error));
+    CHECK_EQ(decodedUpdate.channelId, update.channelId);
+    CHECK_EQ(decodedUpdate.pointer, update.pointer);
+    CHECK_EQ(decodedUpdate.sequence, update.sequence);
+    CHECK_EQ(decodedUpdate.timestamp, update.timestamp);
+    CHECK_EQ(decodedUpdate.publicKey, update.publicKey);
+    CHECK_EQ(decodedUpdate.signature, update.signature);
+
+    // Every field is covered, including the pointer bytes the relay serves.
+    Channel::Update tamperedUpdate = update;
+    tamperedUpdate.pointer[0] = char(tamperedUpdate.pointer.at(0) ^ 0x01);
+    CHECK(!Channel::verifyUpdate(tamperedUpdate, &error));
+    tamperedUpdate = update;
+    tamperedUpdate.sequence = 3;
+    CHECK(!Channel::verifyUpdate(tamperedUpdate, &error));
+    tamperedUpdate = update;
+    tamperedUpdate.timestamp = 1700000002;
+    CHECK(!Channel::verifyUpdate(tamperedUpdate, &error));
+    tamperedUpdate = update;
+    tamperedUpdate.channelId = Channel::id(otherKeys.publicKey);
+    CHECK(!Channel::verifyUpdate(tamperedUpdate, &error));
+    tamperedUpdate = update;
+    tamperedUpdate.publicKey = otherKeys.publicKey;
+    CHECK(!Channel::verifyUpdate(tamperedUpdate, &error));
+    tamperedUpdate = update;
+    tamperedUpdate.signature[0] = char(tamperedUpdate.signature.at(0) ^ 0x01);
+    CHECK(!Channel::verifyUpdate(tamperedUpdate, &error));
+
+    // Structural refusals.
+    Channel::Update emptyUpdate;
+    CHECK(Channel::encodeUpdateBody(emptyUpdate).isEmpty());
+    CHECK(!Channel::signUpdate(&emptyUpdate, keys.privateKey, &error));
+    CHECK(!Channel::signUpdate(&update, QByteArray(31, 'x'), &error));
+    CHECK(!Channel::verifyUpdate(Channel::Update(), &error));
+    CHECK(Channel::decodeUpdate(updateBytes.left(updateBytes.size() - 2),
+                                &decodedUpdate, &error) == false);
+    CHECK(!Channel::decodeUpdate(Channel::encodeUpdateBody(update),
+                                 &decodedUpdate, &error));
+
+    QVector<CborPair> extraUpdate;
+    extraUpdate.append(pair("v", Cbor::encodeUnsigned(1)));
+    extraUpdate.append(pair("channel", Cbor::encodeBytes(update.channelId)));
+    extraUpdate.append(pair("pointer", Cbor::encodeBytes(update.pointer)));
+    extraUpdate.append(pair("seq", Cbor::encodeUnsigned(update.sequence)));
+    extraUpdate.append(pair("ts", Cbor::encodeInt(update.timestamp)));
+    extraUpdate.append(pair("pub", Cbor::encodeBytes(update.publicKey)));
+    extraUpdate.append(pair("sig", Cbor::encodeBytes(update.signature)));
+    extraUpdate.append(pair("x", Cbor::encodeUnsigned(1)));
+    CHECK(!Channel::decodeUpdate(Cbor::encodeMap(extraUpdate), &decodedUpdate, &error));
+
+    // A valid update for another channel is still valid; the relay keys it by
+    // the channel id it names, which is why that id is inside the signature.
+    Channel::Update otherUpdate = update;
+    CHECK(Channel::signUpdate(&otherUpdate, otherKeys.privateKey, &error));
+    CHECK_EQ(otherUpdate.channelId, Channel::id(otherKeys.publicKey));
+    CHECK(Channel::verifyUpdate(otherUpdate, &error));
 }
 
 void testObjectEnvelope()
