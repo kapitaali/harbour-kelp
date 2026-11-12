@@ -182,9 +182,29 @@ void KelpTunnel::onEncrypted()
     m_attempt = 0;
     m_current = m_relays.at(m_index);
     sendRegister();
+    sendChannelUpdates();
     m_keepalive->start();
     qInfo() << "KelpTunnel: published on" << m_current;
     emit changed();
+}
+
+void KelpTunnel::setChannelUpdate(const QByteArray &channelId, const QByteArray &update)
+{
+    if (channelId.size() != 32 || update.isEmpty())
+        return;
+    m_channelUpdates.insert(channelId, update);
+    if (m_live && m_tls)
+        m_tls->write(Kelp::Wire::encodeFrame(Kelp::Wire::ChannelPointer, update));
+}
+
+void KelpTunnel::sendChannelUpdates()
+{
+    if (!m_tls)
+        return;
+    for (QHash<QByteArray, QByteArray>::const_iterator it = m_channelUpdates.constBegin();
+         it != m_channelUpdates.constEnd(); ++it) {
+        m_tls->write(Kelp::Wire::encodeFrame(Kelp::Wire::ChannelPointer, it.value()));
+    }
 }
 
 void KelpTunnel::sendRegister()

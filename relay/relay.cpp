@@ -11,6 +11,7 @@
 #include <QTimer>
 
 #include "kelp_link.h"
+#include "kelp_channel.h"
 #include "kelp_wire.h"
 #include "kelptls.h"
 
@@ -22,6 +23,12 @@ const qint64 kPendingTimeoutMs = 20000;
 
 // A request line plus headers; anything longer is not a request we will read.
 const int kMaxRequestBytes = 8 * 1024;
+
+// Channel pointers are small. The table is in RAM only (the relay never writes
+// state to disk), so cap both the per-entry size and the number of entries; a
+// relay restart simply starts empty and publishers re-register.
+const int kMaxChannelPointerBytes = 1024 * 1024;
+const int kMaxChannels = 4096;
 
 // The gateway's files are compiled into the binary (relay/gateway.qrc) so a
 // relay is one file and serves the same loader wherever it runs.
@@ -263,6 +270,35 @@ void Relay::handleRequest(Connection *connection, const QByteArray &request)
     }
 
     const QStringList segments = path.split(QLatin1Char('/'), QString::SkipEmptyParts);
+
+    // /v1/channel/<channel_id_b32> — the current sealed pointer (WS-C4 §4.4).
+    // Public on purpose: the body is ciphertext, and only a holder of the link's
+    // read secret can open it. A channel id is a 256-bit address, not a name
+    // space that can be walked.
+    if (segments.size() == 3 && segments.at(0) == QLatin1String("v1")
+        && segments.at(1) == QLatin1String("channel")) {
+        QByteArray channelId;
+        QString why;
+        if (!Kelp::Link::base32Decode(segments.at(2), &channelId, &why)
+            || channelId.size() != Kelp::Channel::IdSize) {
+            respond(connection, 404, "Not Found", "text/plain; charset=utf-8",
+                    QByteArrayLiteral("no such channel\n"));
+            return;
+        }
+
+        QHash<QByteArray, ChannelSlot>::iterator slot = m_channels.find(channelId);
+        if (slot == m_channels.end()) {
+            respond(connection, 404, "Not Found", "text/plain; charset=utf-8",
+                    QByteArrayLiteral("no such channel\n"));
+            return;
+        }
+        slot->lastUsed = QDateTime::currentMSecsSinceEpoch();
+        respond(connection, 200, "OK", "application/octet-stream", slot->pointer,
+                QByteArrayLiteral("Cache-Control: no-store\r\n"));
+        connection->busy = false;
+        return;
+    }
+
     // /v1/relay/<token>/bundle/<bundle_id>/<info|object/<object_id>>
     if (segments.size() < 6 || segments.at(0) != QLatin1String("v1")
         || segments.at(1) != QLatin1String("relay")
@@ -450,6 +486,58 @@ void Relay::onTunnelFrame(Connection *connection, quint8 type, const QByteArray 
 
         qInfo() << "Relay: registered bundle" << registration.bundleId.toHex().left(16)
                 << registration.objects << "objects";
+        return;
+    }
+
+    if (type == Kelp::Wire::ChannelPointer) {
+        const auto refuse = [&](quint64 code, const QString &why) {
+            qWarning() << "Relay: refusing channel pointer:" << why;
+            Kelp::Wire::ErrorMessage refusal;
+            refusal.code = code;
+            refusal.message = why;
+            connection->tls->write(Kelp::Wire::encodeFrame(
+                Kelp::Wire::Error, Kelp::Wire::encodeError(refusal)));
+        };
+
+        Kelp::Channel::Update update;
+        if (!Kelp::Channel::decodeUpdate(payload, &update, &error)
+            || !Kelp::Channel::verifyUpdate(update, &error)) {
+            refuse(Kelp::Wire::BadData, error);
+            return;
+        }
+        if (update.pointer.size() > kMaxChannelPointerBytes) {
+            refuse(Kelp::Wire::BadData, QStringLiteral("channel pointer is too large"));
+            return;
+        }
+
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        QHash<QByteArray, ChannelSlot>::iterator existing = m_channels.find(update.channelId);
+        if (existing != m_channels.end()) {
+            if (update.sequence < existing->sequence)
+                return;                    // an older signed pointer: replay, ignore
+            if (update.sequence == existing->sequence) {
+                if (existing->pointer != update.pointer) {
+                    refuse(Kelp::Wire::BadData,
+                           QStringLiteral("channel sequence reused for different bytes"));
+                    return;
+                }
+                existing->lastUsed = now;  // a retransmission after reconnect
+                return;
+            }
+        } else if (m_channels.size() >= kMaxChannels) {
+            refuse(Kelp::Wire::RateLimited, QStringLiteral("channel table is full"));
+            return;
+        }
+
+        ChannelSlot slot;
+        slot.pointer = update.pointer;
+        slot.sequence = update.sequence;
+        slot.timestamp = update.timestamp;
+        slot.lastUsed = now;
+        m_channels.insert(update.channelId, slot);
+        qInfo() << "Relay: stored channel pointer"
+                << update.channelId.toHex().left(16) << "seq" << update.sequence
+                << "bytes" << update.pointer.size();
         return;
     }
 

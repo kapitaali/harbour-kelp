@@ -96,6 +96,17 @@ private:
         Pending() : recipient(nullptr), deadline(0) {}
     };
 
+    // A channel's current pointer (WS-C4 §4.4). The relay cannot read it; it
+    // keeps the exact sealed bytes and the signed sequence that authorises them.
+    struct ChannelSlot {
+        QByteArray pointer;
+        quint64 sequence;
+        qint64 timestamp;
+        qint64 lastUsed;
+
+        ChannelSlot() : sequence(0), timestamp(0), lastUsed(0) {}
+    };
+
     void setup(QTcpSocket *socket);
     void onData(Connection *connection);
     void decide(Connection *connection);
@@ -126,6 +137,7 @@ private:
 
     QList<Connection *> m_connections;
     QHash<QByteArray, Bundle> m_bundles;              // bundle_id -> bundle
+    QHash<QByteArray, ChannelSlot> m_channels;        // channel_id -> pointer
     QHash<QByteArray, Pending> m_pending;             // object_id -> waiting recipient
     QHash<KelpTls *, QList<QByteArray> > m_tunnels;   // tunnel -> bundle ids it serves
 

@@ -2,6 +2,7 @@
 #define KELPTUNNEL_H
 
 #include <QByteArray>
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -47,6 +48,13 @@ public:
 
     void stop();
 
+    // Queues one signed channel update (Kelp::Channel::encodeUpdate) for this
+    // tunnel's relay. It is sent now when the tunnel is live, and the latest
+    // update for every channel is resent after a reconnect — the relay keeps
+    // channel pointers in RAM, so a reconnect is what repairs a relay restart.
+    // A verification failure is the relay's to report; this is fire-and-forget.
+    void setChannelUpdate(const QByteArray &channelId, const QByteArray &update);
+
     bool isLive() const { return m_live; }
     // The relay it is currently connected to, or empty when it is not.
     QString relay() const { return m_live ? m_current : QString(); }
@@ -80,6 +88,7 @@ private slots:
 
 private:
     void sendRegister();
+    void sendChannelUpdates();
     void handleFrame(quint8 type, const QByteArray &payload);
     void serve(const QByteArray &objectId);
     void flushTraffic();
@@ -97,6 +106,7 @@ private:
     int m_files;
     quint64 m_bytes;
     Traffic m_traffic;
+    QHash<QByteArray, QByteArray> m_channelUpdates;   // channel_id -> signed update
 
     bool m_wanted;
     bool m_live;
