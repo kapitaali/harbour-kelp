@@ -1126,7 +1126,9 @@ it, and so the answer to "could Kelp do this?" does not have to be re-derived.
 
 > **Session records.** Dated progress/handoff notes live beside this file as
 > `PROGRESS-<date>.md` — what was run, what was verified, what broke, and the recipes and
-> traps that go with it. The newest is [`PROGRESS-20261016.md`](PROGRESS-20261016.md): the
+> traps that go with it. The newest is [`PROGRESS-20261112.md`](PROGRESS-20261112.md):
+> why the emulator helper had to advertise a stable hotspot address, and the guard that
+> now refuses an address the host does not own. Earlier, [`PROGRESS-20261016.md`](PROGRESS-20261016.md) records the
 > first real device-to-device LAN fetch, plus three bugs (a Sailjail data-directory bug
 > that stopped a fresh install writing anything, the link not being recoverable without
 > `KELP_DEBUG_LINK`, and a LAN token-encoding regression in the `KelpSource` refactor).

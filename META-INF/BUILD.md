@@ -180,8 +180,11 @@ link the way a recipient would without printing its key. The address it advertis
 chosen for a phone recipient: the **Wi-Fi** address when this host has one (a phone is
 nearly always on Wi-Fi, often its own hotspot, while a machine's default route usually
 leaves by wire), else the default route's. It prints which address it picked and the
-others the host answers on; `--host` overrides. Both are documented in
-`PROGRESS-<date>.md` §4.5.
+others the host answers on; `--host` (or `KELP_HOST`) overrides. The address has to be
+one this machine owns — the forward binds it here — so an address that belongs to
+another machine is refused with the list of local ones, and a wireless device with no
+address (radio off, not associated) is called out instead of quietly falling back to a
+wired address a phone cannot reach. Both are documented in `PROGRESS-<date>.md` §4.5.
 
 `run-qml-smoke.sh` covers what the suites cannot: a page is compiled only when
 it is pushed, so a page that assigns a property its Silica type does not have —

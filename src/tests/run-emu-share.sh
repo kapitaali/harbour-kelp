@@ -37,7 +37,11 @@
 #                   usually there, often on its own hotspot — else to the
 #                   default route's. It prints which one it picked when the host
 #                   has more than one; --host overrides. It has to match the
-#                   KELP_ADVERTISE_HOST the app was launched with.
+#                   KELP_ADVERTISE_HOST the app was launched with, and it has to
+#                   be an address this machine owns: the forward binds it here,
+#                   so a link naming an address the host does not have answers
+#                   nothing. KELP_HOST sets the same thing from the environment
+#                   (--host wins over it), for a host whose address moves.
 #   --relaunch      stop the app in the guest and start it again with this host
 #                   as the address it advertises, then carry on as below. Also
 #                   clears any forward left over from a previous run, whose port
@@ -64,7 +68,7 @@ SSH_PORT="${KELP_SSH_PORT:-2223}"
 SSH_KEY="${KELP_SSH_KEY:-$HOME/SailfishOS/vmshare/ssh/private_keys/sdk}"
 DATA_DIR="${KELP_EMU_DATAHOME:-/home/defaultuser/.local/share/org.kapitaali/harbour-kelp}"
 
-HOST=""
+HOST="${KELP_HOST:-}"
 REDACT=0
 QR_DIR=""
 FETCH=0
@@ -95,14 +99,15 @@ if [ -z "$HOST" ]; then
     # perfectly healthy. Prefer the Wi-Fi LAN when there is one; a host whose
     # default route *is* its Wi-Fi gets the same answer either way.
     WIFI=""
+    WIRELESS=""
     for marker in /sys/class/net/*/wireless; do
         [ -e "$marker" ] || continue
         NAME="$(basename "$(dirname "$marker")")"
+        WIRELESS="${WIRELESS:+$WIRELESS }$NAME"
         ADDR="$(ip -4 -o addr show dev "$NAME" 2>/dev/null \
                 | sed -n 's/.* inet \([0-9][0-9.]*\)\/.*/\1/p' | head -1)"
-        if [ -n "$ADDR" ]; then
+        if [ -n "$ADDR" ] && [ -z "$WIFI" ]; then
             WIFI="$ADDR"
-            break
         fi
     done
     # VM/bridge networks (172.16-31.x.x) are a third candidate tier: a recipient
@@ -128,6 +133,17 @@ if [ -z "$HOST" ]; then
         echo "note: advertising $WIFI, the Wi-Fi LAN — a phone is usually there;" >&2
         echo "      the default route is $DEFAULT." >&2
     fi
+    if [ -z "$WIFI" ] && [ -n "$WIRELESS" ]; then
+        # A wireless device with no address means the radio is off or the link
+        # is not associated. The default route then leaves by wire, and a phone
+        # on its own hotspot cannot reach a wired address: the link would look
+        # fine and open nothing. Say so, rather than let it pass.
+        echo "note: the wireless device(s) ${WIRELESS% } have no address, so the" >&2
+        echo "      Wi-Fi is off or not associated. Advertising $HOST, which is the" >&2
+        echo "      wired address — a phone on its own hotspot cannot reach it." >&2
+        echo "      Turn the radio on (nmcli radio wifi on) and run this again, or" >&2
+        echo "      pass --host <an address of this machine>." >&2
+    fi
     if [ -n "$VM" ] && [ "$VM" != "$HOST" ]; then
         echo "note: a VM/bridge address $VM is also available;" >&2
         echo "      pass --host $VM if the recipient is on that network." >&2
@@ -147,6 +163,20 @@ if [ -z "$HOST" ]; then
         echo "      advertising $HOST; if the recipient is on one of the others," >&2
         echo "      pass --host <address>." >&2
     fi
+fi
+
+# The forward binds HOST on this machine, and the link names it, so the host
+# has to own it. An address that belongs to somebody else — the phone's
+# hotspot address this host does not have, say — gives a link that answers
+# nothing, and a forward that cannot bind at all. Say that here rather than
+# let it fail later as a silent timeout.
+if ! ip -4 -o addr show up 2>/dev/null \
+        | awk '{ a = $4; sub(/\/.*/, "", a); print a }' | grep -qx "$HOST"; then
+    echo "this machine does not own $HOST, so a link naming it would answer nothing." >&2
+    echo "the addresses it does own:" >&2
+    ip -4 -o addr show up 2>/dev/null \
+        | awk '{ a = $4; sub(/\/.*/, "", a); printf "  %s  (%s)\n", a, $2 }' >&2
+    exit 1
 fi
 
 # --relaunch: the two halves of the recipe above, done here. The app is stopped
@@ -299,7 +329,9 @@ for row in json.loads(shares_raw):
     name = row.get("name") or row.get("path") or bundle
     link = links.get(bundle)
     if not link:
-        print("%s\n  no link in the log — share it with links logging on" % name)
+        print("%s\n  no link in the log: a release build never writes one."
+              " Copy it from the Share page; a dev build logs each"
+              " fresh link." % name)
         continue
     # Both fragments are capability material: `#k=` is the key, `#p=` is the key
     # wrapped under a passphrase. --redact takes them both off.
