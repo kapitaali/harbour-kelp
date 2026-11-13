@@ -42,6 +42,7 @@ int g_failures = 0;
 QString g_section;
 
 QString show(const QString &value) { return value; }
+QString show(const QByteArray &value) { return QString::fromLatin1(value.toHex()); }
 QString show(int value) { return QString::number(value); }
 QString show(quint64 value) { return QString::number(value); }
 QString show(bool value) { return value ? QStringLiteral("true") : QStringLiteral("false"); }
@@ -107,6 +108,21 @@ QJsonArray readJsonArray(const QString &path)
         return QJsonArray();
     return QJsonDocument::fromJson(file.readAll()).array();
 }
+
+// Records what a publisher would hand to its relay tunnels.
+class RecordingSink : public KelpChannelSink
+{
+public:
+    QVector<QByteArray> ids;
+    QVector<QByteArray> updates;
+
+    int sendChannelUpdate(const QByteArray &channelId, const QByteArray &update) override
+    {
+        ids.append(channelId);
+        updates.append(update);
+        return 1;
+    }
+};
 
 QString channelIdFromRow(const QVariantMap &row)
 {
@@ -421,6 +437,64 @@ void testChannels()
         CHECK(restore.open(QIODevice::WriteOnly | QIODevice::Truncate));
         restore.write(original);
         restore.close();
+    }
+
+    section("relay announcements");
+    {
+        RecordingSink sink;
+        KelpChannels channels(&store);
+        channels.setSink(&sink);
+
+        // A channel with no sink is recorded but reports that no relay has it.
+        KelpChannels bare(&store);
+        const QVariantMap unrelayed = bare.create(QStringLiteral("unrelayed"), bundleA);
+        CHECK(unrelayed.value(QStringLiteral("ok")).toBool());
+        CHECK(!unrelayed.value(QStringLiteral("relayed")).toBool());
+
+        const QVariantMap created = channels.create(QStringLiteral("relayed"), bundleA);
+        CHECK(created.value(QStringLiteral("ok")).toBool());
+        CHECK(created.value(QStringLiteral("relayed")).toBool());
+        CHECK_EQ(sink.updates.size(), 1);
+
+        QByteArray createdId;
+        CHECK(Kelp::Link::base32Decode(created.value(QStringLiteral("id")).toString(),
+                                       &createdId, &error));
+        Kelp::Channel::Update update;
+        CHECK(Kelp::Channel::decodeUpdate(sink.updates.value(0), &update, &error));
+        CHECK(Kelp::Channel::verifyUpdate(update, &error));
+        CHECK_EQ(update.sequence, Q_UINT64_C(1));
+        CHECK_EQ(update.channelId, sink.ids.value(0));
+        CHECK_EQ(update.channelId, createdId);
+
+        // The relayed pointer is the one the store holds, byte for byte.
+        QByteArray stored;
+        const QByteArray pointerId = QByteArray::fromHex(
+            created.value(QStringLiteral("pointer")).toString().toLatin1());
+        CHECK(store.get(pointerId, &stored));
+        CHECK_EQ(update.pointer, stored);
+
+        sink.updates.clear();
+        sink.ids.clear();
+        const QVariantMap moved = channels.publish(
+            created.value(QStringLiteral("id")).toString(), bundleB);
+        CHECK(moved.value(QStringLiteral("relayed")).toBool());
+        CHECK_EQ(sink.updates.size(), 1);
+        CHECK(Kelp::Channel::decodeUpdate(sink.updates.value(0), &update, &error));
+        CHECK(Kelp::Channel::verifyUpdate(update, &error));
+        CHECK_EQ(update.sequence, Q_UINT64_C(2));
+
+        // After a restart the publisher puts every current pointer back up.
+        sink.updates.clear();
+        sink.ids.clear();
+        const int channelCount = channels.load().size();
+        CHECK(channelCount >= 2);
+        CHECK_EQ(channels.reannounce(), channelCount);
+        CHECK_EQ(sink.updates.size(), channelCount);
+        for (int i = 0; i < sink.updates.size(); ++i) {
+            Kelp::Channel::Update again;
+            CHECK(Kelp::Channel::decodeUpdate(sink.updates.at(i), &again, &error));
+            CHECK(Kelp::Channel::verifyUpdate(again, &error));
+        }
     }
 
     QFile::remove(channelsPath);

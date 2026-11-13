@@ -154,6 +154,7 @@ int main(int argc, char *argv[])
     // A channel link names the same relays: that is how a recipient that is not
     // on this network finds the current pointer.
     kelpChannels.setRelays(kelpDefaultRelays());
+    kelpChannels.setSink(&kelpBundles);
 
     // The receiving end shares the same object store: an object received for one
     // bundle is verified content like any other, and nothing here can be confused

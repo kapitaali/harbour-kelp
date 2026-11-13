@@ -35,6 +35,23 @@
 
 class KelpObjectStore;
 
+/*
+ * Where a signed channel update goes: the publisher's relay tunnels.
+ *
+ * Kept as an interface so the registry does not pull in the network stack (or
+ * start a tunnel in its own test). KelpBundles implements it; the count it
+ * returns is how many tunnels the update was handed to — zero means nothing is
+ * shared over a relay right now, and the update is only waiting locally.
+ */
+class KelpChannelSink
+{
+public:
+    virtual ~KelpChannelSink() {}
+    virtual int sendChannelUpdate(const QByteArray &channelId,
+                                  const QByteArray &update) = 0;
+};
+
+
 class KelpChannels : public QObject
 {
     Q_OBJECT
@@ -52,6 +69,17 @@ public:
     // resolve it.
     void setRelays(const QStringList &relays) { m_relays = relays; }
     QStringList relays() const { return m_relays; }
+
+    // Where signed relay updates go. Null (the default) means create() and
+    // publish() still record the channel but cannot announce it; the result
+    // says queued=false.
+    void setSink(KelpChannelSink *sink) { m_sink = sink; }
+
+    // Re-signs the current pointer of every channel and hands it to the sink.
+    // Called at startup: relay state is RAM-only, so after a relay restart the
+    // publisher is what puts its channels back. Returns how many updates the
+    // sink accepted (0 when no relay tunnel is up).
+    Q_INVOKABLE int reannounce();
 
     // The channel rows the UI shows: id, name, bundleId, sequence, timestamp,
     // hasKey, pointer. Never the private key or the read secret.
@@ -93,7 +121,15 @@ private:
     QHash<QString, QByteArray> loadKeys(QString *error) const;
     bool saveKeys(const QHash<QString, QByteArray> &keys, QString *error) const;
 
+    // Signs the relay statement for one sealed pointer and hands it to the sink.
+    // True when at least one relay tunnel holds it. The statement is only needed
+    // to register the channel with a relay, so a false here does not undo the
+    // local publish; reannounce() repeats it later.
+    bool announce(const QByteArray &pointerBytes, quint64 sequence, qint64 timestamp,
+                  const QByteArray &privateKey);
+
     KelpObjectStore *m_store;
+    KelpChannelSink *m_sink = nullptr;
     QStringList m_relays;
 };
 

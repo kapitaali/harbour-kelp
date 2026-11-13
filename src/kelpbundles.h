@@ -9,6 +9,7 @@
 
 #include "kelp_bundle.h"
 #include "kelp_link.h"
+#include "kelpchannels.h"
 
 class KelpObjectStore;
 class KelpPreviewServer;
@@ -29,7 +30,7 @@ class QThread;
  * The Settings page can withhold the address, in which case the bundle is not
  * served locally and only a relay can carry it.
  */
-class KelpBundles : public QObject
+class KelpBundles : public QObject, public KelpChannelSink
 {
     Q_OBJECT
 
@@ -207,6 +208,12 @@ public:
     // pageInfo's candidates rather than letting the bundle choose.
     Q_INVOKABLE QVariantMap previewPage(const QString &bundleId, const QString &secret,
                                         const QString &name, const QString &entry);
+
+    // KelpChannelSink: hands a signed channel update to every relay tunnel this
+    // device runs. A tunnel keeps the latest update per channel and resends it
+    // after a reconnect, so this returns how many tunnels now hold it, live or
+    // waiting, and zero when no bundle is on a relay.
+    int sendChannelUpdate(const QByteArray &channelId, const QByteArray &update) override;
 
     // Ends a preview session; its URL stops answering at once.
     Q_INVOKABLE void endPreview(const QString &token);

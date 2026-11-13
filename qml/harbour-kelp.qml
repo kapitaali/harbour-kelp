@@ -442,6 +442,9 @@ ApplicationWindow {
             })
         }
         updateShareCounters()
+        // The relay forgets everything on a restart, so the channel pointers go
+        // back up once the restored shares have their tunnels.
+        kelpChannels.reannounce()
     }
 
     // Starts empty on purpose: add real files or folders from the Add page and

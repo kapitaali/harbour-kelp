@@ -324,6 +324,19 @@ void KelpBundles::setRelays(const QStringList &relays)
     qInfo() << "KelpBundles: relays set to" << m_relays;
 }
 
+int KelpBundles::sendChannelUpdate(const QByteArray &channelId, const QByteArray &update)
+{
+    if (channelId.size() != 32 || update.isEmpty())
+        return 0;
+    int held = 0;
+    for (QHash<QString, KelpTunnel *>::const_iterator it = m_tunnels.constBegin();
+         it != m_tunnels.constEnd(); ++it) {
+        it.value()->setChannelUpdate(channelId, update);
+        ++held;
+    }
+    return held;
+}
+
 void KelpBundles::unshare(const QString &bundleId)
 {
     stopServing(bundleId);

@@ -300,6 +300,62 @@ bool KelpChannels::saveKeys(const QHash<QString, QByteArray> &keys, QString *err
     return writeArray(keysFilePath(), array, error);
 }
 
+bool KelpChannels::announce(const QByteArray &pointerBytes, quint64 sequence,
+                             qint64 timestamp, const QByteArray &privateKey)
+{
+    if (!m_sink)
+        return false;
+
+    Kelp::Channel::Update update;
+    update.pointer = pointerBytes;
+    update.sequence = sequence;
+    update.timestamp = timestamp;
+    QString error;
+    if (!Kelp::Channel::signUpdate(&update, privateKey, &error)) {
+        qWarning() << "KelpChannels: cannot sign a relay update:" << error;
+        return false;
+    }
+
+    const QByteArray bytes = Kelp::Channel::encodeUpdate(update);
+    if (bytes.isEmpty())
+        return false;
+    return m_sink->sendChannelUpdate(update.channelId, bytes) > 0;
+}
+
+int KelpChannels::reannounce()
+{
+    if (!m_store || !m_sink)
+        return 0;
+
+    QString error;
+    const QVector<Entry> entries = loadEntries(&error);
+    if (!error.isEmpty()) {
+        qWarning() << "KelpChannels: cannot re-announce:" << error;
+        return 0;
+    }
+    const QHash<QString, QByteArray> keys = loadKeys(&error);
+    if (!error.isEmpty()) {
+        qWarning() << "KelpChannels: cannot re-announce:" << error;
+        return 0;
+    }
+
+    int relayed = 0;
+    for (int i = 0; i < entries.size(); ++i) {
+        const Entry &entry = entries.at(i);
+        const QByteArray privateKey = keys.value(entry.id);
+        if (entry.pointers.isEmpty() || privateKey.size() != Kelp::Channel::PrivateKeySize)
+            continue;
+
+        QByteArray pointerBytes;
+        const QByteArray pointerId = QByteArray::fromHex(entry.pointers.first().toLatin1());
+        if (!m_store->get(pointerId, &pointerBytes))
+            continue;
+        if (announce(pointerBytes, entry.sequence, entry.timestamp, privateKey))
+            ++relayed;
+    }
+    return relayed;
+}
+
 QVariantList KelpChannels::load() const
 {
     QString error;
@@ -410,6 +466,9 @@ QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
         return failure(error);
     }
 
+    const bool relayed = announce(objectBytes, pointer.sequence, pointer.timestamp,
+                                  keys.privateKey);
+
     QVariantMap fields;
     fields.insert(QStringLiteral("id"), entry.id);
     fields.insert(QStringLiteral("name"), entry.name);
@@ -417,6 +476,7 @@ QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
     fields.insert(QStringLiteral("sequence"), entry.sequence);
     fields.insert(QStringLiteral("timestamp"), entry.timestamp);
     fields.insert(QStringLiteral("pointer"), entry.pointers.value(0));
+    fields.insert(QStringLiteral("relayed"), relayed);
     fields.insert(QStringLiteral("link"), link(entry.id));
     return success(fields);
 }
@@ -487,6 +547,9 @@ QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundl
     if (!saveEntries(entries, &error))
         return failure(error);
 
+    const bool relayed = announce(objectBytes, pointer.sequence, pointer.timestamp,
+                                  privateKey);
+
     QVariantMap fields;
     fields.insert(QStringLiteral("id"), entry.id);
     fields.insert(QStringLiteral("name"), entry.name);
@@ -494,6 +557,7 @@ QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundl
     fields.insert(QStringLiteral("sequence"), entry.sequence);
     fields.insert(QStringLiteral("timestamp"), entry.timestamp);
     fields.insert(QStringLiteral("pointer"), entry.pointers.value(0));
+    fields.insert(QStringLiteral("relayed"), relayed);
     fields.insert(QStringLiteral("link"), link(entry.id));
     return success(fields);
 }
