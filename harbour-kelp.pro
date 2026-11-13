@@ -46,6 +46,7 @@ SOURCES += \
     src/kelpbundles.cpp \
     src/kelpbuild.cpp \
     src/kelpchannels.cpp \
+    src/kelpchannelfetch.cpp \
     src/kelpclient.cpp \
     src/kelpdevicestate.cpp \
     src/kelpfetch.cpp \
@@ -67,6 +68,7 @@ HEADERS += \
     src/kelpbundles.h \
     src/kelpbuild.h \
     src/kelpchannels.h \
+    src/kelpchannelfetch.h \
     src/kelpclient.h \
     src/kelpdevicestate.h \
     src/kelpfetch.h \

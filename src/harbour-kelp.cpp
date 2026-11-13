@@ -25,6 +25,7 @@
 
 #include "kelpbundles.h"
 #include "kelpbuild.h"
+#include "kelpchannelfetch.h"
 #include "kelpchannels.h"
 #include "kelpclient.h"
 #include "kelpdevicestate.h"
@@ -129,6 +130,9 @@ int main(int argc, char *argv[])
     // secrets live in owner-only files and are never handed to QML; the UI asks
     // for a link when the user wants to hand one out.
     KelpChannels kelpChannels(&objectStore);
+    // Looks up a kelpchannel:// link on its relays and reports the bundle it now
+    // names. The bundle itself is then fetched through the ordinary client.
+    KelpChannelFetch kelpChannelFetch;
 
     // The listener starts lazily, on the first bundle that is actually shared.
     KelpServer objectServer(&objectStore);
@@ -198,6 +202,7 @@ int main(int argc, char *argv[])
     context->setContextProperty("kelpPolicy", &kelpPolicy);
     context->setContextProperty("kelpShares", &kelpShares);
     context->setContextProperty("kelpChannels", &kelpChannels);
+    context->setContextProperty("kelpChannelFetch", &kelpChannelFetch);
     context->setContextProperty("kelpBundles", &kelpBundles);
     context->setContextProperty("kelpClient", &kelpClient);
     context->setContextProperty("appVersion", QStringLiteral(APP_VERSION));

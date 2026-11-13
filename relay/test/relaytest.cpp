@@ -22,6 +22,7 @@
 
 #include "kelp_crypto.h"
 #include "kelp_channel.h"
+#include "kelpchannelfetch.h"
 #include "kelp_link.h"
 #include "kelp_wire.h"
 #include "kelpstore.h"
@@ -182,6 +183,16 @@ struct ChannelFixture {
              + QString::fromLatin1(Link::base32Encode(channelId));
     }
 
+    // The link a recipient holds, naming the one relay the harness runs.
+    QString linkText(quint16 port) const
+    {
+        Channel::Link link;
+        link.id = channelId;
+        link.readSecret = readSecret;
+        link.relays << QStringLiteral("127.0.0.1:%1").arg(port);
+        return Channel::encodeLink(link);
+    }
+
     QByteArray sealPointer(quint64 sequence, const QByteArray &bundle, qint64 timestamp)
     {
         Channel::Pointer pointer;
@@ -245,6 +256,26 @@ private:
         request->go();
     }
 
+    // Runs the app's own resolver on the channel link and hands its answer on.
+    // The resolver is deleted once it has reported, from inside its own signal.
+    void resolve(ChannelFixture *channel,
+                 const std::function<void(const QVariantMap &)> &handler)
+    {
+        KelpChannelFetch *resolver = new KelpChannelFetch(this);
+        connect(resolver, &KelpChannelFetch::resolved, this,
+                [resolver, handler](const QVariantMap &result) {
+                    handler(result);
+                    resolver->deleteLater();
+                });
+        const QVariantMap started = resolver->resolveAsync(channel->linkText(m_port));
+        if (!started.value(QStringLiteral("ok")).toBool()) {
+            report("channel link accepted by the resolver", false,
+                   started.value(QStringLiteral("error")).toString());
+            resolver->deleteLater();
+            handler(QVariantMap());
+        }
+    }
+
     void checkInitial(ChannelFixture *channel)
     {
         fetch(channel->path, [this, channel](int status, const QByteArray &body) {
@@ -263,18 +294,35 @@ private:
                    openedOk && opened.sequence == 1 && opened.bundleId == channel->bundle1,
                    openedOk ? QString() : error);
 
-            const QByteArray unknown = Crypto::sha256(QByteArrayLiteral("no such channel"));
-            fetch(QStringLiteral("/v1/channel/%1")
-                      .arg(QString::fromLatin1(Link::base32Encode(unknown))),
-                  [this, channel](int missingStatus, const QByteArray &) {
-                report("unknown channel -> 404", missingStatus == 404,
-                       QStringLiteral("status=%1").arg(missingStatus));
+            // The app's resolver, from the channel link alone: it must reach the
+            // current bundle and hand over a bundle link with the same key.
+            resolve(channel, [this, channel](const QVariantMap &result) {
+                Link::Bundle bundle;
+                QString why;
+                const bool decoded = Link::decode(
+                    result.value(QStringLiteral("link")).toString(), &bundle, &why);
+                report("channel link resolves to its bundle",
+                       result.value(QStringLiteral("ok")).toBool()
+                           && result.value(QStringLiteral("sequence")).toULongLong() == 1
+                           && decoded && bundle.bundleId == channel->bundle1
+                           && bundle.secret == Crypto::sha256(
+                                  QByteArrayLiteral("bundle key ") + channel->bundle1)
+                           && bundle.relays.value(0) == QStringLiteral("127.0.0.1:%1").arg(m_port),
+                       result.value(QStringLiteral("error")).toString());
 
-                fetch(QStringLiteral("/v1/channel/not-a-channel"),
-                      [this, channel](int badStatus, const QByteArray &) {
-                    report("malformed channel id -> 404", badStatus == 404,
-                           QStringLiteral("status=%1").arg(badStatus));
-                    checkNewer(channel);
+                const QByteArray unknown = Crypto::sha256(QByteArrayLiteral("no such channel"));
+                fetch(QStringLiteral("/v1/channel/%1")
+                          .arg(QString::fromLatin1(Link::base32Encode(unknown))),
+                      [this, channel](int missingStatus, const QByteArray &) {
+                    report("unknown channel -> 404", missingStatus == 404,
+                           QStringLiteral("status=%1").arg(missingStatus));
+
+                    fetch(QStringLiteral("/v1/channel/not-a-channel"),
+                          [this, channel](int badStatus, const QByteArray &) {
+                        report("malformed channel id -> 404", badStatus == 404,
+                               QStringLiteral("status=%1").arg(badStatus));
+                        checkNewer(channel);
+                    });
                 });
             });
         });
@@ -288,7 +336,16 @@ private:
                 report("newer sequence replaces the pointer",
                        status == 200 && body == channel->pointer2,
                        QStringLiteral("status=%1").arg(status));
-                checkReplay(channel);
+                // A reader that resolves now must land on the newer bundle.
+                resolve(channel, [this, channel](const QVariantMap &result) {
+                    report("channel link follows the newer bundle",
+                           result.value(QStringLiteral("ok")).toBool()
+                               && result.value(QStringLiteral("bundleId")).toString()
+                                      == QString::fromLatin1(Link::base32Encode(channel->bundle2))
+                               && result.value(QStringLiteral("sequence")).toULongLong() == 2,
+                           result.value(QStringLiteral("error")).toString());
+                    checkReplay(channel);
+                });
             });
         });
     }
