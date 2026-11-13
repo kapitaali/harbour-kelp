@@ -593,6 +593,7 @@ void testChannel()
     Channel::Pointer pointer;
     pointer.name = QStringLiteral("shared folder");
     pointer.bundleId = testHash("bundle");
+    pointer.bundleSecret = testHash("bundle key");
     pointer.sequence = 1;
     pointer.timestamp = 1700000000;
     CHECK(Channel::sign(&pointer, keys.privateKey, &error));
@@ -609,6 +610,7 @@ void testChannel()
     CHECK(Channel::decode(signedPointer, &decoded, &error));
     CHECK_EQ(decoded.name, pointer.name);
     CHECK_EQ(decoded.bundleId, pointer.bundleId);
+    CHECK_EQ(decoded.bundleSecret, pointer.bundleSecret);
     CHECK_EQ(decoded.sequence, pointer.sequence);
     CHECK_EQ(decoded.timestamp, pointer.timestamp);
     CHECK_EQ(decoded.publicKey, pointer.publicKey);
@@ -622,6 +624,9 @@ void testChannel()
     CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
     tampered = pointer;
     tampered.bundleId = testHash("another bundle");
+    CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
+    tampered = pointer;
+    tampered.bundleSecret = testHash("another key");
     CHECK(!Channel::verify(tampered, Channel::id(keys.publicKey), &error));
     tampered = pointer;
     tampered.sequence = 2;
@@ -642,6 +647,9 @@ void testChannel()
 
     // Structural refusals.
     CHECK(Channel::encodeBody(Channel::Pointer()).isEmpty());   // no bundle/key/seq
+    Channel::Pointer keyless = pointer;
+    keyless.bundleSecret.clear();
+    CHECK(Channel::encodeBody(keyless).isEmpty());
     Channel::Pointer zeroSeq = pointer;
     zeroSeq.sequence = 0;
     CHECK(Channel::encodeBody(zeroSeq).isEmpty());
@@ -654,12 +662,24 @@ void testChannel()
     extra.append(pair("v", Cbor::encodeUnsigned(1)));
     extra.append(pair("name", Cbor::encodeText(pointer.name)));
     extra.append(pair("bundle", Cbor::encodeBytes(pointer.bundleId)));
+    extra.append(pair("key", Cbor::encodeBytes(pointer.bundleSecret)));
     extra.append(pair("seq", Cbor::encodeUnsigned(pointer.sequence)));
     extra.append(pair("ts", Cbor::encodeInt(pointer.timestamp)));
     extra.append(pair("pub", Cbor::encodeBytes(pointer.publicKey)));
     extra.append(pair("sig", Cbor::encodeBytes(pointer.signature)));
     extra.append(pair("x", Cbor::encodeUnsigned(1)));
     CHECK(!Channel::decode(Cbor::encodeMap(extra), &decoded, &error));
+
+    // A pointer with no bundle key cannot open its bundle, so it is refused.
+    QVector<CborPair> withoutKey;
+    withoutKey.append(pair("v", Cbor::encodeUnsigned(1)));
+    withoutKey.append(pair("name", Cbor::encodeText(pointer.name)));
+    withoutKey.append(pair("bundle", Cbor::encodeBytes(pointer.bundleId)));
+    withoutKey.append(pair("seq", Cbor::encodeUnsigned(pointer.sequence)));
+    withoutKey.append(pair("ts", Cbor::encodeInt(pointer.timestamp)));
+    withoutKey.append(pair("pub", Cbor::encodeBytes(pointer.publicKey)));
+    withoutKey.append(pair("sig", Cbor::encodeBytes(pointer.signature)));
+    CHECK(!Channel::decode(Cbor::encodeMap(withoutKey), &decoded, &error));
 
     // The sealed pointer is a normal Kelp object: decryptable only with the read
     // secret and verifiable only against the channel id.
@@ -675,6 +695,7 @@ void testChannel()
     Channel::Pointer opened;
     CHECK(Channel::open(objectBytes, readSecret, Channel::id(keys.publicKey), &opened, &error));
     CHECK_EQ(opened.bundleId, pointer.bundleId);
+    CHECK_EQ(opened.bundleSecret, pointer.bundleSecret);
     CHECK_EQ(opened.sequence, pointer.sequence);
     CHECK_EQ(opened.signature, pointer.signature);
 

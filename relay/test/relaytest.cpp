@@ -187,6 +187,7 @@ struct ChannelFixture {
         Channel::Pointer pointer;
         pointer.name = QStringLiteral("relay channel");
         pointer.bundleId = bundle;
+        pointer.bundleSecret = Crypto::sha256(QByteArrayLiteral("bundle key ") + bundle);
         pointer.sequence = sequence;
         pointer.timestamp = timestamp;
         QString error;

@@ -108,6 +108,20 @@ bool decodeBase32Id(const QString &text, int size, QByteArray *out, QString *err
     return true;
 }
 
+// The bundle's content key, as the base64url text a share row holds it in.
+bool decodeBundleSecret(const QString &text, QByteArray *out, QString *error)
+{
+    QByteArray bytes;
+    if (!Kelp::Link::base64UrlDecode(text.trimmed(), &bytes, error))
+        return false;
+    if (bytes.size() != Kelp::Crypto::KeySize) {
+        *error = QStringLiteral("bundle key is not %1 bytes").arg(Kelp::Crypto::KeySize);
+        return false;
+    }
+    *out = bytes;
+    return true;
+}
+
 bool decodeBundleId(const QString &text, QByteArray *out, QString *error)
 {
     return decodeBase32Id(text, Kelp::Crypto::Sha256Size, out, error);
@@ -209,6 +223,9 @@ QVector<KelpChannels::Entry> KelpChannels::loadEntries(QString *error) const
                             &rawBundle, &why))
             return malformed(i);
         entry.bundleId = QString::fromLatin1(Kelp::Link::base32Encode(rawBundle));
+        if (!decodeBytes(object.value(QStringLiteral("bundleSecret")).toString(),
+                         Kelp::Crypto::KeySize, &entry.bundleSecret))
+            return malformed(i);
 
         entry.sequence = quint64(object.value(QStringLiteral("sequence")).toDouble());
         entry.timestamp = qint64(object.value(QStringLiteral("timestamp")).toDouble());
@@ -244,6 +261,8 @@ bool KelpChannels::saveEntries(const QVector<Entry> &entries, QString *error) co
                       QString::fromLatin1(entry.publicKey.toHex()));
         object.insert(QStringLiteral("secret"), QString::fromLatin1(entry.secret.toHex()));
         object.insert(QStringLiteral("bundleId"), entry.bundleId);
+        object.insert(QStringLiteral("bundleSecret"),
+                      QString::fromLatin1(entry.bundleSecret.toHex()));
         object.insert(QStringLiteral("sequence"), double(entry.sequence));
         object.insert(QStringLiteral("timestamp"), double(entry.timestamp));
         object.insert(QStringLiteral("pointers"), pointers);
@@ -386,7 +405,8 @@ QVariantList KelpChannels::load() const
     return rows;
 }
 
-QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
+QVariantMap KelpChannels::create(const QString &name, const QString &bundleId,
+                                 const QString &bundleSecret)
 {
     if (!m_store)
         return failure(QStringLiteral("the object store is unavailable"));
@@ -401,6 +421,9 @@ QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
         return failure(QStringLiteral("bundle id: %1").arg(error));
     if (!m_store->contains(rawBundle))
         return failure(QStringLiteral("that bundle is not in this device's store"));
+    QByteArray rawSecret;
+    if (!decodeBundleSecret(bundleSecret, &rawSecret, &error))
+        return failure(QStringLiteral("bundle key: %1").arg(error));
 
     QVector<Entry> entries = loadEntries(&error);
     if (!error.isEmpty())
@@ -422,6 +445,7 @@ QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
     Kelp::Channel::Pointer pointer;
     pointer.name = channelName;
     pointer.bundleId = rawBundle;
+    pointer.bundleSecret = rawSecret;
     pointer.sequence = 1;
     pointer.timestamp = QDateTime::currentMSecsSinceEpoch() / 1000;
     if (!Kelp::Channel::sign(&pointer, keys.privateKey, &error))
@@ -449,6 +473,7 @@ QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
     entry.publicKey = keys.publicKey;
     entry.secret = readSecret;
     entry.bundleId = QString::fromLatin1(Kelp::Link::base32Encode(rawBundle));
+    entry.bundleSecret = rawSecret;
     entry.sequence = pointer.sequence;
     entry.timestamp = pointer.timestamp;
     entry.pointers.append(QString::fromLatin1(objectId.toHex()));
@@ -481,7 +506,8 @@ QVariantMap KelpChannels::create(const QString &name, const QString &bundleId)
     return success(fields);
 }
 
-QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundleId)
+QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundleId,
+                                  const QString &bundleSecret)
 {
     if (!m_store)
         return failure(QStringLiteral("the object store is unavailable"));
@@ -497,6 +523,9 @@ QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundl
         return failure(QStringLiteral("bundle id: %1").arg(error));
     if (!m_store->contains(rawBundle))
         return failure(QStringLiteral("that bundle is not in this device's store"));
+    QByteArray rawSecret;
+    if (!decodeBundleSecret(bundleSecret, &rawSecret, &error))
+        return failure(QStringLiteral("bundle key: %1").arg(error));
 
     QVector<Entry> entries = loadEntries(&error);
     if (!error.isEmpty())
@@ -523,6 +552,7 @@ QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundl
     Kelp::Channel::Pointer pointer;
     pointer.name = entry.name;
     pointer.bundleId = rawBundle;
+    pointer.bundleSecret = rawSecret;
     pointer.sequence = entry.sequence + 1;
     pointer.timestamp = QDateTime::currentMSecsSinceEpoch() / 1000;
     if (!Kelp::Channel::sign(&pointer, privateKey, &error))
@@ -538,6 +568,7 @@ QVariantMap KelpChannels::publish(const QString &channelId, const QString &bundl
         return failure(QStringLiteral("could not store the channel pointer"));
 
     entry.bundleId = QString::fromLatin1(Kelp::Link::base32Encode(rawBundle));
+    entry.bundleSecret = rawSecret;
     entry.sequence = pointer.sequence;
     entry.timestamp = pointer.timestamp;
     entry.pointers.prepend(QString::fromLatin1(objectId.toHex()));

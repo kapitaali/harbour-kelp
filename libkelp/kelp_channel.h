@@ -15,7 +15,12 @@ namespace Channel {
  * the pointer behind it says which bundle is current:
  *
  *   channel_id = SHA-256(public_key)          (32 bytes, base32 in a link)
- *   pointer    = { v, name, bundle, seq, ts, pub, sig }
+ *   pointer    = { v, name, bundle, key, seq, ts, pub, sig }
+ *
+ * `key` is the current bundle's content key (the `#k=` of its own kelp:// link).
+ * A recipient needs it to open the bundle, and it can only reach the recipient
+ * inside the sealed pointer, so a channel link is a read capability for the
+ * current bundle and nothing more. The relay never sees it.
  *
  * The pointer is canonical CBOR. Its signature is Ed25519 over the same map
  * *without* `sig`, with the channel's private key. The public key travels in
@@ -61,6 +66,7 @@ struct Pointer {
     quint64 version;
     QString name;
     QByteArray bundleId;     // 32 bytes: the root object id of the current bundle
+    QByteArray bundleSecret; // 32 bytes: the content key of that bundle
     quint64 sequence;        // 1 for the first pointer, then strictly increasing
     qint64 timestamp;        // Unix seconds, set by the publisher
     QByteArray publicKey;    // 32 bytes, the signer's
@@ -75,8 +81,8 @@ QByteArray encodeBody(const Pointer &pointer);
 // Canonical CBOR of the whole pointer, `sig` included.
 QByteArray encode(const Pointer &pointer);
 
-// Structural decode: strict canonical CBOR, exactly the six/seven known keys,
-// known version, 32-byte bundle and public key, 64-byte signature. It does not
+// Structural decode: strict canonical CBOR, exactly the seven/eight known keys,
+// known version, 32-byte bundle, key and public key, 64-byte signature. It does not
 // verify the signature; call verify() for that.
 bool decode(const QByteArray &bytes, Pointer *pointer, QString *error);
 

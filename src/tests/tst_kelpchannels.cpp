@@ -142,6 +142,9 @@ void testChannels()
 
     const QString bundleA = putBundle(store, "a");
     const QString bundleB = putBundle(store, "b");
+    // Each bundle's content key, as base64url text: what a share row holds.
+    const QString secretA = Kelp::Link::base64UrlEncode(Kelp::Crypto::randomBytes(Kelp::Crypto::KeySize));
+    const QString secretB = Kelp::Link::base64UrlEncode(Kelp::Crypto::randomBytes(Kelp::Crypto::KeySize));
     CHECK_EQ(bundleA.size(), 52);
     CHECK_EQ(bundleB.size(), 52);
     CHECK(bundleA != bundleB);
@@ -168,7 +171,7 @@ void testChannels()
         KelpChannels channels(&store);
         channels.setRelays(QStringList() << QStringLiteral("kelp.example:9443")
                                          << QStringLiteral("https://relay.example:9443"));
-        const QVariantMap created = channels.create(QStringLiteral("notes"), bundleA);
+        const QVariantMap created = channels.create(QStringLiteral("notes"), bundleA, secretA);
         CHECK(created.value(QStringLiteral("ok")).toBool());
         CHECK_EQ(created.value(QStringLiteral("error")).toString(), QString());
         CHECK_EQ(created.value(QStringLiteral("name")).toString(), QStringLiteral("notes"));
@@ -267,7 +270,7 @@ void testChannels()
         KelpChannels channels(&store);
         channels.setRelays(QStringList() << QStringLiteral("kelp.example:9443")
                                          << QStringLiteral("https://relay.example:9443"));
-        const QVariantMap published = channels.publish(channelId, bundleB);
+        const QVariantMap published = channels.publish(channelId, bundleB, secretB);
         CHECK(published.value(QStringLiteral("ok")).toBool());
         CHECK_EQ(published.value(QStringLiteral("bundleId")).toString(), bundleB);
         CHECK_EQ(published.value(QStringLiteral("sequence")).toULongLong(),
@@ -322,25 +325,25 @@ void testChannels()
     {
         KelpChannels channels(&store);
 
-        QVariantMap result = channels.create(QStringLiteral("notes"), bundleB);
+        QVariantMap result = channels.create(QStringLiteral("notes"), bundleB, secretB);
         CHECK(!result.value(QStringLiteral("ok")).toBool());
         CHECK(result.value(QStringLiteral("error")).toString().contains(
             QStringLiteral("already exists")));
 
-        result = channels.create(QStringLiteral("   "), bundleB);
+        result = channels.create(QStringLiteral("   "), bundleB, secretB);
         CHECK(!result.value(QStringLiteral("ok")).toBool());
 
-        result = channels.create(QStringLiteral("other"), QStringLiteral("not-a-bundle"));
+        result = channels.create(QStringLiteral("other"), QStringLiteral("not-a-bundle"), secretA);
         CHECK(!result.value(QStringLiteral("ok")).toBool());
 
         result = channels.create(QStringLiteral("other"), QString::fromLatin1(
-            Kelp::Link::base32Encode(QByteArray(32, 'x'))));    // valid id, not stored
+            Kelp::Link::base32Encode(QByteArray(32, 'x'))), secretA);    // valid id, not stored
         CHECK(!result.value(QStringLiteral("ok")).toBool());
 
-        result = channels.publish(channelId, QStringLiteral("not-a-bundle"));
+        result = channels.publish(channelId, QStringLiteral("not-a-bundle"), secretA);
         CHECK(!result.value(QStringLiteral("ok")).toBool());
         result = channels.publish(QString::fromLatin1(
-            Kelp::Link::base32Encode(QByteArray(32, 'y'))), bundleA);
+            Kelp::Link::base32Encode(QByteArray(32, 'y'))), bundleA, secretA);
         CHECK(!result.value(QStringLiteral("ok")).toBool());
     }
 
@@ -359,7 +362,7 @@ void testChannels()
         }
 
         KelpChannels channels(&store);
-        const QVariantMap result = channels.publish(channelId, bundleA);
+        const QVariantMap result = channels.publish(channelId, bundleA, secretA);
         CHECK(!result.value(QStringLiteral("ok")).toBool());
 
         // load() still shows the row (the metadata is intact) but says the key
@@ -370,7 +373,7 @@ void testChannels()
 
         // Creating a new channel must not clobber the unreadable key file: that
         // would destroy the only copy of an older channel's signing key.
-        const QVariantMap created = channels.create(QStringLiteral("second"), bundleA);
+        const QVariantMap created = channels.create(QStringLiteral("second"), bundleA, secretA);
         CHECK(!created.value(QStringLiteral("ok")).toBool());
 
         QFile restore(keysPath);
@@ -396,8 +399,8 @@ void testChannels()
         KelpChannels channels(&store);
         CHECK_EQ(channels.load().size(), 0);
         CHECK(channels.link(channelId).isEmpty());
-        CHECK(!channels.publish(channelId, bundleA).value(QStringLiteral("ok")).toBool());
-        CHECK(!channels.create(QStringLiteral("second"), bundleA)
+        CHECK(!channels.publish(channelId, bundleA, secretA).value(QStringLiteral("ok")).toBool());
+        CHECK(!channels.create(QStringLiteral("second"), bundleA, secretA)
                    .value(QStringLiteral("ok")).toBool());
 
         QFile restore(channelsPath);
@@ -430,13 +433,49 @@ void testChannels()
         // which row an action would affect, and a write must not drop the bad one.
         CHECK_EQ(channels.load().size(), 0);
         CHECK(channels.link(channelId).isEmpty());
-        CHECK(!channels.create(QStringLiteral("second"), bundleA)
+        CHECK(!channels.create(QStringLiteral("second"), bundleA, secretA)
                    .value(QStringLiteral("ok")).toBool());
 
         QFile restore(channelsPath);
         CHECK(restore.open(QIODevice::WriteOnly | QIODevice::Truncate));
         restore.write(original);
         restore.close();
+    }
+
+    section("the sealed pointer carries the bundle key");
+    {
+        // A reader of the channel link can open the current bundle, so the key
+        // the pointer carries must be the one the share row holds.
+        QByteArray expectedKey;
+        QString error;
+        CHECK(Kelp::Link::base64UrlDecode(secretB, &expectedKey, &error));
+
+        KelpChannels channels(&store);
+        const QVariantList rows = channels.load();
+        CHECK_EQ(rows.size(), 1);
+        CHECK(!rows.at(0).toMap().contains(QStringLiteral("bundleSecret")));
+
+        const QJsonArray stored = readJsonArray(channelsPath);
+        const QJsonArray pointers =
+            stored.at(0).toObject().value(QStringLiteral("pointers")).toArray();
+        const QByteArray pointerId =
+            QByteArray::fromHex(pointers.at(0).toString().toLatin1());
+        QByteArray objectBytes;
+        CHECK(store.get(pointerId, &objectBytes));
+
+        Kelp::Channel::Pointer pointer;
+        CHECK(Kelp::Channel::open(objectBytes, readSecret, channelRawId, &pointer, &error));
+        QByteArray rawBundleB;
+        CHECK(Kelp::Link::base32Decode(bundleB, &rawBundleB, &error));
+        CHECK_EQ(pointer.bundleId, rawBundleB);
+        CHECK_EQ(pointer.bundleSecret, expectedKey);
+
+        // A key of the wrong width is refused before anything is written.
+        const QVariantMap badKey = channels.publish(
+            channelId, bundleB, Kelp::Link::base64UrlEncode(QByteArray(16, 'k')));
+        CHECK(!badKey.value(QStringLiteral("ok")).toBool());
+        CHECK_EQ(channels.load().at(0).toMap().value(QStringLiteral("sequence")).toULongLong(),
+                 Q_UINT64_C(2));
     }
 
     section("relay announcements");
@@ -447,11 +486,11 @@ void testChannels()
 
         // A channel with no sink is recorded but reports that no relay has it.
         KelpChannels bare(&store);
-        const QVariantMap unrelayed = bare.create(QStringLiteral("unrelayed"), bundleA);
+        const QVariantMap unrelayed = bare.create(QStringLiteral("unrelayed"), bundleA, secretA);
         CHECK(unrelayed.value(QStringLiteral("ok")).toBool());
         CHECK(!unrelayed.value(QStringLiteral("relayed")).toBool());
 
-        const QVariantMap created = channels.create(QStringLiteral("relayed"), bundleA);
+        const QVariantMap created = channels.create(QStringLiteral("relayed"), bundleA, secretA);
         CHECK(created.value(QStringLiteral("ok")).toBool());
         CHECK(created.value(QStringLiteral("relayed")).toBool());
         CHECK_EQ(sink.updates.size(), 1);
@@ -476,7 +515,7 @@ void testChannels()
         sink.updates.clear();
         sink.ids.clear();
         const QVariantMap moved = channels.publish(
-            created.value(QStringLiteral("id")).toString(), bundleB);
+            created.value(QStringLiteral("id")).toString(), bundleB, secretB);
         CHECK(moved.value(QStringLiteral("relayed")).toBool());
         CHECK_EQ(sink.updates.size(), 1);
         CHECK(Kelp::Channel::decodeUpdate(sink.updates.value(0), &update, &error));

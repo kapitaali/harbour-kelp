@@ -85,6 +85,7 @@ A small signed CBOR map, stored as a Kelp object:
   "v": 1,
   "name": "my-shared-folder",     # human-readable label
   "bundle": <bundle_id>,          # current bundle (32 bytes)
+  "key": <bundle_secret>,         # that bundle's content key (32 bytes)
   "seq": 5,                       # monotonic counter
   "ts": 1699999999,              # Unix timestamp
   "pub": <public_key>,            # Ed25519 public key (32 bytes)
@@ -98,6 +99,12 @@ back. A recipient checks `SHA-256(pub) == channel_id` before trusting the
 pointer, then verifies `sig` over the canonical CBOR body. The read secret is
 not the signing key: a recipient can read and verify a channel but cannot
 publish an update.
+
+`key` is the bundle's content key, the same secret its own `kelp://` link carries
+in `#k=`. A recipient needs it to open the bundle, and it is only ever delivered
+inside the sealed pointer, so a channel link is a read capability for the current
+bundle and nothing more. Because of this, a bundle with a passphrase cannot be the
+target of a channel: the pointer would hand out the key past the passphrase.
 
 On the wire the pointer is a Kelp object sealed under
 `HKDF(read_secret, info="kelp/v1/channel")`. A relay stores ciphertext and a

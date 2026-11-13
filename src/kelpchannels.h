@@ -90,12 +90,20 @@ public:
     // object, and returns { ok, error, id, name, bundleId, sequence, timestamp,
     // pointer, link }. The link is the only thing in the result that carries the
     // read secret.
-    Q_INVOKABLE QVariantMap create(const QString &name, const QString &bundleId);
+    //
+    // `bundleSecret` is the bundle's own content key, as base64url text (the
+    // secret a share row already holds). It goes into the signed pointer, sealed
+    // for the link's readers, so a channel reader can open the bundle. Only a
+    // bundle without a passphrase may be published this way: the pointer would
+    // otherwise hand out the key past the passphrase.
+    Q_INVOKABLE QVariantMap create(const QString &name, const QString &bundleId,
+                                   const QString &bundleSecret);
 
     // Re-signs an existing channel to point at `bundleId` with sequence + 1 and
     // stores the new pointer. Returns the same shape as create(), the link
     // included (the read secret does not change).
-    Q_INVOKABLE QVariantMap publish(const QString &channelId, const QString &bundleId);
+    Q_INVOKABLE QVariantMap publish(const QString &channelId, const QString &bundleId,
+                                    const QString &bundleSecret);
 
     // The kelpchannel:// link for a channel this device owns. Empty with a
     // logged reason when the channel is unknown or its stored bytes are not the
@@ -109,6 +117,7 @@ private:
         QByteArray publicKey;
         QByteArray secret;      // read secret, 32 bytes
         QString bundleId;       // base32
+        QByteArray bundleSecret; // 32 bytes, the bundle's content key
         quint64 sequence;
         qint64 timestamp;
         QStringList pointers;   // newest first, hex object ids

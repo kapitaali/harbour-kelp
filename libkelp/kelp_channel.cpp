@@ -122,6 +122,7 @@ QByteArray id(const QByteArray &publicKey)
 QByteArray encodeBody(const Pointer &pointer)
 {
     if (pointer.bundleId.size() != Crypto::Sha256Size
+        || pointer.bundleSecret.size() != Crypto::KeySize
         || pointer.publicKey.size() != PublicKeySize
         || pointer.version != Version
         || pointer.sequence < 1
@@ -132,6 +133,7 @@ QByteArray encodeBody(const Pointer &pointer)
     entries.append(uintPair("v", pointer.version));
     entries.append(textPair("name", pointer.name));
     entries.append(bytesPair("bundle", pointer.bundleId));
+    entries.append(bytesPair("key", pointer.bundleSecret));
     entries.append(uintPair("seq", pointer.sequence));
     entries.append(intPair("ts", pointer.timestamp));
     entries.append(bytesPair("pub", pointer.publicKey));
@@ -152,6 +154,7 @@ QByteArray encode(const Pointer &pointer)
     entries.append(uintPair("v", pointer.version));
     entries.append(textPair("name", pointer.name));
     entries.append(bytesPair("bundle", pointer.bundleId));
+    entries.append(bytesPair("key", pointer.bundleSecret));
     entries.append(uintPair("seq", pointer.sequence));
     entries.append(intPair("ts", pointer.timestamp));
     entries.append(bytesPair("pub", pointer.publicKey));
@@ -176,8 +179,8 @@ bool decode(const QByteArray &bytes, Pointer *pointer, QString *error)
         *error = QStringLiteral("channel pointer is not a CBOR map");
         return false;
     }
-    static const char *const bodyKeys[] = { "v", "name", "bundle", "seq", "ts", "pub" };
-    if (!checkKeys(map, bodyKeys, 6, true, "channel pointer", error))
+    static const char *const bodyKeys[] = { "v", "name", "bundle", "key", "seq", "ts", "pub" };
+    if (!checkKeys(map, bodyKeys, 7, true, "channel pointer", error))
         return false;
 
     Pointer parsed;
@@ -197,6 +200,8 @@ bool decode(const QByteArray &bytes, Pointer *pointer, QString *error)
     parsed.name = name->text;
 
     if (!bytesMember(map, "bundle", Crypto::Sha256Size, &parsed.bundleId, error))
+        return false;
+    if (!bytesMember(map, "key", Crypto::KeySize, &parsed.bundleSecret, error))
         return false;
     if (!integerMember(map, "seq", &parsed.sequence, error))
         return false;
